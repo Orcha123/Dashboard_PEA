@@ -336,7 +336,7 @@ for nom, info in WATCHLIST.items():
   else:
     dist_str = f"⚪ {distance_cible_pct:+.1f}%"
 
- donnees_t1.append({
+  donnees_t1.append({
       "Actif": nom,
       "Prix (€)": round(prix_actuel, 2),
       "Prix Cible (€)": round(prix_cible, 2) if prix_cible > 0 else "N/A",
