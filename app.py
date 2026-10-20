@@ -854,22 +854,23 @@ with onglet_dividendes:
     annees_simulation = [5, 10, 15]
     resultats_boule_de_neige = []
 
-    # Simulation simple d'intérêts composés + DCA
     capital_actuel = valeur_totale_portefeuille
-    rendement_estime = 0.05  # 5% de rendement global combiné
+    rendement_estime = (
+        rendement_moyen_portefeuille / 100
+        if rendement_moyen_portefeuille > 0
+        else 0.04
+    )
 
     for an in annees_simulation:
       cap = capital_actuel
       div_an = total_div_an
       for mois in range(an * 12):
-        # Ajout du DCA mensuel et des dividendes mensuels réinvestis
         epargne_mois = BUDGET_MENSUEL + (div_an / 12)
         cap += epargne_mois
-        # Croissance estimée du capital et des dividendes
-        div_an = cap * (rendement_moyen_portefeuille / 100)
+        div_an = cap * rendement_estime
 
       resultats_boule_de_neige.append({
-          horizon: f"À {an} ans",
+          "Horizon": f"À {an} ans",
           "Capital Estimé (€)": f"{cap:,.2f} €",
           "Rente Annuelle Estimée (€/an)": f"{div_an:,.2f} € / an",
           "Rente Mensuelle Équivalente": f"{div_an/12:,.2f} € / mois",
