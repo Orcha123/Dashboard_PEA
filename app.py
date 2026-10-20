@@ -181,4 +181,92 @@ def calculer_macd(clotures):
     if i >= 12:
       e12 = (prix * k12) + (e12 * (1 - k12))
     if i >= 26:
-      e26 = (prix * k26) + (
+      e26 = (prix * k26) + (e26 * (1 - k26))
+    if i >= 26:
+      macds.append(e12 - e26)
+  if len(macds) < 9:
+    return macds[-1], 0
+  sig = sum(macds[:9]) / 9
+  for m in macds[9:]:
+    sig = (m * k9) + (sig * (1 - k9))
+  return macds[-1], sig
+
+
+def calculer_ema_serie(clotures, periode):
+  if not clotures:
+    return []
+  k = 2 / (periode + 1)
+  emas = []
+  if len(clotures) >= periode:
+    sma = sum(clotures[:periode]) / periode
+    ema = sma
+    for i, prix in enumerate(clotures):
+      if i < periode - 1:
+        emas.append(None)
+      elif i == periode - 1:
+        emas.append(sma)
+      else:
+        ema = (prix * k) + (ema * (1 - k))
+        emas.append(ema)
+  else:
+    ema = clotures[0]
+    for prix in clotures:
+      ema = (prix * k) + (ema * (1 - k))
+      emas.append(ema)
+  return emas
+
+
+def verifier_croisement_2_12(clotures):
+  if len(clotures) < 15:
+    return False
+  ema2_serie = calculer_ema_serie(clotures, 2)
+  ema12_serie = calculer_ema_serie(clotures, 12)
+  valides = [
+      (e2, e12)
+      for e2, e12 in zip(ema2_serie, ema12_serie)
+      if e2 is not None and e12 is not None
+  ]
+  if len(valides) < 2:
+    return False
+  veille_e2, veille_e12 = valides[-2]
+  jour_e2, jour_e12 = valides[-1]
+  return veille_e2 <= veille_e12 and jour_e2 > jour_e12
+
+
+def calculer_regression_lineaire(clotures):
+  n = len(clotures)
+  if n < 2:
+    return clotures[-1], 0.0, []
+  x = list(range(n))
+  moy_x, moy_y = sum(x) / n, sum(clotures) / n
+  numerateur = sum((x[i] - moy_x) * (clotures[i] - moy_y) for i in range(n))
+  denominateur = sum((x[i] - moy_x) ** 2 for i in range(n))
+  pente = numerateur / denominateur if denominateur != 0 else 0
+  ordonnee = moy_y - (pente * moy_x)
+
+  droite_regression = [(pente * i) + ordonnee for i in range(n)]
+  val_reg = droite_regression[-1]
+  ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100
+  return val_reg, ecart_pct, droite_regression
+
+
+@st.cache_data(ttl=3600)
+def recuperer_donnees(symbole):
+  url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbole}?range=3y&interval=1d"
+  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+  try:
+    with urllib.request.urlopen(req, timeout=5) as response:
+      data = json.loads(response.read().decode())
+      result = data["chart"]["result"][0]
+      prix_actuel = result["meta"]["regularMarketPrice"]
+      closes = [
+          p for p in result["indicators"]["quote"][0]["close"] if p is not None
+      ]
+      hauts = [
+          h for h in result["indicators"]["quote"][0]["high"] if h is not None
+      ]
+      bas = [
+          l for l in result["indicators"]["quote"][0]["low"] if l is not None
+      ]
+      return prix_actuel, closes, hauts, bas
+  except
