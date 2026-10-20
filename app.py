@@ -57,29 +57,63 @@ BUDGET_MENSUEL = st.sidebar.number_input(
 
 st.sidebar.markdown("---")
 
-# --- AJOUTER UNE NOUVELLE VALEUR ---
-with st.sidebar.expander("➕ Ajouter une nouvelle action", expanded=False):
-    with st.form("ajout_action_form"):
-        st.markdown("**Ajouter une valeur à l'outil**")
-        nouveau_nom = st.text_input("Nom de l'entreprise (ex: Crédit Agricole)")
-        nouveau_symbole = st.text_input("Ticker Yahoo (ex: ACA.PA)")
-        nouveau_secteur = st.text_input("Secteur (ex: Banque)")
-        nouveau_cible = st.number_input("Prix cible estimé (€)", min_value=0.0, value=15.0, step=1.0)
-        nouveau_div = st.number_input("Dividende annuel (€)", min_value=0.0, value=1.05, step=0.05)
-        nouveau_payout = st.number_input("Payout Ratio (ex: 0.50 pour 50%)", min_value=0.0, max_value=2.0, value=0.50, step=0.05)
+import urllib.parse
+
+# --- RECHERCHE INTELLIGENTE YAHOO ---
+def chercher_sur_yahoo(query):
+    if not query:
+        return []
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            quotes = data.get("quotes", [])
+            resultats = []
+            for q in quotes:
+                # On ne garde que les actions et les ETF
+                if q.get("quoteType") in ["EQUITY", "ETF"]:
+                    nom = q.get("shortname", q.get("longname", "Inconnu"))
+                    symbole = q.get("symbol", "")
+                    bourse = q.get("exchDisp", "")
+                    resultats.append(f"{nom} ({symbole}) - {bourse}")
+            return resultats
+    except Exception:
+        return []
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔍 Recherche rapide")
+st.sidebar.caption("Tapez le nom d'une entreprise (ex: LVMH, Apple, Tesla) puis appuyez sur Entrée.")
+
+recherche_query = st.sidebar.text_input("Nom de l'entreprise :")
+
+if recherche_query:
+    resultats_recherche = chercher_sur_yahoo(recherche_query)
+   
+    if resultats_recherche:
+        choix_action = st.sidebar.selectbox("Sélectionnez la bonne action :", resultats_recherche)
        
-        submit_ajout = st.form_submit_button("Ajouter à mon radar")
-       
-        if submit_ajout and nouveau_nom and nouveau_symbole:
-            st.session_state["watchlist"][nouveau_nom] = {
-                "symbole": nouveau_symbole,
-                "prix_cible": nouveau_cible,
-                "secteur": nouveau_secteur,
-                "div_eur": nouveau_div,
-                "payout_ratio": nouveau_payout,
-                "croissance_5a": "N/A"
-            }
-            st.rerun()
+        if st.sidebar.button("➕ Ajouter à mon radar"):
+            import re
+            # Extraction du nom et du symbole depuis la chaîne "Apple Inc. (AAPL) - NASDAQ"
+            match = re.search(r"^(.*) \((.*?)\)", choix_action)
+            if match:
+                nom_trouve = match.group(1).strip()
+                symbole_trouve = match.group(2).strip()
+               
+                # Ajout à la base de données avec des valeurs neutres par défaut
+                st.session_state["watchlist"][nom_trouve] = {
+                    "symbole": symbole_trouve,
+                    "prix_cible": 0.0, # Vous pourrez affiner plus tard
+                    "secteur": "À définir",
+                    "div_eur": 0.0,    # À renseigner plus tard si elle verse un dividende
+                    "payout_ratio": 0.0,
+                    "croissance_5a": "N/A"
+                }
+                st.rerun() # Recharge la page pour afficher l'action partout
+    else:
+        st.sidebar.warning("Aucune action trouvée pour ce nom.")
+
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔐 Mode d'accès (Test)")
