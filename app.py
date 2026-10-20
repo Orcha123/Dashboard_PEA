@@ -6,24 +6,15 @@ import streamlit as st
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Dashboard PEA - Aide à la Décision DCA",
+    page_title="Suite Boursière PEA & Dividendes",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("📈 Tableau de Bord Pro - Aide à la Décision & Timing PEA")
+st.title("📈 Plateforme Boursière PEA - Aide à la Décision & Patrimoine")
 st.caption(
-    f"Dernière mise à jour des marchés : {datetime.now().strftime('%d/%m/%Y à %H:%M')}"
-)
-
-# Sidebar
-st.sidebar.header("⚙️ Paramètres DCA")
-BUDGET_MENSUEL = st.sidebar.number_input(
-    "Enveloppe Mensuelle (€)",
-    min_value=50.0,
-    max_value=5000.0,
-    value=450.0,
-    step=50.0,
+    "Dernière mise à jour des marchés :"
+    f" {datetime.now().strftime('%d/%m/%Y à %H:%M')}"
 )
 
 # --- WATCHLIST PEA ---
@@ -117,6 +108,34 @@ WATCHLIST = {
         "croissance_5a": "+5.5%",
     },
 }
+
+# --- BARRE LATÉRALE (SIDEBAR) ---
+st.sidebar.header("⚙️ Paramètres DCA")
+BUDGET_MENSUEL = st.sidebar.number_input(
+    "Enveloppe Mensuelle (€)",
+    min_value=50.0,
+    max_value=5000.0,
+    value=450.0,
+    step=50.0,
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("🔐 Mode d'accès (Test)")
+mode_gratuit = st.sidebar.checkbox(
+    "Simuler la vue Visiteur Gratuit (Freemium)", value=False
+)
+
+if mode_gratuit:
+  actions_autorisees = ["TotalEnergies", "Air Liquide"]
+  st.sidebar.info(
+      "🔒 **Mode Découverte actif** : 2 valeurs débloquées sur"
+      f" {len(WATCHLIST)}."
+  )
+else:
+  actions_autorisees = list(WATCHLIST.keys())
+  st.sidebar.success(
+      f"💎 **Mode Abonné Pro actif** : {len(WATCHLIST)} valeurs débloquées."
+  )
 
 
 # --- CALCULS TECHNIQUES ---
@@ -251,7 +270,8 @@ resultats_analysed = []
 donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
 historiques_prix = {}
 
-for nom, info in WATCHLIST.items():
+for nom in actions_autorisees:
+  info = WATCHLIST[nom]
   prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
   if prix_actuel is None or not closes:
     continue
@@ -320,6 +340,7 @@ for nom, info in WATCHLIST.items():
 
   donnees_t1.append({
       "Actif": nom,
+      "Secteur": info["secteur"],
       "Prix (€)": round(prix_actuel, 2),
       "Prix Cible (€)": round(prix_cible, 2),
       "Écart Cible (%)": dist_str,
@@ -405,102 +426,191 @@ montant_tot_div = sum(
     achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries
 )
 
-# --- 1. EN-TÊTE VISUEL (METRICS) ---
-col1, col2, col3, col4 = st.columns(4)
-nb_opportunites = sum(
-    1
-    for d in donnees_t1
-    if "ACHAT" in d["Décision"] or "ACCUMULATION" in d["Décision"]
-)
-nb_croisements = sum(1 for d in donnees_t1 if "Croisement" in d["EMA 2/12"])
 
-col1.metric("Opportunités d'Achat", f"{nb_opportunites} / {len(WATCHLIST)}")
-col2.metric("Signaux EMA 2/12", f"{nb_croisements} Actif(s)")
-col3.metric("Budget DCA Configuré", f"{BUDGET_MENSUEL:.0f} €")
-col4.metric("Rente Mensuelle Générée", f"+{montant_tot_div/12:.2f} €/mois")
-
-st.markdown("---")
-
-# --- 2. TABLEAU PRINCIPAL : TIMING & MOMENTUM ---
-st.subheader("📊 Tableau 1 : Timing & Momentum (Aide à la Décision)")
-st.dataframe(donnees_t1, use_container_width=True)
-
-st.markdown("---")
-
-# --- 3. ONGLETS DES TABLEAUX SECONDAIRES & DCA ---
-st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
-tab_val, tab_tech, tab_div, tab_dca = st.tabs([
-    "📐 Tableau 2 : Analyse Value",
-    "🎯 Tableau 4 : Niveaux Techniques",
-    "🛡️ Tableau 3 : Rente & Dividendes",
-    "💰 Allocation DCA du Mois",
+# ==============================================================================
+# NAVIGATION PRINCIPALE : LES 4 ONGLETS DE LA SUITE BOURSIÈRE
+# ==============================================================================
+onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
+    "🔍 1. Radar & Aide à l'Achat (DCA)",
+    "💼 2. Mon Portefeuille & Secteurs",
+    "📅 3. Dividendes & Boule de Neige",
+    "🤖 4. Coach & Audit IA",
 ])
 
-with tab_val:
-  st.subheader("📐 Écart à la Régression Linéaire")
-  st.dataframe(donnees_t2, use_container_width=True)
+# ------------------------------------------------------------------------------
+# ONGLET 1 : RADAR & AIDE À L'ACHAT (VOTRE OUTIL ACTUEL ENRICHI)
+# ------------------------------------------------------------------------------
+with onglet_radar:
+  if mode_gratuit:
+    st.warning(
+        "🔒 **Aperçu Gratuit (Freemium)** : Vous visualisez actuellement 2"
+        " actions de démonstration (TotalEnergies et Air Liquide). Passez à"
+        " l'abonnement complet pour débloquer toutes les valeurs du PEA !"
+    )
 
-with tab_tech:
-  st.subheader("🎯 Niveaux 30 Jours (Supports & Résistances)")
-  st.dataframe(donnees_t4, use_container_width=True)
+  # --- 1. EN-TÊTE VISUEL (METRICS) ---
+  col1, col2, col3, col4 = st.columns(4)
+  nb_opportunites = sum(
+      1
+      for d in donnees_t1
+      if "ACHAT" in d["Décision"] or "ACCUMULATION" in d["Décision"]
+  )
+  nb_croisements = sum(1 for d in donnees_t1 if "Croisement" in d["EMA 2/12"])
 
-with tab_div:
-  st.subheader("🛡️ Sûreté des Dividendes & Payout Ratio")
-  st.dataframe(donnees_t3, use_container_width=True)
+  col1.metric(
+      "Opportunités d'Achat", f"{nb_opportunites} / {len(actions_autorisees)}"
+  )
+  col2.metric("Signaux EMA 2/12", f"{nb_croisements} Actif(s)")
+  col3.metric("Budget DCA Configuré", f"{BUDGET_MENSUEL:.0f} €")
+  col4.metric("Rente Mensuelle Générée", f"+{montant_tot_div/12:.2f} €/mois")
 
-with tab_dca:
-  st.subheader("💡 Allocation Suggérée en Actions Entières")
-  if not candidats_tries:
-    st.warning("Aucune action n'atteint le seuil d'achat ce mois-ci (Scores < 40).")
+  st.markdown("---")
+
+  # --- NOUVEAU : MENU POUR CHOISIR / RECHERCHER UNE ACTION ---
+  st.subheader("🔎 Filtrer ou rechercher une valeur")
+  options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
+  choix_action = st.selectbox(
+      "Choisissez une action dans la liste (ou tapez son nom) :",
+      options=options_filtre,
+  )
+
+  # Application du filtre sur les tableaux
+  if choix_action == "📋 Afficher toutes les actions":
+    t1_filtre = donnees_t1
+    t2_filtre = donnees_t2
+    t3_filtre = donnees_t3
+    t4_filtre = donnees_t4
   else:
-    allocation_data = []
-    total_investi = 0
-    total_div_an = 0
+    t1_filtre = [d for d in donnees_t1 if d["Actif"] == choix_action]
+    t2_filtre = [d for d in donnees_t2 if d["Actif"] == choix_action]
+    t3_filtre = [d for d in donnees_t3 if d["Actif"] == choix_action]
+    t4_filtre = [d for d in donnees_t4 if d["Actif"] == choix_action]
 
-    for item in candidats_tries:
-      nb = achats_simules[item["nom"]]
-      if nb > 0:
-        montant_eff = nb * item["prix"]
-        div_gen = nb * item["div_eur"]
-        total_investi += montant_eff
-        total_div_an += div_gen
+  # --- 2. TABLEAU PRINCIPAL : TIMING & MOMENTUM ---
+  st.subheader("📊 Tableau 1 : Timing & Momentum (Aide à la Décision)")
+  st.dataframe(t1_filtre, use_container_width=True)
 
-        allocation_data.append({
-            "Actif": item["nom"],
-            "Prix Actuel (€)": f"{item['prix']:.2f} €",
-            "Actions à Acheter": nb,
-            "Montant Effectif (€)": f"{montant_eff:.2f} €",
-            "Rente Annuelle Générée (€)": f"+{div_gen:.2f} €/an",
-        })
+  st.markdown("---")
 
-    if allocation_data:
-      st.dataframe(allocation_data, use_container_width=True)
-      st.success(
-          f"💰 **Total investi ce mois-ci :** {total_investi:.2f} € /"
-          f" {BUDGET_MENSUEL:.2f} € (Liquidités restantes :"
-          f" {budget_courant:.2f} €)\n"
-          f"📈 **Rente annuelle créée :** +{total_div_an:.2f} €/an"
+  # --- 3. ONGLETS DES TABLEAUX SECONDAIRES & DCA ---
+  st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
+  tab_val, tab_tech, tab_div, tab_dca = st.tabs([
+      "📐 Tableau 2 : Analyse Value",
+      "🎯 Tableau 4 : Niveaux Techniques",
+      "🛡️ Tableau 3 : Rente & Dividendes",
+      "💰 Allocation DCA du Mois",
+  ])
+
+  with tab_val:
+    st.subheader("📐 Écart à la Régression Linéaire")
+    st.dataframe(t2_filtre, use_container_width=True)
+
+  with tab_tech:
+    st.subheader("🎯 Niveaux 30 Jours (Supports & Résistances)")
+    st.dataframe(t4_filtre, use_container_width=True)
+
+  with tab_div:
+    st.subheader("🛡️ Sûreté des Dividendes & Payout Ratio")
+    st.dataframe(t3_filtre, use_container_width=True)
+
+  with tab_dca:
+    st.subheader("💡 Allocation Suggérée en Actions Entières")
+    if not candidats_tries:
+      st.warning(
+          "Aucune action n'atteint le seuil d'achat ce mois-ci (Scores < 40)."
       )
     else:
-      st.warning(
-          "Le budget mensuel est trop faible pour acheter une action entière de"
-          " ces valeurs."
-      )
+      allocation_data = []
+      total_investi = 0
+      total_div_an = 0
 
-st.markdown("---")
+      for item in candidats_tries:
+        nb = achats_simules[item["nom"]]
+        if nb > 0:
+          montant_eff = nb * item["prix"]
+          div_gen = nb * item["div_eur"]
+          total_investi += montant_eff
+          total_div_an += div_gen
 
-# --- 4. SECTION FINALE : GRAPHIQUE UNIQUE À SÉLECTIONNER ---
-st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
-action_selectionnee = st.selectbox(
-    "Sélectionnez l'action à analyser visuellement :",
-    list(WATCHLIST.keys()),
-)
+          allocation_data.append({
+              "Actif": item["nom"],
+              "Prix Actuel (€)": f"{item['prix']:.2f} €",
+              "Actions à Acheter": nb,
+              "Montant Effectif (€)": f"{montant_eff:.2f} €",
+              "Rente Annuelle Générée (€)": f"+{div_gen:.2f} €/an",
+          })
 
-if action_selectionnee in historiques_prix:
-  closes = historiques_prix[action_selectionnee]
-  _, _, droite_reg = calculer_regression_lineaire(closes)
+      if allocation_data:
+        st.dataframe(allocation_data, use_container_width=True)
+        st.success(
+            f"💰 **Total investi ce mois-ci :** {total_investi:.2f} € /"
+            f" {BUDGET_MENSUEL:.2f} € (Liquidités restantes :"
+            f" {budget_courant:.2f} €)\n"
+            f"📈 **Rente annuelle créée :** +{total_div_an:.2f} €/an"
+        )
+      else:
+        st.warning(
+            "Le budget mensuel est trop faible pour acheter une action entière"
+            " de ces valeurs."
+        )
 
-  st.line_chart({
-      "Cours Réel": closes,
-      "Tendance 3 Ans (Régression)": droite_reg,
-  })
+  st.markdown("---")
+
+  # --- 4. SECTION FINALE : GRAPHIQUE UNIQUE À SÉLECTIONNER ---
+  st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
+
+  # Si l'utilisateur a choisi une action dans le menu du haut, le graphique se cale dessus automatiquement
+  index_defaut = (
+      actions_autorisees.index(choix_action)
+      if choix_action in actions_autorisees
+      else 0
+  )
+
+  action_selectionnee = st.selectbox(
+      "Sélectionnez l'action à analyser visuellement :",
+      actions_autorisees,
+      index=index_defaut,
+  )
+
+  if action_selectionnee in historiques_prix:
+    closes = historiques_prix[action_selectionnee]
+    _, _, droite_reg = calculer_regression_lineaire(closes)
+
+    st.line_chart({
+        "Cours Réel": closes,
+        "Tendance 3 Ans (Régression)": droite_reg,
+    })
+
+# ------------------------------------------------------------------------------
+# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (PRÊT POUR LA PROCHAINE ÉTAPE)
+# ------------------------------------------------------------------------------
+with onglet_portefeuille:
+  st.subheader("💼 Suivi de mon Portefeuille & Répartition Sectorielle")
+  st.info(
+      "🚧 **Prochaine étape de construction** : Ici, vous pourrez saisir vos"
+      " actions détenues (quantité, PRU) et visualiser automatiquement votre"
+      " exposition par secteur (Énergie, Santé, Luxe, Finance...)."
+  )
+
+# ------------------------------------------------------------------------------
+# ONGLET 3 : DIVIDENDES & BOULE DE NEIGE (PRÊT POUR LA PROCHAINE ÉTAPE)
+# ------------------------------------------------------------------------------
+with onglet_dividendes:
+  st.subheader("📅 Calendrier des Dividendes & Projection Boule de Neige")
+  st.info(
+      "🚧 **Prochaine étape de construction** : Ici s'afficheront votre"
+      " calendrier annuel des versements (mois par mois) et le simulateur de"
+      " rente à 5, 10 et 20 ans."
+  )
+
+# ------------------------------------------------------------------------------
+# ONGLET 4 : COACH & AUDIT IA (PRÊT POUR LA PROCHAINE ÉTAPE)
+# ------------------------------------------------------------------------------
+with onglet_ia:
+  st.subheader("🤖 Diagnostic & Coach IA de votre Portefeuille")
+  st.info(
+      "🚧 **Prochaine étape de construction** : Un bouton vous permettra ici de"
+      " lancer une analyse complète de votre portefeuille par Intelligence"
+      " Artificielle (score de diversification, risques et pistes"
+      " d'équilibrage)."
+  )
