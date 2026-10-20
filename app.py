@@ -881,9 +881,74 @@ with onglet_dividendes:
 # ------------------------------------------------------------------------------
 with onglet_ia:
   st.subheader("🤖 Diagnostic & Coach IA de votre Portefeuille")
-  st.info(
-      "🚧 **Prochaine étape de construction** : Un bouton vous permettra ici de"
-      " lancer une analyse complète de votre portefeuille par Intelligence"
-      " Artificielle (score de diversification, risques et pistes"
-      " d'équilibrage)."
+  st.markdown(
+      "Analyse automatisée de la santé financière, de la diversification et"
+      " de la sécurité de vos dividendes :"
   )
+
+  if not portefeuille_utilisateur:
+    st.warning(
+        "Veuillez d'abord renseigner votre portefeuille dans l'onglet 2 pour"
+        " lancer l'audit."
+    )
+  else:
+    # Calculs pour l'audit
+    nb_lignes = len(portefeuille_utilisateur)
+    payouts_moy = sum(
+        WATCHLIST[nom]["payout_ratio"] for nom in portefeuille_utilisateur
+    ) / nb_lignes
+
+    col_a1, col_a2, col_a3 = st.columns(3)
+    col_a1.metric("Nombre de Lignes", f"{nb_lignes} action(s)")
+    col_a2.metric(
+        "Payout Ratio Moyen",
+        f"{payouts_moy*100:.1f} %",
+        (
+            "🛡️ Très Sûr (<60%)"
+            if payouts_moy <= 0.60
+            else "⚠️ À surveiller"
+        ),
+    )
+    col_a3.metric(
+        "Indice de Diversification",
+        "✅ Bon" if nb_lignes >= 5 else "⚠️ À renforcer",
+        f"{nb_lignes} secteurs/valeurs",
+    )
+
+    st.markdown("---")
+    st.subheader("💡 Recommandations Personnalisées du Coach")
+
+    recommandations = []
+
+    if nb_lignes < 5:
+      recommandations.append(
+          "🔸 **Diversification** : Votre portefeuille comporte moins de 5"
+          " lignes. Pensez à l'élargir pour lisser le risque sectoriel."
+      )
+    else:
+      recommandations.append(
+          "✅ **Diversification** : Le nombre de lignes est correct pour"
+          " assurer une bonne répartition du risque."
+      )
+
+    if payouts_moy <= 0.60:
+      recommandations.append(
+          "✅ **Sécurité des dividendes** : Le taux de distribution global"
+          " (payout ratio) de vos entreprises est sain, garantissant la pérennité"
+          " des versements."
+      )
+    else:
+      recommandations.append(
+          "⚠️ **Sécurité des dividendes** : Attention, certaines de vos"
+          " lignes affichent un payout ratio élevé, ce qui limite leur marge de"
+          " manœuvre future."
+      )
+
+    recommandations.append(
+        f"🎯 **Stratégie DCA** : Avec votre enveloppe mensuelle de"
+        f" **{BUDGET_MENSUEL:.0f} €**, vous optimisez efficacement vos"
+        " achats sur les opportunités du mois."
+    )
+
+    for rec in recommandations:
+      st.markdown(f"- {rec}")
