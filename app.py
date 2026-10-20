@@ -804,76 +804,67 @@ with onglet_dividendes:
 
     st.markdown("---")
 
-    # --- NOUVEAU : LE CALENDRIER VISUEL ---
+    # --- NOUVEAU : LE CALENDRIER VISUEL (DESIGN PRO) ---
     st.subheader("🗓️ Calendrier Annuel des Détachements")
     st.caption("Repérez visuellement les mois de versements et les montants estimés pour chaque ligne de votre portefeuille.")
-   
-    donnees_calendrier = []
+
     liste_des_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-   
-    # Pour calculer le total mensuel de tout le portefeuille
     totaux_mensuels = {m: 0.0 for m in liste_des_mois}
    
+    # Création du style visuel (CSS)
+    html_cal = """
+    <style>
+    .cal-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 20px; font-family: sans-serif; }
+    .cal-table th { border-bottom: 3px solid rgba(128,128,128,0.4); padding: 15px 5px; font-weight: 900; font-size: 1.1em; background-color: rgba(128,128,128,0.05); text-transform: uppercase; }
+    .cal-table td { border-bottom: 1px solid rgba(128,128,128,0.2); border-right: 1px dashed rgba(128,128,128,0.1); padding: 12px 5px; vertical-align: middle; }
+    .cal-table td:last-child { border-right: none; }
+    .cal-total { font-weight: 900; background-color: rgba(46,204,113,0.15); font-size: 1.1em; border-top: 2px solid rgba(46,204,113,0.5); }
+    .cal-action { font-weight: bold; text-align: left !important; padding-left: 15px !important; background-color: rgba(128,128,128,0.02); }
+    .badge-div { background-color: rgba(46,204,113,0.2); color: inherit; border-radius: 6px; padding: 5px 8px; font-size: 0.95em; font-weight: bold; display: inline-block; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    </style>
+    """
+   
+    # Construction de l'en-tête du tableau
+    html_cal += "<table class='cal-table'><thead><tr>"
+    html_cal += "<th style='text-align: left; padding-left: 15px;'>Action</th>"
+    for m in liste_des_mois:
+        html_cal += f"<th>{m}</th>"
+    html_cal += "</tr></thead><tbody>"
+
+    # Remplissage des lignes avec les actions
     for nom, data in portefeuille_utilisateur.items():
         qte = data["qte"]
         div_annuel_unitaire = WATCHLIST[nom]["div_eur"]
         total_div_ligne = qte * div_annuel_unitaire
         mois_action = WATCHLIST[nom].get("mois_div", [])
        
-        # On supprime la colonne Secteur, on ne garde que l'Action
-        ligne_cal = {"Action": nom}
-       
-        # Calcul du montant par versement (ex: si 4 versements, on divise le total par 4)
         montant_par_versement = 0.0
         if len(mois_action) > 0:
             montant_par_versement = total_div_ligne / len(mois_action)
            
+        html_cal += f"<tr><td class='cal-action'>{nom}</td>"
         for m in liste_des_mois:
             if m in mois_action:
                 if montant_par_versement > 0:
-                    ligne_cal[m] = f"💸 {montant_par_versement:.2f} €"
+                    html_cal += f"<td><div class='badge-div'>💸 {montant_par_versement:.2f} €</div></td>"
                     totaux_mensuels[m] += montant_par_versement
                 else:
-                    ligne_cal[m] = "💸" # Si le dividende est à 0 mais le mois est coché
+                    html_cal += "<td><div class='badge-div'>💸</div></td>"
             else:
-                ligne_cal[m] = ""
-               
-        donnees_calendrier.append(ligne_cal)
+                html_cal += "<td></td>"
+        html_cal += "</tr>"
        
-    # Ajout de la ligne des Totaux à la fin du tableau
-    if donnees_calendrier:
-        ligne_totale = {"Action": "💰 TOTAL MENSUEL"}
-        for m in liste_des_mois:
-            if totaux_mensuels[m] > 0:
-                ligne_totale[m] = f"🟢 {totaux_mensuels[m]:.2f} €"
-            else:
-                ligne_totale[m] = ""
-        donnees_calendrier.append(ligne_totale)
-       
-        st.dataframe(donnees_calendrier, use_container_width=True)
+    # Ligne finale des totaux
+    html_cal += "<tr class='cal-total'><td class='cal-action'>💰 TOTAL MENSUEL</td>"
+    for m in liste_des_mois:
+        if totaux_mensuels[m] > 0:
+            html_cal += f"<td>🟢 {totaux_mensuels[m]:.2f} €</td>"
+        else:
+            html_cal += "<td></td>"
+    html_cal += "</tr></tbody></table>"
 
-    
-    st.markdown("---")
-
-    st.subheader("📋 Répartition des versements annuels par action")
-    tableau_dividendes_lignes = []
-    for nom, data in portefeuille_utilisateur.items():
-      qte = data["qte"]
-      div_unit = WATCHLIST[nom]["div_eur"]
-      total_ligne = qte * div_unit
-      poids_div = (
-          (total_ligne / total_div_an) * 100 if total_div_an > 0 else 0
-      )
-      tableau_dividendes_lignes.append({
-          "Action": nom,
-          "Secteur": WATCHLIST[nom]["secteur"],
-          "Quantité": qte,
-          "Dividende/Act. (€)": f"{div_unit:.2f} €",
-          "Total Annuel (€)": f"{total_ligne:,.2f} €",
-          "Part des Revenus (%)": f"{poids_div:.1f}%",
-      })
-
-    st.dataframe(tableau_dividendes_lignes, use_container_width=True)
+    # Affichage du tableau HTML dans Streamlit
+    st.markdown(html_cal, unsafe_allow_html=True)
 
     st.markdown("---")
     st.subheader(
