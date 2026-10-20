@@ -2,6 +2,7 @@ from datetime import datetime
 import json
 import math
 import urllib.request
+import plotly.express as px  # <-- Importation de Plotly pour le camembert
 import streamlit as st
 
 # Configuration de la page
@@ -280,7 +281,6 @@ donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
 historiques_prix = {}
 prix_temps_reel = {}
 
-# On récupère les cours de toute la Watchlist pour que le portefeuille ait toujours les vrais prix
 for nom, info in WATCHLIST.items():
   prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
   if prix_actuel is None or not closes:
@@ -289,7 +289,6 @@ for nom, info in WATCHLIST.items():
   prix_temps_reel[nom] = prix_actuel
   historiques_prix[nom] = closes
 
-  # Si le mode Freemium est actif, on ne remplit le Radar DCA qu'avec les actions autorisées
   if nom not in actions_autorisees:
     continue
 
@@ -463,7 +462,6 @@ with onglet_radar:
         " l'abonnement complet pour débloquer toutes les valeurs du PEA !"
     )
 
-  # --- 1. EN-TÊTE VISUEL (METRICS) ---
   col1, col2, col3, col4 = st.columns(4)
   nb_opportunites = sum(
       1
@@ -481,7 +479,6 @@ with onglet_radar:
 
   st.markdown("---")
 
-  # --- MENU POUR CHOISIR / RECHERCHER UNE ACTION ---
   st.subheader("🔎 Filtrer ou rechercher une valeur")
   options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
   choix_action = st.selectbox(
@@ -500,13 +497,11 @@ with onglet_radar:
     t3_filtre = [d for d in donnees_t3 if d["Actif"] == choix_action]
     t4_filtre = [d for d in donnees_t4 if d["Actif"] == choix_action]
 
-  # --- 2. TABLEAU PRINCIPAL : TIMING & MOMENTUM ---
   st.subheader("📊 Tableau 1 : Timing & Momentum (Aide à la Décision)")
   st.dataframe(t1_filtre, use_container_width=True)
 
   st.markdown("---")
 
-  # --- 3. ONGLETS DES TABLEAUX SECONDAIRES & DCA ---
   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
@@ -570,7 +565,6 @@ with onglet_radar:
 
   st.markdown("---")
 
-  # --- 4. SECTION FINALE : GRAPHIQUE UNIQUE À SÉLECTIONNER ---
   st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
   index_defaut = (
       actions_autorisees.index(choix_action)
@@ -594,7 +588,7 @@ with onglet_radar:
     })
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (NOUVEAU !)
+# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (AVEC CAMEMBERT PLOTLY)
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
   st.subheader("💼 Gestionnaire de Portefeuille & Répartition Sectorielle")
@@ -606,7 +600,6 @@ with onglet_portefeuille:
         " portefeuille et de débloquer l'Audit IA."
     )
 
-  # Volet déroulant pour saisir ou modifier ses lignes facilement
   with st.expander(
       "✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)",
       expanded=False,
@@ -651,7 +644,6 @@ with onglet_portefeuille:
           }
         st.markdown("---")
 
-  # Calculs du portefeuille en temps réel
   if not portefeuille_utilisateur:
     st.warning(
         "Votre portefeuille est vide. Cliquez sur le menu « ✏️ Saisir ou"
@@ -665,7 +657,6 @@ with onglet_portefeuille:
     cout_total_achat = 0.0
     dividendes_annuels_totaux = 0.0
 
-    # 1er passage pour calculer les totaux
     for nom_act, data_pos in portefeuille_utilisateur.items():
       qte = data_pos["qte"]
       pru = data_pos["pru"]
@@ -720,7 +711,6 @@ with onglet_portefeuille:
 
     st.markdown("---")
 
-    # 2e passage pour construire le tableau détaillé avec les poids en %
     alertes_concentration = []
     for nom_act, data_pos in portefeuille_utilisateur.items():
       qte = data_pos["qte"]
@@ -758,11 +748,9 @@ with onglet_portefeuille:
           "Poids (%)": f"{poids_pct:.1f}%",
       })
 
-    # Affichage du tableau des lignes détenues
     st.subheader("📋 Détail de mes lignes en portefeuille")
     st.dataframe(lignes_portefeuille, use_container_width=True)
 
-    # Alertes automatiques de surexposition
     if alertes_concentration:
       for nom_al, p_al in alertes_concentration:
         st.warning(
@@ -778,13 +766,30 @@ with onglet_portefeuille:
 
     st.markdown("---")
 
-    # --- RÉPARTITION SECTORIELLE VISUELLE ---
+    # --- CAMEMBERT SECTORIEL (DIAGRAMME CIRCULAIRE PLOTLY) ---
     st.subheader("🏭 Répartition Sectorielle de mon Portefeuille")
     col_graph, col_tab_sec = st.columns([3, 2])
 
     with col_graph:
-      st.caption("Valorisation (€) détenue par secteur d'activité :")
-      st.bar_chart(repartition_secteurs)
+      st.caption("Visualisation de l'exposition par secteur :")
+      # Préparation des données pour le camembert Plotly
+      secteurs_noms = list(repartition_secteurs.keys())
+      secteurs_valeurs = list(repartition_secteurs.values())
+
+      # Création du graphique circulaire (Donut chart moderne)
+      fig_camembert = px.pie(
+          names=secteurs_noms,
+          values=secteurs_valeurs,
+          hole=0.4,  # Style Donut élégant
+          color_discrete_sequence=px.colors.qualitative.Prism,
+      )
+      fig_camembert.update_traces(
+          textposition="inside", textinfo="percent+label"
+      )
+      fig_camembert.update_layout(
+          margin=dict(t=10, b=10, l=10, r=10), height=350, showlegend=False
+      )
+      st.plotly_chart(fig_camembert, use_container_width=True)
 
     with col_tab_sec:
       st.caption("Poids de chaque secteur (%) :")
@@ -803,7 +808,7 @@ with onglet_portefeuille:
       st.dataframe(tableau_secteurs, use_container_width=True)
 
 # ------------------------------------------------------------------------------
-# ONGLET 3 : DIVIDENDES & BOULE DE NEIGE (PRÊT POUR LA PROCHAINE ÉTAPE)
+# ONGLET 3 : DIVIDENDES & BOULE DE NEIGE
 # ------------------------------------------------------------------------------
 with onglet_dividendes:
   st.subheader("📅 Calendrier des Dividendes & Projection Boule de Neige")
@@ -814,7 +819,7 @@ with onglet_dividendes:
   )
 
 # ------------------------------------------------------------------------------
-# ONGLET 4 : COACH & AUDIT IA (PRÊT POUR LA PROCHAINE ÉTAPE)
+# ONGLET 4 : COACH & AUDIT IA
 # ------------------------------------------------------------------------------
 with onglet_ia:
   st.subheader("🤖 Diagnostic & Coach IA de votre Portefeuille")
@@ -823,4 +828,3 @@ with onglet_ia:
       " lancer une analyse complète de votre portefeuille par Intelligence"
       " Artificielle (score de diversification, risques et pistes"
       " d'équilibrage)."
-  )
