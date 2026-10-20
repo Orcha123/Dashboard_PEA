@@ -109,6 +109,15 @@ WATCHLIST = {
     },
 }
 
+# --- PORTEFEUILLE PAR DÉFAUT (EXEMPLE MODIFIABLE PAR L'UTILISATEUR) ---
+PORTEFEUILLE_DEFAUT = {
+    "TotalEnergies": {"qte": 25, "pru": 54.0},
+    "Air Liquide": {"qte": 10, "pru": 155.0},
+    "Vinci": {"qte": 12, "pru": 98.0},
+    "Sanofi": {"qte": 10, "pru": 86.0},
+    "BNP Paribas": {"qte": 15, "pru": 58.0},
+}
+
 # --- BARRE LATÉRALE (SIDEBAR) ---
 st.sidebar.header("⚙️ Paramètres DCA")
 BUDGET_MENSUEL = st.sidebar.number_input(
@@ -269,14 +278,20 @@ def recuperer_donnees(symbole):
 resultats_analysed = []
 donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
 historiques_prix = {}
+prix_temps_reel = {}
 
-for nom in actions_autorisees:
-  info = WATCHLIST[nom]
+# On récupère les cours de toute la Watchlist pour que le portefeuille ait toujours les vrais prix
+for nom, info in WATCHLIST.items():
   prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
   if prix_actuel is None or not closes:
     continue
 
+  prix_temps_reel[nom] = prix_actuel
   historiques_prix[nom] = closes
+
+  # Si le mode Freemium est actif, on ne remplit le Radar DCA qu'avec les actions autorisées
+  if nom not in actions_autorisees:
+    continue
 
   rendement_actuel = info["div_eur"] / prix_actuel
   prix_cible = info["prix_cible"]
@@ -438,7 +453,7 @@ onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
 ])
 
 # ------------------------------------------------------------------------------
-# ONGLET 1 : RADAR & AIDE À L'ACHAT (VOTRE OUTIL ACTUEL ENRICHI)
+# ONGLET 1 : RADAR & AIDE À L'ACHAT
 # ------------------------------------------------------------------------------
 with onglet_radar:
   if mode_gratuit:
@@ -466,7 +481,7 @@ with onglet_radar:
 
   st.markdown("---")
 
-  # --- NOUVEAU : MENU POUR CHOISIR / RECHERCHER UNE ACTION ---
+  # --- MENU POUR CHOISIR / RECHERCHER UNE ACTION ---
   st.subheader("🔎 Filtrer ou rechercher une valeur")
   options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
   choix_action = st.selectbox(
@@ -474,7 +489,6 @@ with onglet_radar:
       options=options_filtre,
   )
 
-  # Application du filtre sur les tableaux
   if choix_action == "📋 Afficher toutes les actions":
     t1_filtre = donnees_t1
     t2_filtre = donnees_t2
@@ -558,8 +572,6 @@ with onglet_radar:
 
   # --- 4. SECTION FINALE : GRAPHIQUE UNIQUE À SÉLECTIONNER ---
   st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
-
-  # Si l'utilisateur a choisi une action dans le menu du haut, le graphique se cale dessus automatiquement
   index_defaut = (
       actions_autorisees.index(choix_action)
       if choix_action in actions_autorisees
@@ -582,15 +594,213 @@ with onglet_radar:
     })
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (PRÊT POUR LA PROCHAINE ÉTAPE)
+# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (NOUVEAU !)
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
-  st.subheader("💼 Suivi de mon Portefeuille & Répartition Sectorielle")
-  st.info(
-      "🚧 **Prochaine étape de construction** : Ici, vous pourrez saisir vos"
-      " actions détenues (quantité, PRU) et visualiser automatiquement votre"
-      " exposition par secteur (Énergie, Santé, Luxe, Finance...)."
-  )
+  st.subheader("💼 Gestionnaire de Portefeuille & Répartition Sectorielle")
+
+  if mode_gratuit:
+    st.info(
+        "💡 **Aperçu Pro** : En mode gratuit, vous pouvez tester le"
+        " simulateur ci-dessous. L'abonnement permettra de sauvegarder votre"
+        " portefeuille et de débloquer l'Audit IA."
+    )
+
+  # Volet déroulant pour saisir ou modifier ses lignes facilement
+  with st.expander(
+      "✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)",
+      expanded=False,
+  ):
+    st.caption(
+        "Indiquez le nombre d'actions que vous possédez dans votre PEA et votre"
+        " Prix de Revient Unitaire (PRU). Mettez 0 si vous ne possédez pas"
+        " l'action."
+    )
+    portefeuille_utilisateur = {}
+    cols_saisie = st.columns(3)
+
+    for idx, (nom_act, info_act) in enumerate(WATCHLIST.items()):
+      col_active = cols_saisie[idx % 3]
+      with col_active:
+        st.markdown(f"**{nom_act}** *({info_act['secteur']})*")
+        qte_defaut = PORTEFEUILLE_DEFAUT.get(nom_act, {}).get("qte", 0)
+        pru_defaut = PORTEFEUILLE_DEFAUT.get(nom_act, {}).get(
+            "pru", float(info_act["prix_cible"])
+        )
+
+        qte_saisie = st.number_input(
+            f"Quantité ({nom_act})",
+            min_value=0,
+            max_value=10000,
+            value=int(qte_defaut),
+            step=1,
+            key=f"qte_{nom_act}",
+        )
+        pru_saisi = st.number_input(
+            f"PRU € ({nom_act})",
+            min_value=1.0,
+            max_value=5000.0,
+            value=float(pru_defaut),
+            step=0.5,
+            key=f"pru_{nom_act}",
+        )
+        if qte_saisie > 0:
+          portefeuille_utilisateur[nom_act] = {
+              "qte": qte_saisie,
+              "pru": pru_saisi,
+          }
+        st.markdown("---")
+
+  # Calculs du portefeuille en temps réel
+  if not portefeuille_utilisateur:
+    st.warning(
+        "Votre portefeuille est vide. Cliquez sur le menu « ✏️ Saisir ou"
+        " modifier mes actions détenues » juste au-dessus pour ajouter vos"
+        " premières actions !"
+    )
+  else:
+    lignes_portefeuille = []
+    repartition_secteurs = {}
+    valeur_totale_portefeuille = 0.0
+    cout_total_achat = 0.0
+    dividendes_annuels_totaux = 0.0
+
+    # 1er passage pour calculer les totaux
+    for nom_act, data_pos in portefeuille_utilisateur.items():
+      qte = data_pos["qte"]
+      pru = data_pos["pru"]
+      info_act = WATCHLIST[nom_act]
+      prix_jour = prix_temps_reel.get(nom_act, info_act["prix_cible"])
+
+      val_ligne = qte * prix_jour
+      cout_ligne = qte * pru
+      div_ligne = qte * info_act["div_eur"]
+
+      valeur_totale_portefeuille += val_ligne
+      cout_total_achat += cout_ligne
+      dividendes_annuels_totaux += div_ligne
+
+      secteur = info_act["secteur"]
+      repartition_secteurs[secteur] = (
+          repartition_secteurs.get(secteur, 0.0) + val_ligne
+      )
+
+    plus_value_globale = valeur_totale_portefeuille - cout_total_achat
+    plus_value_pct = (
+        (plus_value_globale / cout_total_achat) * 100
+        if cout_total_achat > 0
+        else 0.0
+    )
+    yoc_global = (
+        (dividendes_annuels_totaux / cout_total_achat) * 100
+        if cout_total_achat > 0
+        else 0.0
+    )
+
+    # --- 4 INDICATEURS CLÉS EN HAUT DU PORTEFEUILLE ---
+    c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+    c_p1.metric(
+        "Valorisation Totale PEA", f"{valeur_totale_portefeuille:,.2f} €"
+    )
+    c_p2.metric(
+        "Plus/Moins-Value Latente",
+        f"{plus_value_globale:+,.2f} €",
+        f"{plus_value_pct:+.1f}%",
+    )
+    c_p3.metric(
+        "Dividendes Annuels Estimés",
+        f"{dividendes_annuels_totaux:,.2f} € / an",
+        f"Soit {dividendes_annuels_totaux/12:.1f} €/mois",
+    )
+    c_p4.metric(
+        "Rendement sur PRU (Yield on Cost)",
+        f"{yoc_global:.2f} %",
+        f"Capital investi : {cout_total_achat:,.0f} €",
+    )
+
+    st.markdown("---")
+
+    # 2e passage pour construire le tableau détaillé avec les poids en %
+    alertes_concentration = []
+    for nom_act, data_pos in portefeuille_utilisateur.items():
+      qte = data_pos["qte"]
+      pru = data_pos["pru"]
+      info_act = WATCHLIST[nom_act]
+      prix_jour = prix_temps_reel.get(nom_act, info_act["prix_cible"])
+
+      val_ligne = qte * prix_jour
+      cout_ligne = qte * pru
+      pv_eur = val_ligne - cout_ligne
+      pv_pct = ((pv_eur / cout_ligne) * 100) if cout_ligne > 0 else 0.0
+      div_ligne = qte * info_act["div_eur"]
+      yoc_ligne = ((info_act["div_eur"] / pru) * 100) if pru > 0 else 0.0
+      poids_pct = (
+          (val_ligne / valeur_totale_portefeuille) * 100
+          if valeur_totale_portefeuille > 0
+          else 0.0
+      )
+
+      if poids_pct > 25.0:
+        alertes_concentration.append((nom_act, poids_pct))
+
+      statut_pv = "🟢" if pv_eur >= 0 else "🔴"
+
+      lignes_portefeuille.append({
+          "Action": nom_act,
+          "Secteur": info_act["secteur"],
+          "Qté": qte,
+          "PRU (€)": round(pru, 2),
+          "Cours Actuel (€)": round(prix_jour, 2),
+          "Valorisation (€)": round(val_ligne, 2),
+          "+/- Value (€)": f"{statut_pv} {pv_eur:+.2f} € ({pv_pct:+.1f}%)",
+          "Rendement/PRU": f"{yoc_ligne:.2f}%",
+          "Dividendes (€/an)": f"{div_ligne:.2f} €",
+          "Poids (%)": f"{poids_pct:.1f}%",
+      })
+
+    # Affichage du tableau des lignes détenues
+    st.subheader("📋 Détail de mes lignes en portefeuille")
+    st.dataframe(lignes_portefeuille, use_container_width=True)
+
+    # Alertes automatiques de surexposition
+    if alertes_concentration:
+      for nom_al, p_al in alertes_concentration:
+        st.warning(
+            f"⚠️ **Alerte de concentration** : La ligne **{nom_al}**"
+            f" représente **{p_al:.1f}%** de votre portefeuille (seuil de"
+            " prudence recommandé : < 25% par ligne)."
+        )
+    else:
+      st.success(
+          "✅ **Bonne diversification par ligne** : Aucune action ne dépasse"
+          " 25% de la valeur totale de votre portefeuille."
+      )
+
+    st.markdown("---")
+
+    # --- RÉPARTITION SECTORIELLE VISUELLE ---
+    st.subheader("🏭 Répartition Sectorielle de mon Portefeuille")
+    col_graph, col_tab_sec = st.columns([3, 2])
+
+    with col_graph:
+      st.caption("Valorisation (€) détenue par secteur d'activité :")
+      st.bar_chart(repartition_secteurs)
+
+    with col_tab_sec:
+      st.caption("Poids de chaque secteur (%) :")
+      tableau_secteurs = []
+      for sec, val_sec in sorted(
+          repartition_secteurs.items(), key=lambda x: x[1], reverse=True
+      ):
+        poids_sec = (val_sec / valeur_totale_portefeuille) * 100
+        etat_sec = "⚠️ Fort (>35%)" if poids_sec > 35 else "✅ Équilibré"
+        tableau_secteurs.append({
+            "Secteur": sec,
+            "Montant (€)": f"{val_sec:,.2f} €",
+            "Poids (%)": f"{poids_sec:.1f}%",
+            "Diagnostic": etat_sec,
+        })
+      st.dataframe(tableau_secteurs, use_container_width=True)
 
 # ------------------------------------------------------------------------------
 # ONGLET 3 : DIVIDENDES & BOULE DE NEIGE (PRÊT POUR LA PROCHAINE ÉTAPE)
@@ -600,7 +810,7 @@ with onglet_dividendes:
   st.info(
       "🚧 **Prochaine étape de construction** : Ici s'afficheront votre"
       " calendrier annuel des versements (mois par mois) et le simulateur de"
-      " rente à 5, 10 et 20 ans."
+      " rente à 5, 10 et 20 ans branchés sur votre portefeuille."
   )
 
 # ------------------------------------------------------------------------------
