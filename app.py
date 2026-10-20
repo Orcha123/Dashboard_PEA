@@ -1,7 +1,9 @@
-from datetime import datetime
+import urllib.request
+import urllib.parse
 import json
 import math
-import urllib.request
+import re
+from datetime import datetime
 import streamlit as st
 
 # Configuration de la page
@@ -47,8 +49,13 @@ PORTEFEUILLE_DEFAUT = {
 
 # --- BARRE LATÉRALE ---
 st.sidebar.header("⚙️ Paramètres DCA")
-import urllib.parse
-import re
+BUDGET_MENSUEL = st.sidebar.number_input(
+    "Enveloppe Mensuelle (€)",
+    min_value=50.0,
+    max_value=5000.0,
+    value=450.0,
+    step=50.0,
+)
 
 # --- RECHERCHE INTELLIGENTE & AJOUT (HYBRIDE) ---
 def chercher_sur_yahoo(query):
@@ -71,7 +78,7 @@ def chercher_sur_yahoo(query):
     except Exception:
         return []
 
-st.sidebar.expander("➕ Ajouter une nouvelle action", expanded=True) # Remplacé par un titre simple
+st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Ajouter une nouvelle action")
 
 recherche_query = st.sidebar.text_input("1. Rechercher une entreprise :", placeholder="ex: Apple, Tesla, Axa...")
@@ -109,65 +116,6 @@ if recherche_query:
     else:
         st.sidebar.warning("Aucune action trouvée. Essayez un autre mot-clé.")
 
-
-import urllib.parse
-
-# --- RECHERCHE INTELLIGENTE YAHOO ---
-def chercher_sur_yahoo(query):
-    if not query:
-        return []
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode())
-            quotes = data.get("quotes", [])
-            resultats = []
-            for q in quotes:
-                # On ne garde que les actions et les ETF
-                if q.get("quoteType") in ["EQUITY", "ETF"]:
-                    nom = q.get("shortname", q.get("longname", "Inconnu"))
-                    symbole = q.get("symbol", "")
-                    bourse = q.get("exchDisp", "")
-                    resultats.append(f"{nom} ({symbole}) - {bourse}")
-            return resultats
-    except Exception:
-        return []
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 Recherche rapide")
-st.sidebar.caption("Tapez le nom d'une entreprise (ex: LVMH, Apple, Tesla) puis appuyez sur Entrée.")
-
-recherche_query = st.sidebar.text_input("Nom de l'entreprise :")
-
-if recherche_query:
-    resultats_recherche = chercher_sur_yahoo(recherche_query)
-   
-    if resultats_recherche:
-        choix_action = st.sidebar.selectbox("Sélectionnez la bonne action :", resultats_recherche)
-       
-        if st.sidebar.button("➕ Ajouter à mon radar"):
-            import re
-            # Extraction du nom et du symbole depuis la chaîne "Apple Inc. (AAPL) - NASDAQ"
-            match = re.search(r"^(.*) \((.*?)\)", choix_action)
-            if match:
-                nom_trouve = match.group(1).strip()
-                symbole_trouve = match.group(2).strip()
-               
-                # Ajout à la base de données avec des valeurs neutres par défaut
-                st.session_state["watchlist"][nom_trouve] = {
-                    "symbole": symbole_trouve,
-                    "prix_cible": 0.0, # Vous pourrez affiner plus tard
-                    "secteur": "À définir",
-                    "div_eur": 0.0,    # À renseigner plus tard si elle verse un dividende
-                    "payout_ratio": 0.0,
-                    "croissance_5a": "N/A"
-                }
-                st.rerun() # Recharge la page pour afficher l'action partout
-    else:
-        st.sidebar.warning("Aucune action trouvée pour ce nom.")
-
-
 st.sidebar.markdown("---")
 st.sidebar.header("🔐 Mode d'accès (Test)")
 mode_gratuit = st.sidebar.checkbox(
@@ -184,8 +132,6 @@ else:
   st.sidebar.success(
       f"💎 **Mode Abonné Pro actif** : {len(WATCHLIST)} valeurs débloquées."
   )
-
-
 # --- CALCULS TECHNIQUES ---
 def calculer_rsi(clotures, periode=14):
   if len(clotures) < periode + 1:
@@ -200,7 +146,6 @@ def calculer_rsi(clotures, periode=14):
   rs = moy_gain / moy_perte
   return 100.0 - (100.0 / (1.0 + rs))
 
-
 def calculer_bollinger(clotures, periode=20):
   if len(clotures) < periode:
     return clotures[-1], clotures[-1]
@@ -209,7 +154,6 @@ def calculer_bollinger(clotures, periode=20):
   variance = sum((x - moyenne) ** 2 for x in fenetre) / periode
   ecart_type = math.sqrt(variance)
   return moyenne - (2 * ecart_type), moyenne + (2 * ecart_type)
-
 
 def calculer_macd(clotures):
   if len(clotures) < 35:
@@ -230,7 +174,6 @@ def calculer_macd(clotures):
   for m in macds[9:]:
     sig = (m * k9) + (sig * (1 - k9))
   return macds[-1], sig
-
 
 def calculer_ema_serie(clotures, periode):
   if not clotures:
@@ -255,7 +198,6 @@ def calculer_ema_serie(clotures, periode):
       emas.append(ema)
   return emas
 
-
 def verifier_croisement_2_12(clotures):
   if len(clotures) < 15:
     return False
@@ -272,7 +214,6 @@ def verifier_croisement_2_12(clotures):
   jour_e2, jour_e12 = valides[-1]
   return veille_e2 <= veille_e12 and jour_e2 > jour_e12
 
-
 def calculer_regression_lineaire(clotures):
   n = len(clotures)
   if n < 2:
@@ -288,7 +229,6 @@ def calculer_regression_lineaire(clotures):
   val_reg = droite_regression[-1]
   ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100
   return val_reg, ecart_pct, droite_regression
-
 
 @st.cache_data(ttl=3600)
 def recuperer_donnees(symbole):
@@ -311,7 +251,6 @@ def recuperer_donnees(symbole):
       return prix_actuel, closes, hauts, bas
   except Exception:
     return None, None, None, None
-
 
 # --- TRAITEMENT GÉNÉRAL ---
 resultats_analysed = []
@@ -340,16 +279,17 @@ for nom, info in WATCHLIST.items():
   val_reg, ecart_reg_pct, droite_reg = calculer_regression_lineaire(closes)
   support_30j = min(bas[-30:]) if len(bas) >= 30 else min(bas)
   resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
-    
+
+  # C'est ici que l'erreur de division par zéro est corrigée définitivement
   if prix_cible > 0:
     distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100
   else:
     distance_cible_pct = 0.0
 
   score = 0
-  if prix_actuel <= prix_cible:
+  if prix_cible > 0 and prix_actuel <= prix_cible:
     score += 25
-  elif prix_actuel <= prix_cible * 1.05:
+  elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
     score += 12
 
   ecart_haut = ((prix_actuel - plus_haut_52s) / plus_haut_52s) * 100
@@ -373,7 +313,7 @@ for nom, info in WATCHLIST.items():
   if croisement_2_12:
     score += 15
 
-  est_surevalue = prix_actuel >= prix_cible * 1.20 and (
+  est_surevalue = prix_cible > 0 and prix_actuel >= prix_cible * 1.20 and (
       rsi >= 70 or prix_actuel >= borne_sup
   )
 
@@ -397,8 +337,8 @@ for nom, info in WATCHLIST.items():
       "Actif": nom,
       "Secteur": info["secteur"],
       "Prix (€)": round(prix_actuel, 2),
-      "Prix Cible (€)": round(prix_cible, 2),
-      "Écart Cible (%)": dist_str,
+      "Prix Cible (€)": round(prix_cible, 2) if prix_cible > 0 else "N/A",
+      "Écart Cible (%)": dist_str if prix_cible > 0 else "N/A",
       "RSI": round(rsi, 1),
       "MACD": "🟢" if macd_val > macd_sig else "🔴",
       "EMA 2/12": "🟢 Croisement" if croisement_2_12 else "⚪ Neutre",
@@ -657,7 +597,7 @@ with onglet_portefeuille:
         st.markdown(f"**{nom_act}** *({info_act['secteur']})*")
         qte_defaut = PORTEFEUILLE_DEFAUT.get(nom_act, {}).get("qte", 0)
         pru_defaut = PORTEFEUILLE_DEFAUT.get(nom_act, {}).get(
-            "pru", float(info_act["prix_cible"])
+            "pru", float(info_act["prix_cible"]) if info_act["prix_cible"] > 0 else 0.0
         )
 
         qte_saisie = st.number_input(
@@ -670,7 +610,7 @@ with onglet_portefeuille:
         )
         pru_saisi = st.number_input(
             f"PRU € ({nom_act})",
-            min_value=1.0,
+            min_value=0.0,
             max_value=5000.0,
             value=float(pru_defaut),
             step=0.5,
