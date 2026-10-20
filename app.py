@@ -437,8 +437,6 @@ while continuer:
 montant_tot_div = sum(
     achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries
 )
-
-
 # ==============================================================================
 # NAVIGATION PRINCIPALE : LES 4 ONGLETS
 # ==============================================================================
@@ -799,7 +797,6 @@ with onglet_dividendes:
         " dividendes."
     )
   else:
-    # Calcul des dividendes totaux annuels et mensuels
     total_div_an = sum(
         data["qte"] * WATCHLIST[nom]["div_eur"]
         for nom, data in portefeuille_utilisateur.items()
@@ -892,7 +889,6 @@ with onglet_ia:
         " lancer l'audit."
     )
   else:
-    # Calculs pour l'audit
     nb_lignes = len(portefeuille_utilisateur)
     payouts_moy = sum(
         WATCHLIST[nom]["payout_ratio"] for nom in portefeuille_utilisateur
