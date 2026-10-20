@@ -843,40 +843,52 @@ with onglet_dividendes:
 
     st.markdown("---")
     st.subheader(
-        "🔮 Simulateur « Boule de Neige » (Projection à 5, 10 et 15 ans)"
+        "🔮 Simulateur « Boule de Neige » (Projection à 15 ans avec Graphique)"
     )
     st.caption(
-        "Projection basée sur le réinvestissement automatique des dividendes et"
-        f" votre effort d'épargne DCA mensuel ({BUDGET_MENSUEL:.0f} €/mois),"
-        " avec un rendement moyen estimé à 5% par an."
+        "Projection année par année basée sur le réinvestissement automatique"
+        f" des dividendes et votre effort d'épargne DCA ({BUDGET_MENSUEL:.0f}"
+        " €/mois)."
     )
 
-    annees_simulation = [5, 10, 15]
-    resultats_boule_de_neige = []
-
-    capital_actuel = valeur_totale_portefeuille
+    # Simulation année par année sur 15 ans pour le graphique
+    annees_max = 15
+    cap = valeur_totale_portefeuille
+    div_an = total_div_an
     rendement_estime = (
         rendement_moyen_portefeuille / 100
         if rendement_moyen_portefeuille > 0
         else 0.04
     )
 
-    for an in annees_simulation:
-      cap = capital_actuel
-      div_an = total_div_an
-      for mois in range(an * 12):
+    donnees_graphique_capital = {}
+    donnees_graphique_rente = {}
+    resultats_boule_de_neige = []
+
+    for an in range(1, annees_max + 1):
+      for mois in range(12):
         epargne_mois = BUDGET_MENSUEL + (div_an / 12)
         cap += epargne_mois
         div_an = cap * rendement_estime
 
-      resultats_boule_de_neige.append({
-          "Horizon": f"À {an} ans",
-          "Capital Estimé (€)": f"{cap:,.2f} €",
-          "Rente Annuelle Estimée (€/an)": f"{div_an:,.2f} € / an",
-          "Rente Mensuelle Équivalente": f"{div_an/12:,.2f} € / mois",
-      })
+      donnees_graphique_capital[f"Année {an}"] = round(cap, 2)
+      donnees_graphique_rente[f"Année {an}"] = round(div_an, 2)
+
+      if an in [5, 10, 15]:
+        resultats_boule_de_neige.append({
+            "Horizon": f"À {an} ans",
+            "Capital Estimé (€)": f"{cap:,.2f} €",
+            "Rente Annuelle Estimée (€/an)": f"{div_an:,.2f} € / an",
+            "Rente Mensuelle Équivalente": f"{div_an/12:,.2f} € / mois",
+        })
 
     st.dataframe(resultats_boule_de_neige, use_container_width=True)
+
+    st.markdown("### 📊 Évolution visuelle du Capital (Effet Boule de Neige)")
+    st.line_chart(donnees_graphique_capital)
+
+    st.markdown("### 📊 Évolution visuelle de la Rente Annuelle")
+    st.line_chart(donnees_graphique_rente)
 
 # ------------------------------------------------------------------------------
 # ONGLET 4 : COACH & AUDIT IA
