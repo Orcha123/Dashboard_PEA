@@ -588,6 +588,7 @@ with onglet_radar:
 # ------------------------------------------------------------------------------
 # ONGLET 2 : MON PORTEFEUILLE & SECTEURS
 # ------------------------------------------------------------------------------
+portefeuille_utilisateur = {}
 with onglet_portefeuille:
   st.subheader("💼 Gestionnaire de Portefeuille & Répartition Sectorielle")
 
@@ -607,7 +608,6 @@ with onglet_portefeuille:
         " Prix de Revient Unitaire (PRU). Mettez 0 si vous ne possédez pas"
         " l'action."
     )
-    portefeuille_utilisateur = {}
     cols_saisie = st.columns(3)
 
     for idx, (nom_act, info_act) in enumerate(WATCHLIST.items()):
@@ -791,11 +791,91 @@ with onglet_portefeuille:
 # ------------------------------------------------------------------------------
 with onglet_dividendes:
   st.subheader("📅 Calendrier des Dividendes & Projection Boule de Neige")
-  st.info(
-      "🚧 **Prochaine étape de construction** : Ici s'afficheront votre"
-      " calendrier annuel des versements (mois par mois) et le simulateur de"
-      " rente à 5, 10 et 20 ans branchés sur votre portefeuille."
-  )
+
+  if not portefeuille_utilisateur:
+    st.warning(
+        "Veuillez d'abord saisir vos actions dans l'onglet « 💼 Mon"
+        " Portefeuille & Secteurs » pour afficher vos projections de"
+        " dividendes."
+    )
+  else:
+    # Calcul des dividendes totaux annuels et mensuels
+    total_div_an = sum(
+        data["qte"] * WATCHLIST[nom]["div_eur"]
+        for nom, data in portefeuille_utilisateur.items()
+    )
+    total_div_mois = total_div_an / 12
+
+    col_d1, col_d2, col_d3 = st.columns(3)
+    col_d1.metric("Rente Annuelle Totale", f"{total_div_an:,.2f} € / an")
+    col_d2.metric("Moyenne Mensuelle", f"{total_div_mois:,.2f} € / mois")
+    rendement_moyen_portefeuille = (
+        (total_div_an / valeur_totale_portefeuille) * 100
+        if valeur_totale_portefeuille > 0
+        else 0
+    )
+    col_d3.metric(
+        "Rendement Global du Portefeuille",
+        f"{rendement_moyen_portefeuille:.2f} %",
+    )
+
+    st.markdown("---")
+
+    st.subheader("📋 Répartition des versements annuels par action")
+    tableau_dividendes_lignes = []
+    for nom, data in portefeuille_utilisateur.items():
+      qte = data["qte"]
+      div_unit = WATCHLIST[nom]["div_eur"]
+      total_ligne = qte * div_unit
+      poids_div = (
+          (total_ligne / total_div_an) * 100 if total_div_an > 0 else 0
+      )
+      tableau_dividendes_lignes.append({
+          "Action": nom,
+          "Secteur": WATCHLIST[nom]["secteur"],
+          "Quantité": qte,
+          "Dividende/Act. (€)": f"{div_unit:.2f} €",
+          "Total Annuel (€)": f"{total_ligne:,.2f} €",
+          "Part des Revenus (%)": f"{poids_div:.1f}%",
+      })
+
+    st.dataframe(tableau_dividendes_lignes, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader(
+        "🔮 Simulateur « Boule de Neige » (Projection à 5, 10 et 15 ans)"
+    )
+    st.caption(
+        "Projection basée sur le réinvestissement automatique des dividendes et"
+        f" votre effort d'épargne DCA mensuel ({BUDGET_MENSUEL:.0f} €/mois),"
+        " avec un rendement moyen estimé à 5% par an."
+    )
+
+    annees_simulation = [5, 10, 15]
+    resultats_boule_de_neige = []
+
+    # Simulation simple d'intérêts composés + DCA
+    capital_actuel = valeur_totale_portefeuille
+    rendement_estime = 0.05  # 5% de rendement global combiné
+
+    for an in annees_simulation:
+      cap = capital_actuel
+      div_an = total_div_an
+      for mois in range(an * 12):
+        # Ajout du DCA mensuel et des dividendes mensuels réinvestis
+        epargne_mois = BUDGET_MENSUEL + (div_an / 12)
+        cap += epargne_mois
+        # Croissance estimée du capital et des dividendes
+        div_an = cap * (rendement_moyen_portefeuille / 100)
+
+      resultats_boule_de_neige.append({
+          horizon: f"À {an} ans",
+          "Capital Estimé (€)": f"{cap:,.2f} €",
+          "Rente Annuelle Estimée (€/an)": f"{div_an:,.2f} € / an",
+          "Rente Mensuelle Équivalente": f"{div_an/12:,.2f} € / mois",
+      })
+
+    st.dataframe(resultats_boule_de_neige, use_container_width=True)
 
 # ------------------------------------------------------------------------------
 # ONGLET 4 : COACH & AUDIT IA
