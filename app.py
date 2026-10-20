@@ -22,18 +22,18 @@ st.caption(
 # --- WATCHLIST PEA DYNAMIQUE ---
 if "watchlist" not in st.session_state:
     st.session_state["watchlist"] = {
-        "TotalEnergies": {"symbole": "TTE.PA", "prix_cible": 50.0, "secteur": "Énergie", "div_eur": 3.22, "payout_ratio": 0.42, "croissance_5a": "+6.1%"},
-        "Air Liquide": {"symbole": "AI.PA", "prix_cible": 140.0, "secteur": "Chimie/Industrie", "div_eur": 3.12, "payout_ratio": 0.55, "croissance_5a": "+8.5%"},
-        "Vinci": {"symbole": "DG.PA", "prix_cible": 95.0, "secteur": "Concessions/BTP", "div_eur": 4.50, "payout_ratio": 0.58, "croissance_5a": "+7.0%"},
-        "Engie": {"symbole": "ENGI.PA", "prix_cible": 18.0, "secteur": "Utilités/Énergie", "div_eur": 1.43, "payout_ratio": 0.68, "croissance_5a": "+5.0%"},
-        "Sanofi": {"symbole": "SAN.PA", "prix_cible": 70.0, "secteur": "Santé", "div_eur": 3.76, "payout_ratio": 0.65, "croissance_5a": "+4.8%"},
-        "LVMH": {"symbole": "MC.PA", "prix_cible": 380.0, "secteur": "Luxe", "div_eur": 13.00, "payout_ratio": 0.48, "croissance_5a": "+12.0%"},
-        "Pernod Ricard": {"symbole": "RI.PA", "prix_cible": 60.0, "secteur": "Consommation", "div_eur": 4.70, "payout_ratio": 0.52, "croissance_5a": "+6.5%"},
-        "Rubis": {"symbole": "RUI.PA", "prix_cible": 24.0, "secteur": "Énergie/Stockage", "div_eur": 1.92, "payout_ratio": 0.72, "croissance_5a": "+3.2%"},
-        "BNP Paribas": {"symbole": "BNP.PA", "prix_cible": 55.0, "secteur": "Finance", "div_eur": 4.60, "payout_ratio": 0.50, "croissance_5a": "+8.0%"},
-        "Schneider Electric": {"symbole": "SU.PA", "prix_cible": 180.0, "secteur": "Industrie/Tech", "div_eur": 3.50, "payout_ratio": 0.50, "croissance_5a": "+9.2%"},
-        "Veolia": {"symbole": "VIE.PA", "prix_cible": 28.0, "secteur": "Utilités/Environnement", "div_eur": 1.25, "payout_ratio": 0.62, "croissance_5a": "+5.5%"},
-        "AXA": {"symbole": "CS.PA", "prix_cible": 35.0, "secteur": "Finance/Assurance", "div_eur": 1.98, "payout_ratio": 0.55, "croissance_5a": "+5.0%"},
+        "TotalEnergies": {"symbole": "TTE.PA", "prix_cible": 50.0, "secteur": "Énergie", "div_eur": 3.22, "payout_ratio": 0.42, "croissance_5a": "+6.1%", "mois_div": ["Mar", "Juin", "Sep", "Déc"]},
+        "Air Liquide": {"symbole": "AI.PA", "prix_cible": 140.0, "secteur": "Chimie/Industrie", "div_eur": 3.12, "payout_ratio": 0.55, "croissance_5a": "+8.5%", "mois_div": ["Mai"]},
+        "Vinci": {"symbole": "DG.PA", "prix_cible": 95.0, "secteur": "Concessions/BTP", "div_eur": 4.50, "payout_ratio": 0.58, "croissance_5a": "+7.0%", "mois_div": ["Avr", "Nov"]},
+        "Engie": {"symbole": "ENGI.PA", "prix_cible": 18.0, "secteur": "Utilités/Énergie", "div_eur": 1.43, "payout_ratio": 0.68, "croissance_5a": "+5.0%", "mois_div": ["Mai"]},
+        "Sanofi": {"symbole": "SAN.PA", "prix_cible": 70.0, "secteur": "Santé", "div_eur": 3.76, "payout_ratio": 0.65, "croissance_5a": "+4.8%", "mois_div": ["Mai"]},
+        "LVMH": {"symbole": "MC.PA", "prix_cible": 380.0, "secteur": "Luxe", "div_eur": 13.00, "payout_ratio": 0.48, "croissance_5a": "+12.0%", "mois_div": ["Avr", "Déc"]},
+        "Pernod Ricard": {"symbole": "RI.PA", "prix_cible": 60.0, "secteur": "Consommation", "div_eur": 4.70, "payout_ratio": 0.52, "croissance_5a": "+6.5%", "mois_div": ["Juil", "Nov"]},
+        "Rubis": {"symbole": "RUI.PA", "prix_cible": 24.0, "secteur": "Énergie/Stockage", "div_eur": 1.92, "payout_ratio": 0.72, "croissance_5a": "+3.2%", "mois_div": ["Mai"]},
+        "BNP Paribas": {"symbole": "BNP.PA", "prix_cible": 55.0, "secteur": "Finance", "div_eur": 4.60, "payout_ratio": 0.50, "croissance_5a": "+8.0%", "mois_div": ["Mai"]},
+        "Schneider Electric": {"symbole": "SU.PA", "prix_cible": 180.0, "secteur": "Industrie/Tech", "div_eur": 3.50, "payout_ratio": 0.50, "croissance_5a": "+9.2%", "mois_div": ["Mai"]},
+        "Veolia": {"symbole": "VIE.PA", "prix_cible": 28.0, "secteur": "Utilités/Environnement", "div_eur": 1.25, "payout_ratio": 0.62, "croissance_5a": "+5.5%", "mois_div": ["Mai"]},
+        "AXA": {"symbole": "CS.PA", "prix_cible": 35.0, "secteur": "Finance/Assurance", "div_eur": 1.98, "payout_ratio": 0.55, "croissance_5a": "+5.0%", "mois_div": ["Mai"]},
     }
 
 WATCHLIST = st.session_state["watchlist"]
@@ -96,6 +96,9 @@ if recherche_query:
             nouveau_div = st.number_input("Dividende annuel", min_value=0.0, value=0.0, step=0.1)
             nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.0, step=0.05)
            
+            liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+            nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles)
+           
             submit_ajout = st.form_submit_button("➕ Ajouter à mon radar")
            
             if submit_ajout:
@@ -110,7 +113,8 @@ if recherche_query:
                         "secteur": nouveau_secteur,
                         "div_eur": nouveau_div,
                         "payout_ratio": nouveau_payout,
-                        "croissance_5a": "N/A"
+                        "croissance_5a": "N/A",
+                        "mois_div": nouveau_mois
                     }
                     st.rerun()
     else:
@@ -280,7 +284,6 @@ for nom, info in WATCHLIST.items():
   support_30j = min(bas[-30:]) if len(bas) >= 30 else min(bas)
   resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
 
-  # C'est ici que l'erreur de division par zéro est corrigée définitivement
   if prix_cible > 0:
     distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100
   else:
@@ -426,7 +429,7 @@ montant_tot_div = sum(
 onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
     "🔍 1. Radar & Aide à l'Achat (DCA)",
     "💼 2. Mon Portefeuille & Secteurs",
-    "📅 3. Dividendes & Boule de Neige",
+    "📅 3. Dividendes & Calendrier",
     "🤖 4. Coach & Audit IA",
 ])
 
@@ -485,7 +488,7 @@ with onglet_radar:
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
       "🎯 Tableau 4 : Niveaux Techniques",
-      "🛡️ Tableau 3 : Rente & Dividendes",
+      "🛡️ Tableau 3 : Sûreté",
       "💰 Allocation DCA du Mois",
   ])
 
@@ -768,10 +771,10 @@ with onglet_portefeuille:
       st.dataframe(tableau_secteurs, use_container_width=True)
 
 # ------------------------------------------------------------------------------
-# ONGLET 3 : DIVIDENDES & BOULE DE NEIGE
+# ONGLET 3 : DIVIDENDES, CALENDRIER & BOULE DE NEIGE
 # ------------------------------------------------------------------------------
 with onglet_dividendes:
-  st.subheader("📅 Calendrier des Dividendes & Projection Boule de Neige")
+  st.subheader("📅 Mes Revenus Passifs & Projections")
 
   if not portefeuille_utilisateur:
     st.warning(
@@ -798,6 +801,25 @@ with onglet_dividendes:
         "Rendement Global du Portefeuille",
         f"{rendement_moyen_portefeuille:.2f} %",
     )
+
+    st.markdown("---")
+
+    # --- NOUVEAU : LE CALENDRIER VISUEL ---
+    st.subheader("🗓️ Calendrier Annuel des Détachements")
+    st.caption("Repérez visuellement les mois de versements pour chaque ligne de votre portefeuille.")
+   
+    donnees_calendrier = []
+    liste_des_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+   
+    for nom, data in portefeuille_utilisateur.items():
+        mois_action = WATCHLIST[nom].get("mois_div", [])
+        ligne_cal = {"Action": nom, "Secteur": WATCHLIST[nom]["secteur"]}
+        for m in liste_des_mois:
+            ligne_cal[m] = "💸" if m in mois_action else ""
+        donnees_calendrier.append(ligne_cal)
+       
+    if donnees_calendrier:
+        st.dataframe(donnees_calendrier, use_container_width=True)
 
     st.markdown("---")
 
