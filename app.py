@@ -17,97 +17,24 @@ st.caption(
     f" {datetime.now().strftime('%d/%m/%Y à %H:%M')}"
 )
 
-# --- WATCHLIST PEA ---
-WATCHLIST = {
-    "TotalEnergies": {
-        "symbole": "TTE.PA",
-        "prix_cible": 50.0,
-        "secteur": "Énergie",
-        "div_eur": 3.22,
-        "payout_ratio": 0.42,
-        "croissance_5a": "+6.1%",
-    },
-    "Air Liquide": {
-        "symbole": "AI.PA",
-        "prix_cible": 140.0,
-        "secteur": "Chimie/Industrie",
-        "div_eur": 3.12,
-        "payout_ratio": 0.55,
-        "croissance_5a": "+8.5%",
-    },
-    "Vinci": {
-        "symbole": "DG.PA",
-        "prix_cible": 95.0,
-        "secteur": "Concessions/BTP",
-        "div_eur": 4.50,
-        "payout_ratio": 0.58,
-        "croissance_5a": "+7.0%",
-    },
-    "Engie": {
-        "symbole": "ENGI.PA",
-        "prix_cible": 18.0,
-        "secteur": "Utilités/Énergie",
-        "div_eur": 1.43,
-        "payout_ratio": 0.68,
-        "croissance_5a": "+5.0%",
-    },
-    "Sanofi": {
-        "symbole": "SAN.PA",
-        "prix_cible": 70.0,
-        "secteur": "Santé",
-        "div_eur": 3.76,
-        "payout_ratio": 0.65,
-        "croissance_5a": "+4.8%",
-    },
-    "LVMH": {
-        "symbole": "MC.PA",
-        "prix_cible": 380.0,
-        "secteur": "Luxe",
-        "div_eur": 13.00,
-        "payout_ratio": 0.48,
-        "croissance_5a": "+12.0%",
-    },
-    "Pernod Ricard": {
-        "symbole": "RI.PA",
-        "prix_cible": 60.0,
-        "secteur": "Consommation",
-        "div_eur": 4.70,
-        "payout_ratio": 0.52,
-        "croissance_5a": "+6.5%",
-    },
-    "Rubis": {
-        "symbole": "RUI.PA",
-        "prix_cible": 24.0,
-        "secteur": "Énergie/Stockage",
-        "div_eur": 1.92,
-        "payout_ratio": 0.72,
-        "croissance_5a": "+3.2%",
-    },
-    "BNP Paribas": {
-        "symbole": "BNP.PA",
-        "prix_cible": 55.0,
-        "secteur": "Finance",
-        "div_eur": 4.60,
-        "payout_ratio": 0.50,
-        "croissance_5a": "+8.0%",
-    },
-    "Schneider Electric": {
-        "symbole": "SU.PA",
-        "prix_cible": 180.0,
-        "secteur": "Industrie/Tech",
-        "div_eur": 3.50,
-        "payout_ratio": 0.50,
-        "croissance_5a": "+9.2%",
-    },
-    "Veolia": {
-        "symbole": "VIE.PA",
-        "prix_cible": 28.0,
-        "secteur": "Utilités/Environnement",
-        "div_eur": 1.25,
-        "payout_ratio": 0.62,
-        "croissance_5a": "+5.5%",
-    },
-}
+# --- WATCHLIST PEA DYNAMIQUE ---
+if "watchlist" not in st.session_state:
+    st.session_state["watchlist"] = {
+        "TotalEnergies": {"symbole": "TTE.PA", "prix_cible": 50.0, "secteur": "Énergie", "div_eur": 3.22, "payout_ratio": 0.42, "croissance_5a": "+6.1%"},
+        "Air Liquide": {"symbole": "AI.PA", "prix_cible": 140.0, "secteur": "Chimie/Industrie", "div_eur": 3.12, "payout_ratio": 0.55, "croissance_5a": "+8.5%"},
+        "Vinci": {"symbole": "DG.PA", "prix_cible": 95.0, "secteur": "Concessions/BTP", "div_eur": 4.50, "payout_ratio": 0.58, "croissance_5a": "+7.0%"},
+        "Engie": {"symbole": "ENGI.PA", "prix_cible": 18.0, "secteur": "Utilités/Énergie", "div_eur": 1.43, "payout_ratio": 0.68, "croissance_5a": "+5.0%"},
+        "Sanofi": {"symbole": "SAN.PA", "prix_cible": 70.0, "secteur": "Santé", "div_eur": 3.76, "payout_ratio": 0.65, "croissance_5a": "+4.8%"},
+        "LVMH": {"symbole": "MC.PA", "prix_cible": 380.0, "secteur": "Luxe", "div_eur": 13.00, "payout_ratio": 0.48, "croissance_5a": "+12.0%"},
+        "Pernod Ricard": {"symbole": "RI.PA", "prix_cible": 60.0, "secteur": "Consommation", "div_eur": 4.70, "payout_ratio": 0.52, "croissance_5a": "+6.5%"},
+        "Rubis": {"symbole": "RUI.PA", "prix_cible": 24.0, "secteur": "Énergie/Stockage", "div_eur": 1.92, "payout_ratio": 0.72, "croissance_5a": "+3.2%"},
+        "BNP Paribas": {"symbole": "BNP.PA", "prix_cible": 55.0, "secteur": "Finance", "div_eur": 4.60, "payout_ratio": 0.50, "croissance_5a": "+8.0%"},
+        "Schneider Electric": {"symbole": "SU.PA", "prix_cible": 180.0, "secteur": "Industrie/Tech", "div_eur": 3.50, "payout_ratio": 0.50, "croissance_5a": "+9.2%"},
+        "Veolia": {"symbole": "VIE.PA", "prix_cible": 28.0, "secteur": "Utilités/Environnement", "div_eur": 1.25, "payout_ratio": 0.62, "croissance_5a": "+5.5%"},
+        "AXA": {"symbole": "CS.PA", "prix_cible": 35.0, "secteur": "Finance/Assurance", "div_eur": 1.98, "payout_ratio": 0.55, "croissance_5a": "+5.0%"},
+    }
+
+WATCHLIST = st.session_state["watchlist"]
 
 # --- PORTEFEUILLE PAR DÉFAUT ---
 PORTEFEUILLE_DEFAUT = {
@@ -129,6 +56,32 @@ BUDGET_MENSUEL = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
+
+# --- AJOUTER UNE NOUVELLE VALEUR ---
+with st.sidebar.expander("➕ Ajouter une nouvelle action", expanded=False):
+    with st.form("ajout_action_form"):
+        st.markdown("**Ajouter une valeur à l'outil**")
+        nouveau_nom = st.text_input("Nom de l'entreprise (ex: Crédit Agricole)")
+        nouveau_symbole = st.text_input("Ticker Yahoo (ex: ACA.PA)")
+        nouveau_secteur = st.text_input("Secteur (ex: Banque)")
+        nouveau_cible = st.number_input("Prix cible estimé (€)", min_value=0.0, value=15.0, step=1.0)
+        nouveau_div = st.number_input("Dividende annuel (€)", min_value=0.0, value=1.05, step=0.05)
+        nouveau_payout = st.number_input("Payout Ratio (ex: 0.50 pour 50%)", min_value=0.0, max_value=2.0, value=0.50, step=0.05)
+       
+        submit_ajout = st.form_submit_button("Ajouter à mon radar")
+       
+        if submit_ajout and nouveau_nom and nouveau_symbole:
+            st.session_state["watchlist"][nouveau_nom] = {
+                "symbole": nouveau_symbole,
+                "prix_cible": nouveau_cible,
+                "secteur": nouveau_secteur,
+                "div_eur": nouveau_div,
+                "payout_ratio": nouveau_payout,
+                "croissance_5a": "N/A"
+            }
+            st.rerun()
+
+st.sidebar.markdown("---")
 st.sidebar.header("🔐 Mode d'accès (Test)")
 mode_gratuit = st.sidebar.checkbox(
     "Simuler la vue Visiteur Gratuit (Freemium)", value=False
@@ -137,7 +90,7 @@ mode_gratuit = st.sidebar.checkbox(
 if mode_gratuit:
   actions_autorisees = ["TotalEnergies", "Air Liquide"]
   st.sidebar.info(
-      f"🔒 **Mode Découverte actif** : 2 valeurs débloquées sur {len(WATCHLIST)}."
+      f"🔒 **Mode Découverte actif** : 2 valeurs débloquées."
   )
 else:
   actions_autorisees = list(WATCHLIST.keys())
@@ -454,8 +407,8 @@ with onglet_radar:
   if mode_gratuit:
     st.warning(
         "🔒 **Aperçu Gratuit (Freemium)** : Vous visualisez actuellement 2"
-        " actions de démonstration (TotalEnergies et Air Liquide). Passez à"
-        " l'abonnement complet pour débloquer toutes les valeurs du PEA !"
+        " actions de démonstration. Passez à l'abonnement complet pour"
+        " débloquer toutes les valeurs du PEA !"
     )
 
   col1, col2, col3, col4 = st.columns(4)
@@ -478,7 +431,7 @@ with onglet_radar:
   st.subheader("🔎 Filtrer ou rechercher une valeur")
   options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
   choix_action = st.selectbox(
-      "Choisissez une action dans la liste (ou tapez son nom) :",
+      "Choisissez une action dans la liste :",
       options=options_filtre,
   )
 
