@@ -806,21 +806,53 @@ with onglet_dividendes:
 
     # --- NOUVEAU : LE CALENDRIER VISUEL ---
     st.subheader("🗓️ Calendrier Annuel des Détachements")
-    st.caption("Repérez visuellement les mois de versements pour chaque ligne de votre portefeuille.")
+    st.caption("Repérez visuellement les mois de versements et les montants estimés pour chaque ligne de votre portefeuille.")
    
     donnees_calendrier = []
     liste_des_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
    
+    # Pour calculer le total mensuel de tout le portefeuille
+    totaux_mensuels = {m: 0.0 for m in liste_des_mois}
+   
     for nom, data in portefeuille_utilisateur.items():
+        qte = data["qte"]
+        div_annuel_unitaire = WATCHLIST[nom]["div_eur"]
+        total_div_ligne = qte * div_annuel_unitaire
         mois_action = WATCHLIST[nom].get("mois_div", [])
-        ligne_cal = {"Action": nom, "Secteur": WATCHLIST[nom]["secteur"]}
+       
+        # On supprime la colonne Secteur, on ne garde que l'Action
+        ligne_cal = {"Action": nom}
+       
+        # Calcul du montant par versement (ex: si 4 versements, on divise le total par 4)
+        montant_par_versement = 0.0
+        if len(mois_action) > 0:
+            montant_par_versement = total_div_ligne / len(mois_action)
+           
         for m in liste_des_mois:
-            ligne_cal[m] = "💸" if m in mois_action else ""
+            if m in mois_action:
+                if montant_par_versement > 0:
+                    ligne_cal[m] = f"💸 {montant_par_versement:.2f} €"
+                    totaux_mensuels[m] += montant_par_versement
+                else:
+                    ligne_cal[m] = "💸" # Si le dividende est à 0 mais le mois est coché
+            else:
+                ligne_cal[m] = ""
+               
         donnees_calendrier.append(ligne_cal)
        
+    # Ajout de la ligne des Totaux à la fin du tableau
     if donnees_calendrier:
+        ligne_totale = {"Action": "💰 TOTAL MENSUEL"}
+        for m in liste_des_mois:
+            if totaux_mensuels[m] > 0:
+                ligne_totale[m] = f"🟢 {totaux_mensuels[m]:.2f} €"
+            else:
+                ligne_totale[m] = ""
+        donnees_calendrier.append(ligne_totale)
+       
         st.dataframe(donnees_calendrier, use_container_width=True)
 
+    
     st.markdown("---")
 
     st.subheader("📋 Répartition des versements annuels par action")
