@@ -288,9 +288,9 @@ for nom, info in WATCHLIST.items():
   support_30j = min(bas[-30:]) if len(bas) >= 30 else min(bas)
   resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
     
-    if prix_cible > 0:
+  if prix_cible > 0:
     distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100
-    else:
+  else:
     distance_cible_pct = 0.0
 
   score = 0
