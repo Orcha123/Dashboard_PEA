@@ -47,15 +47,68 @@ PORTEFEUILLE_DEFAUT = {
 
 # --- BARRE LATÉRALE ---
 st.sidebar.header("⚙️ Paramètres DCA")
-BUDGET_MENSUEL = st.sidebar.number_input(
-    "Enveloppe Mensuelle (€)",
-    min_value=50.0,
-    max_value=5000.0,
-    value=450.0,
-    step=50.0,
-)
+import urllib.parse
+import re
 
-st.sidebar.markdown("---")
+# --- RECHERCHE INTELLIGENTE & AJOUT (HYBRIDE) ---
+def chercher_sur_yahoo(query):
+    if not query:
+        return []
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            quotes = data.get("quotes", [])
+            resultats = []
+            for q in quotes:
+                if q.get("quoteType") in ["EQUITY", "ETF"]:
+                    nom = q.get("shortname", q.get("longname", "Inconnu"))
+                    symbole = q.get("symbol", "")
+                    bourse = q.get("exchDisp", "")
+                    resultats.append(f"{nom} ({symbole}) - {bourse}")
+            return resultats
+    except Exception:
+        return []
+
+st.sidebar.expander("➕ Ajouter une nouvelle action", expanded=True) # Remplacé par un titre simple
+st.sidebar.subheader("🔍 Ajouter une nouvelle action")
+
+recherche_query = st.sidebar.text_input("1. Rechercher une entreprise :", placeholder="ex: Apple, Tesla, Axa...")
+
+if recherche_query:
+    resultats_recherche = chercher_sur_yahoo(recherche_query)
+   
+    if resultats_recherche:
+        with st.sidebar.form("formulaire_hybride"):
+            choix_action = st.selectbox("2. Confirmez l'action :", resultats_recherche)
+           
+            st.markdown("**3. Personnalisez vos données :**")
+            nouveau_secteur = st.text_input("Secteur (ex: Tech, Banque)", value="À définir")
+            nouveau_cible = st.number_input("Prix cible (€ ou $)", min_value=0.0, value=0.0, step=1.0)
+            nouveau_div = st.number_input("Dividende annuel", min_value=0.0, value=0.0, step=0.1)
+            nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.0, step=0.05)
+           
+            submit_ajout = st.form_submit_button("➕ Ajouter à mon radar")
+           
+            if submit_ajout:
+                match = re.search(r"^(.*) \((.*?)\)", choix_action)
+                if match:
+                    nom_trouve = match.group(1).strip()
+                    symbole_trouve = match.group(2).strip()
+                   
+                    st.session_state["watchlist"][nom_trouve] = {
+                        "symbole": symbole_trouve,
+                        "prix_cible": nouveau_cible,
+                        "secteur": nouveau_secteur,
+                        "div_eur": nouveau_div,
+                        "payout_ratio": nouveau_payout,
+                        "croissance_5a": "N/A"
+                    }
+                    st.rerun()
+    else:
+        st.sidebar.warning("Aucune action trouvée. Essayez un autre mot-clé.")
+
 
 import urllib.parse
 
