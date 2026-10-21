@@ -701,7 +701,7 @@ with onglet_radar:
 
   st.markdown("---")
 
-  # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA (DESIGN PRO) ---
+ # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA (AVEC GRAPHIQUE UNIQUEMENT SUR VALUE) ---
   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
@@ -745,6 +745,30 @@ with onglet_radar:
       """
     html_t2 += "</tbody></table>"
     st.markdown(html_t2, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
+   
+    index_defaut = (
+        actions_autorisees.index(choix_action)
+        if choix_action in actions_autorisees
+        else 0
+    )
+
+    action_selectionnee = st.selectbox(
+        "Sélectionnez l'action à analyser visuellement :",
+        actions_autorisees,
+        index=index_defaut,
+    )
+
+    if action_selectionnee in historiques_prix:
+      closes = historiques_prix[action_selectionnee]
+      _, _, droite_reg = calculer_regression_lineaire(closes)
+
+      st.line_chart({
+          "Cours Réel (€)": closes,
+          "Tendance 3 Ans (Régression)": droite_reg,
+      })
 
   with tab_tech:
     st.caption("Positionnement du cours par rapport aux plus bas (Support) et plus hauts (Résistance) des 30 derniers jours :")
