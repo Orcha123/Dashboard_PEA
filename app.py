@@ -1679,46 +1679,83 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
         st.markdown(msg["content"])
 
     # Zone de saisie du chat
-    prompt_utilisateur = st.chat_input("Posez votre question financière à l'Agent IA...")
-    question_finale = question_rapide or prompt_utilisateur
+user_prompt = st.chat_input("Posez votre question financière à l'Agent IA...")
+question_finale = question_rapide or user_prompt
 
-    if question_finale:
-      st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
-      with st.chat_message("user"):
+if question_finale:
+    st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
+    with st.chat_message("user"):
         st.markdown(question_finale)
 
-      with st.chat_message("assistant"):
+    with st.chat_message("assistant"):
         with st.spinner("Analyse des marchés et de votre portefeuille en cours..."):
-          api_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
-         
-          if not api_key:
-            reponse_ia = (
-                "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
-                "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
+            api_key = (
+                str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
+                if hasattr(st, "secrets")
+                else ""
             )
-          else:
-              try:
-                  url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={st.secrets['GEMINI_API_KEY']}"
-                  payload_ia = {
-                      "system_instruction": {"parts": [{"text": contexte_systeme}]},
-                      "contents": [
-                          {
-                              "role": "user" if m["role"] == "user" else "model",
-                              "parts": [{"text": m["content"]}],
-                         }
-                         for m in st.session_state["messages_ia"]
-                     ],
-                  }
-                  req_ia = urllib.request.Request(
-                      url_gemini,
-                      data=json.dumps(payload_ia).encode("utf-8"),
-                      headers={"Content-Type": "application/json"},
-                  )
-              with urllib.request.urlopen(req_ia, timeout=20) as resp_ia:
-                res_json = json.loads(resp_ia.read().decode("utf-8"))
-                reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
-            except Exception as e:
-              reponse_ia = f"❌ Erreur de communication avec le moteur IA : {e}"
 
-          st.markdown(reponse_ia)
-          st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
+            if not api_key:
+                reponse_ia = (
+                    "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
+                    "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
+                )
+            else:
+                payload_ia = {
+                    "system_instruction": {"parts": [{"text": contexte_systeme}]},
+                    "contents": [
+                        {
+                            "role": "user" if m["role"] == "user" else "model",
+                            "parts": [{"text": m["content"]}],
+                        }
+                        for m in st.session_state["messages_ia"]
+                    ],
+                }
+
+                # Liste des modèles à tester automatiquement pour éviter toute erreur 404
+                modeles_candidats = [
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-flash-latest",
+                    "gemini-2.5-pro",
+                    "gemini-pro-latest",
+                ]
+
+                # Récupération automatique des modèles actifs sur votre clé API
+                try:
+                    url_liste = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                    with urllib.request.urlopen(url_liste, timeout=10) as resp_liste:
+                        data_liste = json.loads(resp_liste.read().decode("utf-8"))
+                        for mod in data_liste.get("models", []):
+                            nom_mod = mod.get("name", "").replace("models/", "")
+                            methodes = mod.get("supportedGenerationMethods", [])
+                            if "generateContent" in methodes and "gemini" in nom_mod:
+                                if nom_mod not in modeles_candidats:
+                                    modeles_candidats.append(nom_mod)
+                except Exception:
+                    pass
+
+                reponse_ia = None
+                derniere_erreur = ""
+
+                for modele in modeles_candidats:
+                    try:
+                        url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modele}:generateContent?key={api_key}"
+                        req_ia = urllib.request.Request(
+                            url_gemini,
+                            data=json.dumps(payload_ia).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                        )
+                        with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
+                            res_json = json.loads(resp_ia.read().decode("utf-8"))
+                            reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                            break
+                    except Exception as e:
+                        derniere_erreur = str(e)
+                        continue
+
+                if not reponse_ia:
+                    reponse_ia = f"❌ Erreur de communication avec le moteur IA : {derniere_erreur}"
+
+            st.markdown(reponse_ia)
+            st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
