@@ -539,7 +539,7 @@ onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
 ])
 
 # ------------------------------------------------------------------------------
-# ONGLET 1 : RADAR & AIDE À L'ACHAT
+# ONGLET 1 : RADAR & AIDE À L'ACHAT (DESIGN PRO)
 # ------------------------------------------------------------------------------
 with onglet_radar:
   if mode_gratuit:
@@ -549,7 +549,6 @@ with onglet_radar:
         " débloquer toutes les valeurs du PEA !"
     )
 
-  col1, col2, col3, col4 = st.columns(4)
   nb_opportunites = sum(
       1
       for d in donnees_t1
@@ -557,15 +556,54 @@ with onglet_radar:
   )
   nb_croisements = sum(1 for d in donnees_t1 if "Croisement" in d["EMA 2/12"])
 
-  col1.metric(
-      "Opportunités d'Achat", f"{nb_opportunites} / {len(actions_autorisees)}"
-  )
-  col2.metric("Signaux EMA 2/12", f"{nb_croisements} Actif(s)")
-  col3.metric("Budget DCA Configuré", f"{BUDGET_MENSUEL:.0f} €")
-  col4.metric("Rente Mensuelle Générée", f"+{montant_tot_div/12:.2f} €/mois")
+  # --- 1. CARTES KPI DU RADAR (DESIGN PRO) ---
+  html_radar_kpi = f"""
+  <style>
+  .rad-kpi-grid {{ display: flex; gap: 15px; margin: 10px 0 25px 0; flex-wrap: wrap; font-family: sans-serif; }}
+  .rad-kpi-card {{ flex: 1; min-width: 200px; background: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; padding: 18px; text-align: center; }}
+  .rad-kpi-highlight {{ flex: 1; min-width: 200px; background: rgba(46,204,113,0.12); border: 2px solid rgba(46,204,113,0.5); border-radius: 12px; padding: 18px; text-align: center; }}
+  .rad-kpi-title {{ font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; margin-bottom: 8px; font-weight: bold; }}
+  .rad-kpi-val {{ font-size: 1.65em; font-weight: 900; margin-bottom: 5px; }}
+  .rad-kpi-sub {{ font-size: 0.85em; font-weight: 600; opacity: 0.85; }}
+ 
+  /* Styles généraux pour les tableaux Pro de l'Onglet 1 */
+  .r-table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }}
+  .r-table th {{ border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.83em; background-color: rgba(128,128,128,0.05); }}
+  .r-table td {{ border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }}
+  .r-name {{ font-weight: 800; font-size: 1.05em; text-align: left; }}
+  .b-green {{ background: rgba(46,204,113,0.18); color: #2ecc71; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 0.9em; }}
+  .b-yellow {{ background: rgba(241,196,15,0.18); color: #f39c12; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 0.9em; }}
+  .b-red {{ background: rgba(231,76,60,0.18); color: #e74c3c; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 0.9em; }}
+  .b-neutral {{ background: rgba(128,128,128,0.15); opacity: 0.85; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 0.9em; }}
+  .score-bg {{ width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }}
+  </style>
 
-  st.markdown("---")
+  <div class="rad-kpi-grid">
+      <div class="rad-kpi-card">
+          <div class="rad-kpi-title">🎯 Opportunités d'Achat</div>
+          <div class="rad-kpi-val">{nb_opportunites} / {len(actions_autorisees)}</div>
+          <div class="rad-kpi-sub" style="color: #2ecc71;">Scores techniques ≥ 40/100</div>
+      </div>
+      <div class="rad-kpi-card">
+          <div class="rad-kpi-title">⚡ Signaux EMA 2/12</div>
+          <div class="rad-kpi-val">{nb_croisements} Actif(s)</div>
+          <div class="rad-kpi-sub">Croisement haussier court terme</div>
+      </div>
+      <div class="rad-kpi-card">
+          <div class="rad-kpi-title">💰 Budget DCA Configuré</div>
+          <div class="rad-kpi-val">{BUDGET_MENSUEL:.0f} €</div>
+          <div class="rad-kpi-sub">Enveloppe mensuelle d'investissement</div>
+      </div>
+      <div class="rad-kpi-highlight">
+          <div class="rad-kpi-title">🌱 Rente Mensuelle Créée</div>
+          <div class="rad-kpi-val" style="color: #2ecc71;">+{montant_tot_div/12:.2f} €</div>
+          <div class="rad-kpi-sub" style="color: #2ecc71;">Soit +{montant_tot_div:.2f} €/an avec ce DCA</div>
+      </div>
+  </div>
+  """
+  st.markdown(html_radar_kpi, unsafe_allow_html=True)
 
+  # --- FILTRE DE RECHERCHE ---
   st.subheader("🔎 Filtrer ou rechercher une valeur")
   options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
   choix_action = st.selectbox(
@@ -584,41 +622,221 @@ with onglet_radar:
     t3_filtre = [d for d in donnees_t3 if d["Actif"] == choix_action]
     t4_filtre = [d for d in donnees_t4 if d["Actif"] == choix_action]
 
+  # --- 2. TABLEAU 1 : TIMING & MOMENTUM (DESIGN PRO) ---
   st.subheader("📊 Tableau 1 : Timing & Momentum (Aide à la Décision)")
-  st.dataframe(t1_filtre, use_container_width=True)
+
+  html_t1 = """
+  <table class="r-table">
+  <thead>
+      <tr>
+          <th style="text-align: left;">Actif</th>
+          <th>Prix Actuel</th>
+          <th>Prix Cible</th>
+          <th>Écart Cible</th>
+          <th>RSI (14J)</th>
+          <th>MACD</th>
+          <th>Signal EMA 2/12</th>
+          <th style="width: 140px;">Score / 100</th>
+          <th>Décision IA</th>
+      </tr>
+  </thead>
+  <tbody>
+  """
+
+  # Tri automatique des actions du meilleur score au plus faible
+  for d in sorted(t1_filtre, key=lambda x: x["Score"], reverse=True):
+    ecart_str = str(d["Écart Cible (%)"])
+    if "🟢" in ecart_str:
+      badge_ecart = f"<span class='b-green'>{ecart_str}</span>"
+    elif "🟡" in ecart_str:
+      badge_ecart = f"<span class='b-yellow'>{ecart_str}</span>"
+    else:
+      badge_ecart = f"<span class='b-neutral'>{ecart_str}</span>"
+
+    rsi_v = d["RSI"]
+    if rsi_v <= 35:
+      rsi_html = f"<span style='color:#2ecc71; font-weight:900;'>{rsi_v} (Survendu)</span>"
+    elif rsi_v >= 68:
+      rsi_html = f"<span style='color:#e74c3c; font-weight:900;'>{rsi_v} (Chaud)</span>"
+    else:
+      rsi_html = f"<b>{rsi_v}</b>"
+
+    ema_str = d["EMA 2/12"]
+    ema_html = f"<span class='b-green'>{ema_str}</span>" if "Croisement" in ema_str else f"<span style='opacity:0.6;'>{ema_str}</span>"
+
+    sc = d["Score"]
+    c_bar = "#2ecc71" if sc >= 65 else ("#3498db" if sc >= 40 else "#95a5a6")
+
+    dec = d["Décision"]
+    if "ACHAT FORT" in dec:
+      dec_html = f"<span class='b-green'>{dec}</span>"
+    elif "ACCUMULATION" in dec:
+      dec_html = f"<span class='b-yellow' style='color:#2ecc71; background:rgba(46,204,113,0.12);'>{dec}</span>"
+    elif "ALLÈGEMENT" in dec:
+      dec_html = f"<span class='b-red'>{dec}</span>"
+    else:
+      dec_html = f"<span class='b-neutral'>{dec}</span>"
+
+    cible_aff = f"{d['Prix Cible (€)']:.2f} €" if isinstance(d["Prix Cible (€)"], (int, float)) else d["Prix Cible (€)"]
+
+    html_t1 += f"""
+    <tr>
+        <td class="r-name">{d['Actif']}</td>
+        <td><b>{d['Prix (€)']:.2f} €</b></td>
+        <td style="opacity: 0.85;">{cible_aff}</td>
+        <td>{badge_ecart}</td>
+        <td>{rsi_html}</td>
+        <td style="font-size: 1.15em;">{d['MACD']}</td>
+        <td>{ema_html}</td>
+        <td>
+            <div style="font-weight: 800; font-size: 0.9em;">{sc} / 100</div>
+            <div class="score-bg"><div style="width: {min(100, sc)}%; background: {c_bar}; height: 100%;"></div></div>
+        </td>
+        <td>{dec_html}</td>
+    </tr>
+    """
+
+  html_t1 += "</tbody></table>"
+  st.markdown(html_t1, unsafe_allow_html=True)
 
   st.markdown("---")
 
+  # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA (DESIGN PRO) ---
   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
       "🎯 Tableau 4 : Niveaux Techniques",
-      "🛡️ Tableau 3 : Sûreté",
+      "🛡️ Tableau 3 : Sûreté Dividendes",
       "💰 Allocation DCA du Mois",
   ])
 
   with tab_val:
-    st.subheader("📐 Écart à la Régression Linéaire")
-    st.dataframe(t2_filtre, use_container_width=True)
+    st.caption("Comparaison du cours actuel avec la tendance longue (droite de régression linéaire sur 3 ans) :")
+    html_t2 = """
+    <table class="r-table">
+    <thead>
+        <tr>
+            <th style="text-align: left;">Actif</th>
+            <th>Prix Actuel</th>
+            <th>Valeur Tendance 3 Ans (Régression)</th>
+            <th>Écart à la Tendance</th>
+            <th>Diagnostic Value</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
+    for d in t2_filtre:
+      st_val = d["Statut Value"]
+      if "DÉCOTE" in st_val:
+        b_val = f"<span class='b-green'>{st_val}</span>"
+      elif "SOUS-ÉV" in st_val:
+        b_val = f"<span class='b-yellow'>{st_val}</span>"
+      else:
+        b_val = f"<span class='b-neutral'>{st_val}</span>"
+
+      html_t2 += f"""
+      <tr>
+          <td class="r-name">{d['Actif']}</td>
+          <td><b>{d['Prix (€)']:.2f} €</b></td>
+          <td>{d['Droite Reg. (€)']:.2f} €</td>
+          <td><b>{d['Écart %']}</b></td>
+          <td>{b_val}</td>
+      </tr>
+      """
+    html_t2 += "</tbody></table>"
+    st.markdown(html_t2, unsafe_allow_html=True)
 
   with tab_tech:
-    st.subheader("🎯 Niveaux 30 Jours (Supports & Résistances)")
-    st.dataframe(t4_filtre, use_container_width=True)
+    st.caption("Positionnement du cours par rapport aux plus bas (Support) et plus hauts (Résistance) des 30 derniers jours :")
+    html_t4 = """
+    <table class="r-table">
+    <thead>
+        <tr>
+            <th style="text-align: left;">Actif</th>
+            <th>Support 30J (Plus Bas)</th>
+            <th>Prix Actuel</th>
+            <th>Résistance 30J (Plus Haut)</th>
+            <th>Zone Technique</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
+    for d in t4_filtre:
+      z = d["Zone"]
+      if "SUPPORT" in z:
+        b_z = f"<span class='b-green'>{z}</span>"
+      elif "RÉSISTANCE" in z:
+        b_z = f"<span class='b-red'>{z}</span>"
+      else:
+        b_z = f"<span class='b-neutral'>{z}</span>"
+
+      html_t4 += f"""
+      <tr>
+          <td class="r-name">{d['Actif']}</td>
+          <td style="color: #2ecc71; font-weight: bold;">{d['Support 30J (€)']:.2f} €</td>
+          <td><b>{d['Prix (€)']:.2f} €</b></td>
+          <td style="color: #e74c3c; font-weight: bold;">{d['Résistance 30J (€)']:.2f} €</td>
+          <td>{b_z}</td>
+      </tr>
+      """
+    html_t4 += "</tbody></table>"
+    st.markdown(html_t4, unsafe_allow_html=True)
 
   with tab_div:
-    st.subheader("🛡️ Sûreté des Dividendes & Payout Ratio")
-    st.dataframe(t3_filtre, use_container_width=True)
+    st.caption("Analyse du rendement, de la croissance et de la soutenabilité du dividende (Payout Ratio) :")
+    html_t3 = """
+    <table class="r-table">
+    <thead>
+        <tr>
+            <th style="text-align: left;">Actif</th>
+            <th>Dividende / Action</th>
+            <th>Rendement Actuel</th>
+            <th style="width: 150px;">Payout Ratio</th>
+            <th>Croissance 5 Ans</th>
+            <th>Sûreté du Dividende</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
+    for d in t3_filtre:
+      sur = d["Sûreté"]
+      if "ULTRA" in sur or "SOLIDE" in sur:
+        b_sur = f"<span class='b-green'>{sur}</span>"
+      else:
+        b_sur = f"<span class='b-yellow'>{sur}</span>"
+
+      try:
+        p_num = int(str(d["Payout"]).replace("%", "").strip())
+      except Exception:
+        p_num = 50
+      c_pay = "#2ecc71" if p_num <= 60 else ("#f39c12" if p_num <= 75 else "#e74c3c")
+
+      html_t3 += f"""
+      <tr>
+          <td class="r-name">{d['Actif']}</td>
+          <td><b>{d['Div/Act (€)']}</b></td>
+          <td style="color: #2ecc71; font-weight: 800;">{d['Rendement Réel']}</td>
+          <td>
+              <div style="font-weight: bold; font-size: 0.9em;">{d['Payout']}</div>
+              <div class="score-bg"><div style="width: {min(100, p_num)}%; background: {c_pay}; height: 100%;"></div></div>
+          </td>
+          <td><b>{d['Croissance 5a']}</b></td>
+          <td>{b_sur}</td>
+      </tr>
+      """
+    html_t3 += "</tbody></table>"
+    st.markdown(html_t3, unsafe_allow_html=True)
 
   with tab_dca:
-    st.subheader("💡 Allocation Suggérée en Actions Entières")
+    st.caption(f"Répartition optimale de votre budget mensuel ({BUDGET_MENSUEL:.0f} €) sur les meilleures opportunités actuelles :")
     if not candidats_tries:
       st.warning(
           "Aucune action n'atteint le seuil d'achat ce mois-ci (Scores < 40)."
       )
     else:
-      allocation_data = []
       total_investi = 0
       total_div_an = 0
+      lignes_dca_html = ""
 
       for item in candidats_tries:
         nb = achats_simules[item["nom"]]
@@ -628,22 +846,38 @@ with onglet_radar:
           total_investi += montant_eff
           total_div_an += div_gen
 
-          allocation_data.append({
-              "Actif": item["nom"],
-              "Prix Actuel (€)": f"{item['prix']:.2f} €",
-              "Actions à Acheter": nb,
-              "Montant Effectif (€)": f"{montant_eff:.2f} €",
-              "Rente Annuelle Générée (€)": f"+{div_gen:.2f} €/an",
-          })
+          lignes_dca_html += f"""
+          <tr>
+              <td class="r-name">{item['nom']}</td>
+              <td>{item['prix']:.2f} €</td>
+              <td><span class="b-green" style="font-size: 1.05em;">🛒 {nb} action(s)</span></td>
+              <td><b>{montant_eff:.2f} €</b></td>
+              <td style="color: #2ecc71; font-weight: 800;">+{div_gen:.2f} € / an</td>
+          </tr>
+          """
 
-      if allocation_data:
-        st.dataframe(allocation_data, use_container_width=True)
-        st.success(
-            f"💰 **Total investi ce mois-ci :** {total_investi:.2f} € /"
-            f" {BUDGET_MENSUEL:.2f} € (Liquidités restantes :"
-            f" {budget_courant:.2f} €)\n"
-            f"📈 **Rente annuelle créée :** +{total_div_an:.2f} €/an"
-        )
+      if lignes_dca_html:
+        html_dca_box = f"""
+        <div style="background: linear-gradient(90deg, rgba(46,204,113,0.15) 0%, rgba(52,152,219,0.15) 100%); border-left: 5px solid #2ecc71; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; font-family: sans-serif;">
+            <div style="font-size: 1.05em;">💰 <b>Total investi ce mois-ci : {total_investi:.2f} €</b> sur {BUDGET_MENSUEL:.0f} € <span style="opacity: 0.85;">(Liquidités restantes : {budget_courant:.2f} €)</span></div>
+            <div style="margin-top: 6px; font-size: 0.95em; color: #2ecc71; font-weight: bold;">📈 Nouvelle rente annuelle créée immédiatement : +{total_div_an:.2f} €/an (+{total_div_an/12:.2f} €/mois)</div>
+        </div>
+        <table class="r-table">
+        <thead>
+            <tr>
+                <th style="text-align: left;">Actif Sélectionné</th>
+                <th>Prix Unitaire</th>
+                <th>Quantité à Acheter</th>
+                <th>Montant Total Investi</th>
+                <th>Rente Générée</th>
+            </tr>
+        </thead>
+        <tbody>
+            {lignes_dca_html}
+        </tbody>
+        </table>
+        """
+        st.markdown(html_dca_box, unsafe_allow_html=True)
       else:
         st.warning(
             "Le budget mensuel est trop faible pour acheter une action entière"
@@ -652,6 +886,7 @@ with onglet_radar:
 
   st.markdown("---")
 
+  # --- 4. GRAPHIQUE DE RÉGRESSION LINÉAIRE (3 ANS) ---
   st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
   index_defaut = (
       actions_autorisees.index(choix_action)
@@ -670,9 +905,10 @@ with onglet_radar:
     _, _, droite_reg = calculer_regression_lineaire(closes)
 
     st.line_chart({
-        "Cours Réel": closes,
+        "Cours Réel (€)": closes,
         "Tendance 3 Ans (Régression)": droite_reg,
     })
+
 
 # ------------------------------------------------------------------------------
 # ONGLET 2 : MON PORTEFEUILLE & SECTEURS (DESIGN PRO & CAMEMBERT)
