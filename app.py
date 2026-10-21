@@ -1712,7 +1712,6 @@ if question_finale:
                     ],
                 }
 
-                # Liste des modèles à tester automatiquement pour éviter toute erreur 404
                 modeles_candidats = [
                     "gemini-2.5-flash",
                     "gemini-2.0-flash",
@@ -1721,7 +1720,6 @@ if question_finale:
                     "gemini-pro-latest",
                 ]
 
-                # Récupération automatique des modèles actifs sur votre clé API
                 try:
                     url_liste = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
                     with urllib.request.urlopen(url_liste, timeout=10) as resp_liste:
