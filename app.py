@@ -528,575 +528,716 @@ while continuer:
 montant_tot_div = sum(
     achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries
 )
-# --- CALCULS TECHNIQUES ---
-def calculer_rsi(clotures, periode=14):
-  if len(clotures) < periode + 1:
-    return 50.0
-  variations = [clotures[i] - clotures[i - 1] for i in range(1, len(clotures))]
-  gains = [v if v > 0 else 0 for v in variations[-periode:]]
-  pertes = [-v if v < 0 else 0 for v in variations[-periode:]]
-  moy_gain = sum(gains) / periode
-  moy_perte = sum(pertes) / periode
-  if moy_perte == 0:
-    return 100.0
-  rs = moy_gain / moy_perte
-  return 100.0 - (100.0 / (1.0 + rs))
+# ==============================================================================
+# NAVIGATION PRINCIPALE : LES 4 ONGLETS
+# ==============================================================================
+onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
+    "🔍 1. Radar & Aide à l'Achat (DCA)",
+    "💼 2. Mon Portefeuille & Secteurs",
+    "📅 3. Dividendes & Calendrier",
+    "🤖 4. Coach & Audit IA",
+])
 
-def calculer_bollinger(clotures, periode=20):
-  if len(clotures) < periode:
-    return clotures[-1], clotures[-1]
-  fenetre = clotures[-periode:]
-  moyenne = sum(fenetre) / periode
-  variance = sum((x - moyenne) ** 2 for x in fenetre) / periode
-  ecart_type = math.sqrt(variance)
-  return moyenne - (2 * ecart_type), moyenne + (2 * ecart_type)
+# ------------------------------------------------------------------------------
+# ONGLET 1 : RADAR & AIDE À L'ACHAT
+# ------------------------------------------------------------------------------
+with onglet_radar:
+  if mode_gratuit:
+    st.warning(
+        "🔒 **Aperçu Gratuit (Freemium)** : Vous visualisez actuellement 2"
+        " actions de démonstration. Passez à l'abonnement complet pour"
+        " débloquer toutes les valeurs du PEA !"
+    )
 
-def calculer_macd(clotures):
-  if len(clotures) < 35:
-    return 0, 0
-  k12, k26, k9 = 2 / 13, 2 / 27, 2 / 10
-  e12, e26 = sum(clotures[:12]) / 12, sum(clotures[:26]) / 26
-  macds = []
-  for i, prix in enumerate(clotures):
-    if i >= 12:
-      e12 = (prix * k12) + (e12 * (1 - k12))
-    if i >= 26:
-      e26 = (prix * k26) + (e26 * (1 - k26))
-    if i >= 26:
-      macds.append(e12 - e26)
-  if len(macds) < 9:
-    return macds[-1], 0
-  sig = sum(macds[:9]) / 9
-  for m in macds[9:]:
-    sig = (m * k9) + (sig * (1 - k9))
-  return macds[-1], sig
+  col1, col2, col3, col4 = st.columns(4)
+  nb_opportunites = sum(
+      1
+      for d in donnees_t1
+      if "ACHAT" in d["Décision"] or "ACCUMULATION" in d["Décision"]
+  )
+  nb_croisements = sum(1 for d in donnees_t1 if "Croisement" in d["EMA 2/12"])
 
-def calculer_ema_serie(clotures, periode):
-  if not clotures:
-    return []
-  k = 2 / (periode + 1)
-  emas = []
-  if len(clotures) >= periode:
-    sma = sum(clotures[:periode]) / periode
-    ema = sma
-    for i, prix in enumerate(clotures):
-      if i < periode - 1:
-        emas.append(None)
-      elif i == periode - 1:
-        emas.append(sma)
-      else:
-        ema = (prix * k) + (ema * (1 - k))
-        emas.append(ema)
-  else:
-    ema = clotures[0]
-    for prix in clotures:
-      ema = (prix * k) + (ema * (1 - k))
-      emas.append(ema)
-  return emas
+  col1.metric(
+      "Opportunités d'Achat", f"{nb_opportunites} / {len(actions_autorisees)}"
+  )
+  col2.metric("Signaux EMA 2/12", f"{nb_croisements} Actif(s)")
+  col3.metric("Budget DCA Configuré", f"{BUDGET_MENSUEL:.0f} €")
+  col4.metric("Rente Mensuelle Générée", f"+{montant_tot_div/12:.2f} €/mois")
 
-def verifier_croisement_2_12(clotures):
-  if len(clotures) < 15:
-    return False
-  ema2_serie = calculer_ema_serie(clotures, 2)
-  ema12_serie = calculer_ema_serie(clotures, 12)
-  valides = [
-      (e2, e12)
-      for e2, e12 in zip(ema2_serie, ema12_serie)
-      if e2 is not None and e12 is not None
-  ]
-  if len(valides) < 2:
-    return False
-  veille_e2, veille_e12 = valides[-2]
-  jour_e2, jour_e12 = valides[-1]
-  return veille_e2 <= veille_e12 and jour_e2 > jour_e12
+  st.markdown("---")
 
-def calculer_regression_lineaire(clotures):
-  n = len(clotures)
-  if n < 2:
-    return clotures[-1], 0.0, []
-  x = list(range(n))
-  moy_x, moy_y = sum(x) / n, sum(clotures) / n
-  numerateur = sum((x[i] - moy_x) * (clotures[i] - moy_y) for i in range(n))
-  denominateur = sum((x[i] - moy_x) ** 2 for i in range(n))
-  pente = numerateur / denominateur if denominateur != 0 else 0
-  ordonnee = moy_y - (pente * moy_x)
-
-  droite_regression = [(pente * i) + ordonnee for i in range(n)]
-  val_reg = droite_regression[-1]
-  ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100
-  return val_reg, ecart_pct, droite_regression
-
-@st.cache_data(ttl=3600)
-def recuperer_donnees(symbole):
-  url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbole}?range=3y&interval=1d"
-  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-  try:
-    with urllib.request.urlopen(req, timeout=5) as response:
-      data = json.loads(response.read().decode())
-      result = data["chart"]["result"][0]
-      prix_actuel = result["meta"]["regularMarketPrice"]
-      closes = [
-          p for p in result["indicators"]["quote"][0]["close"] if p is not None
-      ]
-      hauts = [
-          h for h in result["indicators"]["quote"][0]["high"] if h is not None
-      ]
-      bas = [
-          l for l in result["indicators"]["quote"][0]["low"] if l is not None
-      ]
-      return prix_actuel, closes, hauts, bas
-  except Exception:
-    return None, None, None, None
-
-# --- TRAITEMENT GÉNÉRAL ---
-resultats_analysed = []
-donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
-historiques_prix = {}
-prix_temps_reel = {}
-
-for nom, info in WATCHLIST.items():
-  prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
-  if prix_actuel is None or not closes:
-    continue
-
-  prix_temps_reel[nom] = prix_actuel
-  historiques_prix[nom] = closes
-
-  if nom not in actions_autorisees:
-    continue
-
-  rendement_actuel = info["div_eur"] / prix_actuel if prix_actuel > 0 else 0.0
-  prix_cible = info["prix_cible"]
-  plus_haut_52s = max(hauts) if hauts else prix_actuel
-  rsi = calculer_rsi(closes)
-  borne_inf, borne_sup = calculer_bollinger(closes)
-  macd_val, macd_sig = calculer_macd(closes)
-  croisement_2_12 = verifier_croisement_2_12(closes)
-  val_reg, ecart_reg_pct, droite_reg = calculer_regression_lineaire(closes)
-  support_30j = min(bas[-30:]) if len(bas) >= 30 else min(bas)
-  resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
-
-  if prix_cible > 0:
-    distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100
-  else:
-    distance_cible_pct = 0.0
-
-  score = 0
-  if prix_cible > 0 and prix_actuel <= prix_cible:
-    score += 25
-  elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
-    score += 12
-
-  ecart_haut = ((prix_actuel - plus_haut_52s) / plus_haut_52s) * 100
-  if ecart_haut <= -20:
-    score += 20
-  elif ecart_haut <= -10:
-    score += 10
-
-  if prix_actuel <= borne_inf:
-    score += 15
-  elif prix_actuel <= borne_inf * 1.02:
-    score += 8
-
-  if macd_val > macd_sig:
-    score += 10
-  if rsi <= 30:
-    score += 15
-  elif rsi <= 45:
-    score += 8
-
-  if croisement_2_12:
-    score += 15
-
-  est_surevalue = prix_cible > 0 and prix_actuel >= prix_cible * 1.20 and (
-      rsi >= 70 or prix_actuel >= borne_sup
+  st.subheader("🔎 Filtrer ou rechercher une valeur")
+  options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
+  choix_action = st.selectbox(
+      "Choisissez une action dans la liste :",
+      options=options_filtre,
   )
 
-  if est_surevalue:
-    decision = "⚠️ ALLÈGEMENT"
-  elif score >= 65:
-    decision = "🔥 ACHAT FORT"
-  elif score >= 40:
-    decision = "✅ ACCUMULATION"
+  if choix_action == "📋 Afficher toutes les actions":
+    t1_filtre = donnees_t1
+    t2_filtre = donnees_t2
+    t3_filtre = donnees_t3
+    t4_filtre = donnees_t4
   else:
-    decision = "⏸️ CONSERVATION"
+    t1_filtre = [d for d in donnees_t1 if d["Actif"] == choix_action]
+    t2_filtre = [d for d in donnees_t2 if d["Actif"] == choix_action]
+    t3_filtre = [d for d in donnees_t3 if d["Actif"] == choix_action]
+    t4_filtre = [d for d in donnees_t4 if d["Actif"] == choix_action]
 
-  if distance_cible_pct <= 0:
-    dist_str = f"🟢 {distance_cible_pct:+.1f}%"
-  elif distance_cible_pct <= 5:
-    dist_str = f"🟡 {distance_cible_pct:+.1f}%"
-  else:
-    dist_str = f"⚪ {distance_cible_pct:+.1f}%"
+  st.subheader("📊 Tableau 1 : Timing & Momentum (Aide à la Décision)")
+  st.dataframe(t1_filtre, use_container_width=True)
 
-  donnees_t1.append({
-      "Actif": nom,
-      "Prix (€)": round(prix_actuel, 2),
-      "Prix Cible (€)": round(prix_cible, 2) if prix_cible > 0 else "N/A",
-      "Écart Cible (%)": dist_str if prix_cible > 0 else "N/A",
-      "RSI": round(rsi, 1),
-      "MACD": "🟢" if macd_val > macd_sig else "🔴",
-      "EMA 2/12": "🟢 Croisement" if croisement_2_12 else "⚪ Neutre",
-      "Score": score,
-      "Décision": decision,
-  })
+  st.markdown("---")
 
-  donnees_t2.append({
-      "Actif": nom,
-      "Prix (€)": round(prix_actuel, 2),
-      "Droite Reg. (€)": round(val_reg, 2),
-      "Écart %": f"{ecart_reg_pct:+.1f}%",
-      "Statut Value": (
-          "🟢 DÉCOTE"
-          if ecart_reg_pct <= -10
-          else ("🟡 SOUS-ÉV." if ecart_reg_pct < 0 else "⚪ NEUTRE")
-      ),
-  })
+  st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
+  tab_val, tab_tech, tab_div, tab_dca = st.tabs([
+      "📐 Tableau 2 : Analyse Value",
+      "🎯 Tableau 4 : Niveaux Techniques",
+      "🛡️ Tableau 3 : Sûreté",
+      "💰 Allocation DCA du Mois",
+  ])
 
-  donnees_t3.append({
-      "Actif": nom,
-      "Div/Act (€)": f"{info['div_eur']:.2f} €",
-      "Rendement Réel": f"{rendement_actuel*100:.1f}%",
-      "Payout": f"{info['payout_ratio']*100:.0f}%",
-      "Croissance 5a": info.get("croissance_5a", "N/A"),
-      "Sûreté": (
-          "🛡️ ULTRA SÛR"
-          if info["payout_ratio"] <= 0.55
-          else (
-              "✅ SOLIDE"
-              if info["payout_ratio"] <= 0.70
-              else "🟡 SURVEILLER"
-          )
-      ),
-  })
+  with tab_val:
+    st.subheader("📐 Écart à la Régression Linéaire")
+    st.dataframe(t2_filtre, use_container_width=True)
 
-  zone = (
-      "🟢 SUR SUPPORT"
-      if prix_actuel <= support_30j * 1.02
-      else (
-          "🔴 SUR RÉSISTANCE"
-          if prix_actuel >= resistance_30j * 0.98
-          else "⚪ EN CANAL"
+  with tab_tech:
+    st.subheader("🎯 Niveaux 30 Jours (Supports & Résistances)")
+    st.dataframe(t4_filtre, use_container_width=True)
+
+  with tab_div:
+    st.subheader("🛡️ Sûreté des Dividendes & Payout Ratio")
+    st.dataframe(t3_filtre, use_container_width=True)
+
+  with tab_dca:
+    st.subheader("💡 Allocation Suggérée en Actions Entières")
+    if not candidats_tries:
+      st.warning(
+          "Aucune action n'atteint le seuil d'achat ce mois-ci (Scores < 40)."
       )
-  )
-  donnees_t4.append({
-      "Actif": nom,
-      "Prix (€)": round(prix_actuel, 2),
-      "Support 30J (€)": round(support_30j, 2),
-      "Résistance 30J (€)": round(resistance_30j, 2),
-      "Zone": zone,
-  })
+    else:
+      allocation_data = []
+      total_investi = 0
+      total_div_an = 0
 
-  if score >= 40 and not est_surevalue:
-    resultats_analysed.append({
-        "nom": nom,
-        "score": score,
-        "rendement": rendement_actuel,
-        "prix": prix_actuel,
-        "div_eur": info["div_eur"],
+      for item in candidats_tries:
+        nb = achats_simules[item["nom"]]
+        if nb > 0:
+          montant_eff = nb * item["prix"]
+          div_gen = nb * item["div_eur"]
+          total_investi += montant_eff
+          total_div_an += div_gen
+
+          allocation_data.append({
+              "Actif": item["nom"],
+              "Prix Actuel (€)": f"{item['prix']:.2f} €",
+              "Actions à Acheter": nb,
+              "Montant Effectif (€)": f"{montant_eff:.2f} €",
+              "Rente Annuelle Générée (€)": f"+{div_gen:.2f} €/an",
+          })
+
+      if allocation_data:
+        st.dataframe(allocation_data, use_container_width=True)
+        st.success(
+            f"💰 **Total investi ce mois-ci :** {total_investi:.2f} € /"
+            f" {BUDGET_MENSUEL:.2f} € (Liquidités restantes :"
+            f" {budget_courant:.2f} €)\n"
+            f"📈 **Rente annuelle créée :** +{total_div_an:.2f} €/an"
+        )
+      else:
+        st.warning(
+            "Le budget mensuel est trop faible pour acheter une action entière"
+            " de ces valeurs."
+        )
+
+  st.markdown("---")
+
+  st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
+  index_defaut = (
+      actions_autorisees.index(choix_action)
+      if choix_action in actions_autorisees
+      else 0
+  )
+
+  action_selectionnee = st.selectbox(
+      "Sélectionnez l'action à analyser visuellement :",
+      actions_autorisees,
+      index=index_defaut,
+  )
+
+  if action_selectionnee in historiques_prix:
+    closes = historiques_prix[action_selectionnee]
+    _, _, droite_reg = calculer_regression_lineaire(closes)
+
+    st.line_chart({
+        "Cours Réel": closes,
+        "Tendance 3 Ans (Régression)": droite_reg,
     })
 
-# --- SIMULATION ALLOCATION ---
-candidats_tries = sorted(
-    resultats_analysed, key=lambda x: x["score"], reverse=True
-)
-budget_courant = BUDGET_MENSUEL
-achats_simules = {item["nom"]: 0 for item in candidats_tries}
+# ------------------------------------------------------------------------------
+# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (AVEC SAUVEGARDE CLOUD)
+# ------------------------------------------------------------------------------
+portefeuille_utilisateur = {}
+with onglet_portefeuille:
+  st.subheader("💼 Gestionnaire de Portefeuille & Répartition Sectorielle")
 
-continuer = True
-while continuer:
-  continuer = False
-  for item in candidats_tries:
-    if budget_courant >= item["prix"]:
-      achats_simules[item["nom"]] += 1
-      budget_courant -= item["prix"]
-      continuer = True
+  if st.session_state["user"] is None:
+    st.info(
+        "💡 **Astuce Cloud** : Connectez-vous dans la barre latérale à gauche"
+        " pour sauvegarder durablement vos quantités et vos PRU dans votre"
+        " espace personnel."
+    )
 
-montant_tot_div = sum(
-    achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries
-)
-# --- CALCULS TECHNIQUES ---
-def calculer_rsi(clotures, periode=14):
-  if len(clotures) < periode + 1:
-    return 50.0
-  variations = [clotures[i] - clotures[i - 1] for i in range(1, len(clotures))]
-  gains = [v if v > 0 else 0 for v in variations[-periode:]]
-  pertes = [-v if v < 0 else 0 for v in variations[-periode:]]
-  moy_gain = sum(gains) / periode
-  moy_perte = sum(pertes) / periode
-  if moy_perte == 0:
-    return 100.0
-  rs = moy_gain / moy_perte
-  return 100.0 - (100.0 / (1.0 + rs))
+  with st.expander(
+      "✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)",
+      expanded=False,
+  ):
+    st.caption(
+        "Indiquez le nombre d'actions que vous possédez dans votre PEA et votre"
+        " Prix de Revient Unitaire (PRU). Cliquez sur le bouton en bas du menu"
+        " pour enregistrer vos modifications."
+    )
+    cols_saisie = st.columns(3)
+    nouveau_portefeuille_temp = {}
 
-def calculer_bollinger(clotures, periode=20):
-  if len(clotures) < periode:
-    return clotures[-1], clotures[-1]
-  fenetre = clotures[-periode:]
-  moyenne = sum(fenetre) / periode
-  variance = sum((x - moyenne) ** 2 for x in fenetre) / periode
-  ecart_type = math.sqrt(variance)
-  return moyenne - (2 * ecart_type), moyenne + (2 * ecart_type)
+    for idx, (nom_act, info_act) in enumerate(WATCHLIST.items()):
+      col_active = cols_saisie[idx % 3]
+      with col_active:
+        st.markdown(f"**{nom_act}** *({info_act['secteur']})*")
+        qte_defaut = st.session_state["portefeuille"].get(nom_act, {}).get("qte", 0)
+        pru_defaut = st.session_state["portefeuille"].get(nom_act, {}).get(
+            "pru", float(info_act["prix_cible"]) if info_act["prix_cible"] > 0 else 0.0
+        )
 
-def calculer_macd(clotures):
-  if len(clotures) < 35:
-    return 0, 0
-  k12, k26, k9 = 2 / 13, 2 / 27, 2 / 10
-  e12, e26 = sum(clotures[:12]) / 12, sum(clotures[:26]) / 26
-  macds = []
-  for i, prix in enumerate(clotures):
-    if i >= 12:
-      e12 = (prix * k12) + (e12 * (1 - k12))
-    if i >= 26:
-      e26 = (prix * k26) + (e26 * (1 - k26))
-    if i >= 26:
-      macds.append(e12 - e26)
-  if len(macds) < 9:
-    return macds[-1], 0
-  sig = sum(macds[:9]) / 9
-  for m in macds[9:]:
-    sig = (m * k9) + (sig * (1 - k9))
-  return macds[-1], sig
+        qte_saisie = st.number_input(
+            f"Quantité ({nom_act})",
+            min_value=0,
+            max_value=10000,
+            value=int(qte_defaut),
+            step=1,
+            key=f"qte_{nom_act}",
+        )
+        pru_saisi = st.number_input(
+            f"PRU € ({nom_act})",
+            min_value=0.0,
+            max_value=5000.0,
+            value=float(pru_defaut),
+            step=0.5,
+            key=f"pru_{nom_act}",
+        )
+        if qte_saisie > 0:
+          nouveau_portefeuille_temp[nom_act] = {
+              "qte": qte_saisie,
+              "pru": pru_saisi,
+          }
+        st.markdown("---")
 
-def calculer_ema_serie(clotures, periode):
-  if not clotures:
-    return []
-  k = 2 / (periode + 1)
-  emas = []
-  if len(clotures) >= periode:
-    sma = sum(clotures[:periode]) / periode
-    ema = sma
-    for i, prix in enumerate(clotures):
-      if i < periode - 1:
-        emas.append(None)
-      elif i == periode - 1:
-        emas.append(sma)
-      else:
-        ema = (prix * k) + (ema * (1 - k))
-        emas.append(ema)
+    portefeuille_utilisateur = nouveau_portefeuille_temp
+    st.session_state["portefeuille"] = portefeuille_utilisateur
+
+    if st.button("💾 Enregistrer mon portefeuille dans le Cloud", type="primary", use_container_width=True):
+        if sauvegarder_dans_cloud():
+            st.success("✅ Votre portefeuille a été sauvegardé dans votre compte Cloud !")
+        else:
+            st.warning("⚠️ Connectez-vous d'abord dans la barre latérale pour sauvegarder en ligne.")
+
+  if not portefeuille_utilisateur:
+    st.warning(
+        "Votre portefeuille est vide. Cliquez sur le menu « ✏️ Saisir ou"
+        " modifier mes actions détenues » juste au-dessus pour ajouter vos"
+        " premières actions !"
+    )
   else:
-    ema = clotures[0]
-    for prix in clotures:
-      ema = (prix * k) + (ema * (1 - k))
-      emas.append(ema)
-  return emas
+    lignes_portefeuille = []
+    repartition_secteurs = {}
+    valeur_totale_portefeuille = 0.0
+    cout_total_achat = 0.0
+    dividendes_annuels_totaux = 0.0
 
-def verifier_croisement_2_12(clotures):
-  if len(clotures) < 15:
-    return False
-  ema2_serie = calculer_ema_serie(clotures, 2)
-  ema12_serie = calculer_ema_serie(clotures, 12)
-  valides = [
-      (e2, e12)
-      for e2, e12 in zip(ema2_serie, ema12_serie)
-      if e2 is not None and e12 is not None
-  ]
-  if len(valides) < 2:
-    return False
-  veille_e2, veille_e12 = valides[-2]
-  jour_e2, jour_e12 = valides[-1]
-  return veille_e2 <= veille_e12 and jour_e2 > jour_e12
+    for nom_act, data_pos in portefeuille_utilisateur.items():
+      if nom_act not in WATCHLIST:
+          continue
+      qte = data_pos["qte"]
+      pru = data_pos["pru"]
+      info_act = WATCHLIST[nom_act]
+      prix_jour = prix_temps_reel.get(nom_act, info_act["prix_cible"])
 
-def calculer_regression_lineaire(clotures):
-  n = len(clotures)
-  if n < 2:
-    return clotures[-1], 0.0, []
-  x = list(range(n))
-  moy_x, moy_y = sum(x) / n, sum(clotures) / n
-  numerateur = sum((x[i] - moy_x) * (clotures[i] - moy_y) for i in range(n))
-  denominateur = sum((x[i] - moy_x) ** 2 for i in range(n))
-  pente = numerateur / denominateur if denominateur != 0 else 0
-  ordonnee = moy_y - (pente * moy_x)
+      val_ligne = qte * prix_jour
+      cout_ligne = qte * pru
+      div_ligne = qte * info_act["div_eur"]
 
-  droite_regression = [(pente * i) + ordonnee for i in range(n)]
-  val_reg = droite_regression[-1]
-  ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100
-  return val_reg, ecart_pct, droite_regression
+      valeur_totale_portefeuille += val_ligne
+      cout_total_achat += cout_ligne
+      dividendes_annuels_totaux += div_ligne
 
-@st.cache_data(ttl=3600)
-def recuperer_donnees(symbole):
-  url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbole}?range=3y&interval=1d"
-  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-  try:
-    with urllib.request.urlopen(req, timeout=5) as response:
-      data = json.loads(response.read().decode())
-      result = data["chart"]["result"][0]
-      prix_actuel = result["meta"]["regularMarketPrice"]
-      closes = [
-          p for p in result["indicators"]["quote"][0]["close"] if p is not None
-      ]
-      hauts = [
-          h for h in result["indicators"]["quote"][0]["high"] if h is not None
-      ]
-      bas = [
-          l for l in result["indicators"]["quote"][0]["low"] if l is not None
-      ]
-      return prix_actuel, closes, hauts, bas
-  except Exception:
-    return None, None, None, None
-
-# --- TRAITEMENT GÉNÉRAL ---
-resultats_analysed = []
-donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
-historiques_prix = {}
-prix_temps_reel = {}
-
-for nom, info in WATCHLIST.items():
-  prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
-  if prix_actuel is None or not closes:
-    continue
-
-  prix_temps_reel[nom] = prix_actuel
-  historiques_prix[nom] = closes
-
-  if nom not in actions_autorisees:
-    continue
-
-  rendement_actuel = info["div_eur"] / prix_actuel if prix_actuel > 0 else 0.0
-  prix_cible = info["prix_cible"]
-  plus_haut_52s = max(hauts) if hauts else prix_actuel
-  rsi = calculer_rsi(closes)
-  borne_inf, borne_sup = calculer_bollinger(closes)
-  macd_val, macd_sig = calculer_macd(closes)
-  croisement_2_12 = verifier_croisement_2_12(closes)
-  val_reg, ecart_reg_pct, droite_reg = calculer_regression_lineaire(closes)
-  support_30j = min(bas[-30:]) if len(bas) >= 30 else min(bas)
-  resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
-
-  if prix_cible > 0:
-    distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100
-  else:
-    distance_cible_pct = 0.0
-
-  score = 0
-  if prix_cible > 0 and prix_actuel <= prix_cible:
-    score += 25
-  elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
-    score += 12
-
-  ecart_haut = ((prix_actuel - plus_haut_52s) / plus_haut_52s) * 100
-  if ecart_haut <= -20:
-    score += 20
-  elif ecart_haut <= -10:
-    score += 10
-
-  if prix_actuel <= borne_inf:
-    score += 15
-  elif prix_actuel <= borne_inf * 1.02:
-    score += 8
-
-  if macd_val > macd_sig:
-    score += 10
-  if rsi <= 30:
-    score += 15
-  elif rsi <= 45:
-    score += 8
-
-  if croisement_2_12:
-    score += 15
-
-  est_surevalue = prix_cible > 0 and prix_actuel >= prix_cible * 1.20 and (
-      rsi >= 70 or prix_actuel >= borne_sup
-  )
-
-  if est_surevalue:
-    decision = "⚠️ ALLÈGEMENT"
-  elif score >= 65:
-    decision = "🔥 ACHAT FORT"
-  elif score >= 40:
-    decision = "✅ ACCUMULATION"
-  else:
-    decision = "⏸️ CONSERVATION"
-
-  if distance_cible_pct <= 0:
-    dist_str = f"🟢 {distance_cible_pct:+.1f}%"
-  elif distance_cible_pct <= 5:
-    dist_str = f"🟡 {distance_cible_pct:+.1f}%"
-  else:
-    dist_str = f"⚪ {distance_cible_pct:+.1f}%"
-
-  donnees_t1.append({
-      "Actif": nom,
-      "Prix (€)": round(prix_actuel, 2),
-      "Prix Cible (€)": round(prix_cible, 2) if prix_cible > 0 else "N/A",
-      "Écart Cible (%)": dist_str if prix_cible > 0 else "N/A",
-      "RSI": round(rsi, 1),
-      "MACD": "🟢" if macd_val > macd_sig else "🔴",
-      "EMA 2/12": "🟢 Croisement" if croisement_2_12 else "⚪ Neutre",
-      "Score": score,
-      "Décision": decision,
-  })
-
-  donnees_t2.append({
-      "Actif": nom,
-      "Prix (€)": round(prix_actuel, 2),
-      "Droite Reg. (€)": round(val_reg, 2),
-      "Écart %": f"{ecart_reg_pct:+.1f}%",
-      "Statut Value": (
-          "🟢 DÉCOTE"
-          if ecart_reg_pct <= -10
-          else ("🟡 SOUS-ÉV." if ecart_reg_pct < 0 else "⚪ NEUTRE")
-      ),
-  })
-
-  donnees_t3.append({
-      "Actif": nom,
-      "Div/Act (€)": f"{info['div_eur']:.2f} €",
-      "Rendement Réel": f"{rendement_actuel*100:.1f}%",
-      "Payout": f"{info['payout_ratio']*100:.0f}%",
-      "Croissance 5a": info.get("croissance_5a", "N/A"),
-      "Sûreté": (
-          "🛡️ ULTRA SÛR"
-          if info["payout_ratio"] <= 0.55
-          else (
-              "✅ SOLIDE"
-              if info["payout_ratio"] <= 0.70
-              else "🟡 SURVEILLER"
-          )
-      ),
-  })
-
-  zone = (
-      "🟢 SUR SUPPORT"
-      if prix_actuel <= support_30j * 1.02
-      else (
-          "🔴 SUR RÉSISTANCE"
-          if prix_actuel >= resistance_30j * 0.98
-          else "⚪ EN CANAL"
+      secteur = info_act["secteur"]
+      repartition_secteurs[secteur] = (
+          repartition_secteurs.get(secteur, 0.0) + val_ligne
       )
-  )
-  donnees_t4.append({
-      "Actif": nom,
-      "Prix (€)": round(prix_actuel, 2),
-      "Support 30J (€)": round(support_30j, 2),
-      "Résistance 30J (€)": round(resistance_30j, 2),
-      "Zone": zone,
-  })
 
-  if score >= 40 and not est_surevalue:
-    resultats_analysed.append({
-        "nom": nom,
-        "score": score,
-        "rendement": rendement_actuel,
-        "prix": prix_actuel,
-        "div_eur": info["div_eur"],
-    })
+    plus_value_globale = valeur_totale_portefeuille - cout_total_achat
+    plus_value_pct = (
+        (plus_value_globale / cout_total_achat) * 100
+        if cout_total_achat > 0
+        else 0.0
+    )
+    yoc_global = (
+        (dividendes_annuels_totaux / cout_total_achat) * 100
+        if cout_total_achat > 0
+        else 0.0
+    )
 
-# --- SIMULATION ALLOCATION ---
-candidats_tries = sorted(
-    resultats_analysed, key=lambda x: x["score"], reverse=True
-)
-budget_courant = BUDGET_MENSUEL
-achats_simules = {item["nom"]: 0 for item in candidats_tries}
+    c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+    c_p1.metric(
+        "Valorisation Totale PEA", f"{valeur_totale_portefeuille:,.2f} €"
+    )
+    c_p2.metric(
+        "Plus/Moins-Value Latente",
+        f"{plus_value_globale:+,.2f} €",
+        f"{plus_value_pct:+.1f}%",
+    )
+    c_p3.metric(
+        "Dividendes Annuels Estimés",
+        f"{dividendes_annuels_totaux:,.2f} € / an",
+        f"Soit {dividendes_annuels_totaux/12:.1f} €/mois",
+    )
+    c_p4.metric(
+        "Rendement sur PRU (Yield on Cost)",
+        f"{yoc_global:.2f} %",
+        f"Capital investi : {cout_total_achat:,.0f} €",
+    )
 
-continuer = True
-while continuer:
-  continuer = False
-  for item in candidats_tries:
-    if budget_courant >= item["prix"]:
-      achats_simules[item["nom"]] += 1
-      budget_courant -= item["prix"]
-      continuer = True
+    st.markdown("---")
 
-montant_tot_div = sum(
-    achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries
-)
+    alertes_concentration = []
+    for nom_act, data_pos in portefeuille_utilisateur.items():
+      if nom_act not in WATCHLIST:
+          continue
+      qte = data_pos["qte"]
+      pru = data_pos["pru"]
+      info_act = WATCHLIST[nom_act]
+      prix_jour = prix_temps_reel.get(nom_act, info_act["prix_cible"])
+
+      val_ligne = qte * prix_jour
+      cout_ligne = qte * pru
+      pv_eur = val_ligne - cout_ligne
+      pv_pct = ((pv_eur / cout_ligne) * 100) if cout_ligne > 0 else 0.0
+      div_ligne = qte * info_act["div_eur"]
+      yoc_ligne = ((info_act["div_eur"] / pru) * 100) if pru > 0 else 0.0
+      poids_pct = (
+          (val_ligne / valeur_totale_portefeuille) * 100
+          if valeur_totale_portefeuille > 0
+          else 0.0
+      )
+
+      if poids_pct > 25.0:
+        alertes_concentration.append((nom_act, poids_pct))
+
+      statut_pv = "🟢" if pv_eur >= 0 else "🔴"
+
+      lignes_portefeuille.append({
+          "Action": nom_act,
+          "Secteur": info_act["secteur"],
+          "Qté": qte,
+          "PRU (€)": round(pru, 2),
+          "Cours Actuel (€)": round(prix_jour, 2),
+          "Valorisation (€)": round(val_ligne, 2),
+          "+/- Value (€)": f"{statut_pv} {pv_eur:+.2f} € ({pv_pct:+.1f}%)",
+          "Rendement/PRU": f"{yoc_ligne:.2f}%",
+          "Dividendes (€/an)": f"{div_ligne:.2f} €",
+          "Poids (%)": f"{poids_pct:.1f}%",
+      })
+
+    st.subheader("📋 Détail de mes lignes en portefeuille")
+    st.dataframe(lignes_portefeuille, use_container_width=True)
+
+    if alertes_concentration:
+      for nom_al, p_al in alertes_concentration:
+        st.warning(
+            f"⚠️ **Alerte de concentration** : La ligne **{nom_al}**"
+            f" représente **{p_al:.1f}%** de votre portefeuille (seuil de"
+            " prudence recommandé : < 25% par ligne)."
+        )
+    else:
+      st.success(
+          "✅ **Bonne diversification par ligne** : Aucune action ne dépasse"
+          " 25% de la valeur totale de votre portefeuille."
+      )
+
+    st.markdown("---")
+
+    st.subheader("🏭 Répartition Sectorielle de mon Portefeuille")
+    col_graph, col_tab_sec = st.columns([3, 2])
+
+    with col_graph:
+      st.caption("Valorisation (€) par secteur d'activité :")
+      st.bar_chart(repartition_secteurs)
+
+    with col_tab_sec:
+      st.caption("Poids de chaque secteur (%) :")
+      tableau_secteurs = []
+      for sec, val_sec in sorted(
+          repartition_secteurs.items(), key=lambda x: x[1], reverse=True
+      ):
+        poids_sec = (val_sec / valeur_totale_portefeuille) * 100
+        etat_sec = "⚠️ Fort (>35%)" if poids_sec > 35 else "✅ Équilibré"
+        tableau_secteurs.append({
+            "Secteur": sec,
+            "Montant (€)": f"{val_sec:,.2f} €",
+            "Poids (%)": f"{poids_sec:.1f}%",
+            "Diagnostic": etat_sec,
+        })
+      st.dataframe(tableau_secteurs, use_container_width=True)
+
+# ------------------------------------------------------------------------------
+# ONGLET 3 : DIVIDENDES, CALENDRIER & BOULE DE NEIGE
+# ------------------------------------------------------------------------------
+with onglet_dividendes:
+  st.subheader("📅 Mes Revenus Passifs & Projections")
+
+  if not portefeuille_utilisateur:
+    st.warning(
+        "Veuillez d'abord saisir vos actions dans l'onglet « 💼 Mon"
+        " Portefeuille & Secteurs » pour afficher vos projections de"
+        " dividendes."
+    )
+  else:
+    total_div_an = sum(
+        data["qte"] * WATCHLIST[nom]["div_eur"]
+        for nom, data in portefeuille_utilisateur.items() if nom in WATCHLIST
+    )
+    total_div_mois = total_div_an / 12
+
+    col_d1, col_d2, col_d3 = st.columns(3)
+    col_d1.metric("Rente Annuelle Totale", f"{total_div_an:,.2f} € / an")
+    col_d2.metric("Moyenne Mensuelle", f"{total_div_mois:,.2f} € / mois")
+    rendement_moyen_portefeuille = (
+        (total_div_an / valeur_totale_portefeuille) * 100
+        if valeur_totale_portefeuille > 0
+        else 0
+    )
+    col_d3.metric(
+        "Rendement Global du Portefeuille",
+        f"{rendement_moyen_portefeuille:.2f} %",
+    )
+
+    st.markdown("---")
+
+    # --- LE CALENDRIER VISUEL (DESIGN PRO) ---
+    st.subheader("🗓️ Calendrier Annuel des Détachements")
+    st.caption("Repérez visuellement les mois de versements et les montants estimés pour chaque ligne de votre portefeuille.")
+
+    liste_des_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+    totaux_mensuels = {m: 0.0 for m in liste_des_mois}
+   
+    html_cal = """
+    <style>
+    .cal-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 20px; font-family: sans-serif; }
+    .cal-table th { border-bottom: 3px solid rgba(128,128,128,0.4); padding: 15px 5px; font-weight: 900; font-size: 1.1em; background-color: rgba(128,128,128,0.05); text-transform: uppercase; }
+    .cal-table td { border-bottom: 1px solid rgba(128,128,128,0.2); border-right: 1px dashed rgba(128,128,128,0.1); padding: 12px 5px; vertical-align: middle; }
+    .cal-table td:last-child { border-right: none; }
+    .cal-total { font-weight: 900; background-color: rgba(46,204,113,0.15); font-size: 1.1em; border-top: 2px solid rgba(46,204,113,0.5); }
+    .cal-action { font-weight: bold; text-align: left !important; padding-left: 15px !important; background-color: rgba(128,128,128,0.02); }
+    .badge-div { background-color: rgba(46,204,113,0.2); color: inherit; border-radius: 6px; padding: 5px 8px; font-size: 0.95em; font-weight: bold; display: inline-block; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    </style>
+    """
+   
+    html_cal += "<table class='cal-table'><thead><tr>"
+    html_cal += "<th style='text-align: left; padding-left: 15px;'>Action</th>"
+    for m in liste_des_mois:
+        html_cal += f"<th>{m}</th>"
+    html_cal += "</tr></thead><tbody>"
+
+    for nom, data in portefeuille_utilisateur.items():
+        if nom not in WATCHLIST:
+            continue
+        qte = data["qte"]
+        div_annuel_unitaire = WATCHLIST[nom]["div_eur"]
+        total_div_ligne = qte * div_annuel_unitaire
+        mois_action = WATCHLIST[nom].get("mois_div", [])
+       
+        montant_par_versement = 0.0
+        if len(mois_action) > 0:
+            montant_par_versement = total_div_ligne / len(mois_action)
+           
+        html_cal += f"<tr><td class='cal-action'>{nom}</td>"
+        for m in liste_des_mois:
+            if m in mois_action:
+                if montant_par_versement > 0:
+                    html_cal += f"<td><div class='badge-div'>💸 {montant_par_versement:.2f} €</div></td>"
+                    totaux_mensuels[m] += montant_par_versement
+                else:
+                    html_cal += "<td><div class='badge-div'>💸</div></td>"
+            else:
+                html_cal += "<td></td>"
+        html_cal += "</tr>"
+       
+    html_cal += "<tr class='cal-total'><td class='cal-action'>💰 TOTAL MENSUEL</td>"
+    for m in liste_des_mois:
+        if totaux_mensuels[m] > 0:
+            html_cal += f"<td>🟢 {totaux_mensuels[m]:.2f} €</td>"
+        else:
+            html_cal += "<td></td>"
+    html_cal += "</tr></tbody></table>"
+
+    st.markdown(html_cal, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.subheader(
+        "🔮 Simulateur « Boule de Neige » (Tableau de Croissance Annuelle)"
+    )
+    st.caption(
+        "Évolution détaillée année par année avec réinvestissement automatique"
+        f" des dividendes et DCA de {BUDGET_MENSUEL:.0f} €/mois."
+    )
+
+    annees_max = 15
+    cap = valeur_totale_portefeuille
+    div_an = total_div_an
+    rendement_estime = (
+        rendement_moyen_portefeuille / 100
+        if rendement_moyen_portefeuille > 0
+        else 0.04
+    )
+
+    tableau_croissance = []
+
+    for an in range(1, annees_max + 1):
+      for mois in range(12):
+        epargne_mois = BUDGET_MENSUEL + (div_an / 12)
+        cap += epargne_mois
+        div_an = cap * rendement_estime
+
+      tableau_croissance.append({
+          "Horizon": f"Année {an}",
+          "Capital Total Estimé (€)": f"{cap:,.2f} €",
+          "Rente Annuelle Générée (€/an)": f"{div_an:,.2f} € / an",
+          "Rente Mensuelle Équivalente": f"{div_an/12:,.2f} € / mois",
+      })
+
+    st.dataframe(tableau_croissance, use_container_width=True)
+
+# ------------------------------------------------------------------------------
+# ONGLET 4 : COACH QUANTITATIF & AGENT IA INTERACTIF
+# ------------------------------------------------------------------------------
+with onglet_ia:
+  st.subheader("🤖 Audit Patrimonial Pointu & Agent IA Interactif")
+
+  if not portefeuille_utilisateur:
+    st.warning(
+        "Veuillez d'abord renseigner votre portefeuille dans l'onglet 2 pour"
+        " activer l'Audit Quantitatif et l'Agent IA."
+    )
+  else:
+    lignes_valides = [nom for nom in portefeuille_utilisateur if nom in WATCHLIST]
+    nb_lignes = len(lignes_valides)
+
+    # --- 1. CALCULS QUANTITATIFS AVANCÉS ---
+    payouts_moy = (
+        sum(WATCHLIST[nom]["payout_ratio"] for nom in lignes_valides) / nb_lignes
+        if nb_lignes > 0 else 0
+    )
+
+    # Détection des mois creux dans le calendrier
+    tous_les_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+    mois_couverts = set()
+    for nom in lignes_valides:
+      for m in WATCHLIST[nom].get("mois_div", []):
+        mois_couverts.add(m)
+    mois_creux = [m for m in tous_les_mois if m not in mois_couverts]
+
+    # Recherche de la ligne la plus lourde et des alertes techniques
+    poids_max_nom, poids_max_val = "", 0.0
+    analyse_detaillee_lignes = []
+   
+    # Dictionnaire rapide des données techniques du Tableau 1
+    tech_map = {d["Actif"]: d for d in donnees_t1}
+
+    for nom in lignes_valides:
+      qte = portefeuille_utilisateur[nom]["qte"]
+      pru = portefeuille_utilisateur[nom]["pru"]
+      prix_j = prix_temps_reel.get(nom, WATCHLIST[nom]["prix_cible"])
+      val_l = qte * prix_j
+      poids_l = (val_l / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0
+      pv_l_pct = ((prix_j - pru) / pru * 100) if pru > 0 else 0
+      yoc_l = (WATCHLIST[nom]["div_eur"] / pru * 100) if pru > 0 else 0
+     
+      if poids_l > poids_max_val:
+        poids_max_val = poids_l
+        poids_max_nom = nom
+
+      rsi_actuel = tech_map.get(nom, {}).get("RSI", 50)
+      score_actuel = tech_map.get(nom, {}).get("Score", 0)
+      decision_actuelle = tech_map.get(nom, {}).get("Décision", "N/A")
+
+      analyse_detaillee_lignes.append(
+          f"- {nom} ({WATCHLIST[nom]['secteur']}) : {qte} actions | PRU: {pru}€ | Cours: {prix_j:.2f}€ "
+          f"| Poids: {poids_l:.1f}% | P/V: {pv_l_pct:+.1f}% | Yield sur PRU: {yoc_l:.2f}% "
+          f"| Payout: {WATCHLIST[nom]['payout_ratio']*100:.0f}% | RSI: {rsi_actuel} | Signal: {decision_actuelle}"
+      )
+
+    # Calcul d'un Score Global de Santé sur 100
+    score_sante = 0
+    score_sante += min(30, nb_lignes * 5)  # Jusqu'à 30 pts pour la diversification (6 lignes+)
+    score_sante += 30 if payouts_moy <= 0.60 else (15 if payouts_moy <= 0.75 else 5)  # 30 pts sûreté div
+    score_sante += 20 if poids_max_val <= 25 else (10 if poids_max_val <= 35 else 0)  # 20 pts équilibre
+    score_sante += min(20, int(len(mois_couverts) * 1.7))  # 20 pts régularité mensuelle des flux
+
+    # --- AFFICHAGE DU DIAGNOSTIC EXÉCUTIF ---
+    c_ia1, c_ia2, c_ia3, c_ia4 = st.columns(4)
+    c_ia1.metric("Score Santé Globale", f"{score_sante} / 100", "🌟 Solide" if score_sante >= 75 else "⚖️ Perfectible")
+    c_ia2.metric("Sûreté Dividendes (Payout)", f"{payouts_moy*100:.1f} %", "🛡️ Sain (<60%)" if payouts_moy <= 0.60 else "⚠️ Élevé")
+    c_ia3.metric("Plus Forte Concentration", f"{poids_max_val:.1f} %", f"Ligne : {poids_max_nom}")
+    c_ia4.metric("Couverture Calendrier", f"{len(mois_couverts)} / 12 mois", f"{len(mois_creux)} mois sans versement")
+
+    st.markdown("---")
+    st.subheader("🔬 Rapports d'Analyse Croisée (Portefeuille vs Marché)")
+
+    col_diag1, col_diag2 = st.columns(2)
+
+    with col_diag1:
+      st.markdown("#### 🎯 Diagnostic Structurel & Cash-Flow")
+      if poids_max_val > 25:
+        st.warning(
+            f"**Risque de concentration sur {poids_max_nom} ({poids_max_val:.1f}%)** : "
+            f"Évitez de renforcer cette ligne avec votre DCA de {BUDGET_MENSUEL:.0f} € tant que les autres positions n'ont pas rééquilibré le poids sous les 25 %."
+        )
+      else:
+        st.success(
+            f"**Allocation équilibrée** : Votre première ligne ({poids_max_nom}) pèse {poids_max_val:.1f} %, ce qui protège votre capital contre un choc spécifique."
+        )
+
+      if mois_creux:
+        st.info(
+            f"**Optimisation du Calendrier** : Vous ne touchez aucun dividende en **{', '.join(mois_creux)}**. "
+            "Pour lisser votre rente, ciblez des entreprises à acomptes trimestriels ou décalés."
+        )
+      else:
+        st.success("**Rente 12/12** : Votre portefeuille génère des flux financiers chaque mois de l'année.")
+
+    with col_diag2:
+      st.markdown("#### ⚡ Signaux Techniques sur vos Lignes Détenues")
+      alertes_trouvees = False
+      for nom in lignes_valides:
+        qte = portefeuille_utilisateur[nom]["qte"]
+        pru = portefeuille_utilisateur[nom]["pru"]
+        prix_j = prix_temps_reel.get(nom, WATCHLIST[nom]["prix_cible"])
+        rsi_j = tech_map.get(nom, {}).get("RSI", 50)
+       
+        if prix_j < pru and rsi_j < 40:
+          st.success(
+              f"🟢 **Opportunité de baisse de PRU sur {nom}** : Le cours actuel ({prix_j:.2f} €) est sous votre PRU ({pru:.2f} €) avec un RSI bas ({rsi_j}). Renforcer maintenant abaissera votre point mort tout en dopant votre rendement sur coût."
+          )
+          alertes_trouvees = True
+        elif prix_j > pru * 1.25 and rsi_j > 68:
+          st.warning(
+              f"🔥 **Surchauffe sur {nom}** : Vous êtes à +{((prix_j-pru)/pru*100):.1f}% de plus-value avec un RSI tendu ({rsi_j}). Mettez le DCA en pause sur cette valeur."
+          )
+          alertes_trouvees = True
+
+      if not alertes_trouvees:
+        st.write("✅ Aucun excès technique majeur (surachat ou décote extrême sous PRU) détecté aujourd'hui sur vos lignes en portefeuille.")
+
+    st.markdown("---")
+
+    # --- 2. AGENT IA CONVERSATIONNEL (CHATBOT) ---
+    st.subheader("💬 Discuter avec votre Conseiller IA Privé")
+    st.caption(
+        "Posez n'importe quelle question : l'Agent IA connaît en temps réel vos lignes, vos PRU, vos dividendes et les indicateurs techniques du jour."
+    )
+
+    # Construction du contexte invisible transmis à l'IA
+    opportunites_radar = [
+        f"{d['Actif']} (Prix: {d['Prix (€)']}€, Cible: {d['Prix Cible (€)']}€, RSI: {d['RSI']}, Score: {d['Score']}/100, Décision: {d['Décision']})"
+        for d in donnees_t1
+    ]
+
+    contexte_systeme = f"""Tu es un ingénieur financier et gestionnaire de patrimoine expert du PEA (Plan d'Épargne en Actions) et des stratégies de rendement (Dividendes & DCA).
+Tu t'adresses directement à l'utilisateur de la plateforme. Ton ton est professionnel, précis, chiffré, bienveillant et très structuré.
+
+Voici les données EXACTES en temps réel du portefeuille de l'utilisateur :
+- Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_globale:+.2f} € soit {plus_value_pct:+.1f}%)
+- Dividendes annuels générés : {dividendes_annuels_totaux:.2f} €/an (soit {dividendes_annuels_totaux/12:.2f} €/mois) | Yield on Cost (Rendement sur PRU) : {yoc_global:.2f}%
+- Budget DCA mensuel : {BUDGET_MENSUEL:.0f} €/mois
+- Mois sans aucun dividende : {', '.join(mois_creux) if mois_creux else 'Aucun'}
+
+Détail des lignes détenues en portefeuille :
+{chr(10).join(analyse_detaillee_lignes)}
+
+Radar complet des valeurs suivies aujourd'hui (avec indicateurs techniques temps réel) :
+{chr(10).join(opportunites_radar)}
+
+Réponds toujours en utilisant précisément ces chiffres. Donne des analyses pointues (marge de sécurité, effet sur le PRU, exposition sectorielle, pérennité du payout ratio) tout en rappelant brièvement que cela constitue une aide à la décision et non un conseil financier réglementé."""
+
+    if "messages_ia" not in st.session_state:
+      st.session_state["messages_ia"] = [
+          {
+              "role": "assistant",
+              "content": (
+                  f"Bonjour ! J'ai analysé vos **{nb_lignes} lignes** en portefeuille "
+                  f"(valorisées à **{valeur_totale_portefeuille:,.0f} €** pour **{dividendes_annuels_totaux/12:.1f} €/mois** de dividendes). "
+                  "Souhaitez-vous que l'on optimise l'investissement de vos prochains **"
+                  f"{BUDGET_MENSUEL:.0f} €**, que l'on analyse une valeur précise, ou que l'on regarde comment combler vos mois creux ?"
+              ),
+          }
+      ]
+
+    # Boutons de questions rapides (Suggestions en 1 clic)
+    col_q1, col_q2, col_q3 = st.columns(3)
+    question_rapide = None
+    if col_q1.button("💡 Optimiser mon DCA du mois", use_container_width=True):
+      question_rapide = f"Avec mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci, quelles actions précises dois-je acheter en priorité pour optimiser mon rendement et renforcer mes lignes sous leur PRU ?"
+    if col_q2.button("🛡️ Analyser les risques de mon PEA", use_container_width=True):
+      question_rapide = "Fais-moi un audit critique et sans complaisance des vulnérabilités de mon portefeuille actuel (concentration sectorielle, payout ratio, écart au PRU)."
+    if col_q3.button("🗓️ Combler mes mois sans dividendes", use_container_width=True):
+      question_rapide = f"Quelles valeurs de ma watchlist me permettraient de toucher des dividendes pendant mes mois creux ({', '.join(mois_creux)}) tout en ayant un bon score technique aujourd'hui ?"
+
+    # Affichage de l'historique de discussion
+    for msg in st.session_state["messages_ia"]:
+      with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+    # Zone de saisie du chat
+    prompt_utilisateur = st.chat_input("Posez votre question financière à l'Agent IA...")
+    question_finale = question_rapide or prompt_utilisateur
+
+    if question_finale:
+      st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
+      with st.chat_message("user"):
+        st.markdown(question_finale)
+
+      with st.chat_message("assistant"):
+        with st.spinner("Analyse des marchés et de votre portefeuille en cours..."):
+          api_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+         
+          if not api_key:
+            reponse_ia = (
+                "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
+                "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
+            )
+          else:
+            try:
+              url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+              payload_ia = {
+                  "system_instruction": {"parts": [{"text": contexte_systeme}]},
+                  "contents": [
+                      {
+                          "role": "user" if m["role"] == "user" else "model",
+                          "parts": [{"text": m["content"]}],
+                      }
+                      for m in st.session_state["messages_ia"]
+                  ],
+              }
+              req_ia = urllib.request.Request(
+                  url_gemini,
+                  data=json.dumps(payload_ia).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req_ia, timeout=20) as resp_ia:
+                res_json = json.loads(resp_ia.read().decode("utf-8"))
+                reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
+            except Exception as e:
+              reponse_ia = f"❌ Erreur de communication avec le moteur IA : {e}"
+
+          st.markdown(reponse_ia)
+          st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
