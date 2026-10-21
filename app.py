@@ -705,8 +705,8 @@ with onglet_radar:
   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
-      "🎯 Tableau 4 : Niveaux Techniques",
-      "🛡️ Tableau 3 : Sûreté Dividendes",
+      "🎯 Tableau 3 : Niveaux Techniques",
+      "🛡️ Tableau 4 : Sûreté Dividendes",
       "💰 Allocation DCA du Mois",
   ])
 
