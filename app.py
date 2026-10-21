@@ -890,7 +890,7 @@ with onglet_portefeuille:
       st.dataframe(tableau_secteurs, use_container_width=True)
 
 # ------------------------------------------------------------------------------
-# ONGLET 3 : DIVIDENDES, CALENDRIER & BOULE DE NEIGE
+# ONGLET 3 : DIVIDENDES, CALENDRIER & SIMULATEUR BOULE DE NEIGE PRO
 # ------------------------------------------------------------------------------
 with onglet_dividendes:
   st.subheader("📅 Mes Revenus Passifs & Projections")
@@ -909,8 +909,8 @@ with onglet_dividendes:
     total_div_mois = total_div_an / 12
 
     col_d1, col_d2, col_d3 = st.columns(3)
-    col_d1.metric("Rente Annuelle Totale", f"{total_div_an:,.2f} € / an")
-    col_d2.metric("Moyenne Mensuelle", f"{total_div_mois:,.2f} € / mois")
+    col_d1.metric("Rente Annuelle Actuelle", f"{total_div_an:,.2f} € / an")
+    col_d2.metric("Moyenne Mensuelle Actuelle", f"{total_div_mois:,.2f} € / mois")
     rendement_moyen_portefeuille = (
         (total_div_an / valeur_totale_portefeuille) * 100
         if valeur_totale_portefeuille > 0
@@ -923,7 +923,7 @@ with onglet_dividendes:
 
     st.markdown("---")
 
-    # --- LE CALENDRIER VISUEL (DESIGN PRO) ---
+    # --- 1. LE CALENDRIER VISUEL (DESIGN PRO) ---
     st.subheader("🗓️ Calendrier Annuel des Détachements")
     st.caption("Repérez visuellement les mois de versements et les montants estimés pour chaque ligne de votre portefeuille.")
 
@@ -983,39 +983,179 @@ with onglet_dividendes:
     st.markdown(html_cal, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.subheader(
-        "🔮 Simulateur « Boule de Neige » (Tableau de Croissance Annuelle)"
-    )
+
+    # --- 2. NOUVEAU SIMULATEUR « BOULE DE NEIGE » ULTRA-PERCUTANT ---
+    st.subheader("❄️ Machine à Intérêts Composés & Effet Boule de Neige")
     st.caption(
-        "Évolution détaillée année par année avec réinvestissement automatique"
-        f" des dividendes et DCA de {BUDGET_MENSUEL:.0f} €/mois."
+        "Simulez l'explosion de votre rente grâce au réinvestissement automatique des dividendes, "
+        f"à votre DCA de {BUDGET_MENSUEL:.0f} €/mois et à la croissance annuelle des entreprises."
     )
 
-    annees_max = 15
-    cap = valeur_totale_portefeuille
-    div_an = total_div_an
-    rendement_estime = (
+    # Curseurs interactifs pour personnaliser la projection
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+      objectif_rente = st.slider(
+          "🎯 Objectif de rente mensuelle (€/mois)",
+          min_value=100,
+          max_value=5000,
+          value=500,
+          step=50,
+      )
+    with col_s2:
+       annees_max = st.slider(
+          "⏳ Horizon de placement (Années)",
+          min_value=5,
+          max_value=30,
+          value=15,
+          step=1,
+      )
+    with col_s3:
+      croissance_annuelle_pct = st.slider(
+          "📈 Croissance annuelle (Cours + Div.)",
+          min_value=0.0,
+          max_value=10.0,
+          value=4.0,
+          step=0.5,
+      )
+
+    # Moteur de calcul de la Boule de Neige
+    rendement_base = (
         rendement_moyen_portefeuille / 100
         if rendement_moyen_portefeuille > 0
-        else 0.04
+        else 0.045
     )
+    taux_croissance = croissance_annuelle_pct / 100
 
+    cap_total = valeur_totale_portefeuille
+    effort_cumule = valeur_totale_portefeuille  # Ce qui sort vraiment de votre poche
+    gains_boule_de_neige = 0.0  # Ce qui est généré gratuitement par le marché + dividendes
+
+    annee_objectif_atteint = None
+    annee_bascule_dca = None
+
+    series_effort = []
+    series_boule_de_neige = []
+    series_rente_mensuelle = []
     tableau_croissance = []
 
     for an in range(1, annees_max + 1):
+      div_reinvestis_cette_annee = 0.0
       for mois in range(12):
-        epargne_mois = BUDGET_MENSUEL + (div_an / 12)
-        cap += epargne_mois
-        div_an = cap * rendement_estime
+        # Dividende généré ce mois-ci
+        div_du_mois = (cap_total * rendement_base) / 12
+        div_reinvestis_cette_annee += div_du_mois
+        # Croissance organique mensuelle du capital
+        gain_cours_mois = cap_total * (taux_croissance / 12)
+       
+        # Mise à jour des compteurs
+        effort_cumule += BUDGET_MENSUEL
+        gains_boule_de_neige += (div_du_mois + gain_cours_mois)
+        cap_total = effort_cumule + gains_boule_de_neige
+
+      rente_an = cap_total * rendement_base
+      rente_mois = rente_an / 12
+
+      # Détection de l'année où l'objectif de rente est franchi
+      if annee_objectif_atteint is None and rente_mois >= objectif_rente:
+        annee_objectif_atteint = an
+
+      # Détection du Point de Bascule (quand les dividendes dépassent l'effort DCA)
+      if annee_bascule_dca is None and rente_mois >= BUDGET_MENSUEL:
+        annee_bascule_dca = an
+
+      series_effort.append(round(effort_cumule, 0))
+      series_boule_de_neige.append(round(cap_total, 0))
+      series_rente_mensuelle.append(round(rente_mois, 1))
+
+      # Création d'une jauge visuelle pour le tableau
+      pct_obj = min(100, int((rente_mois / objectif_rente) * 100))
+      nb_blocs = int(pct_obj / 10)
+      barre_visuelle = "🟩" * nb_blocs + "⬜" * (10 - nb_blocs) + f" {pct_obj}%"
 
       tableau_croissance.append({
-          "Horizon": f"Année {an}",
-          "Capital Total Estimé (€)": f"{cap:,.2f} €",
-          "Rente Annuelle Générée (€/an)": f"{div_an:,.2f} € / an",
-          "Rente Mensuelle Équivalente": f"{div_an/12:,.2f} € / mois",
+          "Horizon": f"Année {an} ({datetime.now().year + an})",
+          "Votre Effort Cumulé": f"{effort_cumule:,.0f} €",
+          "Gains Boule de Neige": f"+{gains_boule_de_neige:,.0f} €",
+          "Patrimoine Total": f"{cap_total:,.0f} €",
+          "Rente Mensuelle": f"{rente_mois:,.0f} € / mois",
+          "Objectif Rente": barre_visuelle,
       })
 
-    st.dataframe(tableau_croissance, use_container_width=True)
+    # Calculs finaux pour les cartes d'impact
+    rente_finale_mois = (cap_total * rendement_base) / 12
+    multiplicateur_rente = (rente_finale_mois / total_div_mois) if total_div_mois > 0 else 0
+    part_gratuite_pct = (gains_boule_de_neige / cap_total * 100) if cap_total > 0 else 0
+    pct_actuel_obj = min(100.0, (total_div_mois / objectif_rente * 100)) if objectif_rente > 0 else 0
+
+    # --- AFFICHAGE DU BANDEAU VISUEL D'IMPACT (HTML/CSS) ---
+    texte_objectif = (
+        f"🎉 Objectif de <b>{objectif_rente} €/mois</b> atteint dans <b>{annee_objectif_atteint} ans</b> (en {datetime.now().year + annee_objectif_atteint}) !"
+        if annee_objectif_atteint
+        else f"💪 À {annees_max} ans, vous atteindrez <b>{rente_finale_mois:.0f} €/mois</b> (soit {(rente_finale_mois/objectif_rente*100):.0f}% de votre objectif)."
+    )
+    texte_bascule = (
+        f"⚡ <b>Point de Bascule en Année {annee_bascule_dca}</b> : Vos dividendes mensuels dépasseront votre effort d'épargne ({BUDGET_MENSUEL:.0f} €/mois) !"
+        if annee_bascule_dca
+        else f"💡 Continuez d'accumuler : l'effet boule de neige représentera déjà <b>{part_gratuite_pct:.0f}%</b> de votre patrimoine final."
+    )
+
+    html_snowball = f"""
+    <style>
+    .snow-container {{ display: flex; gap: 15px; margin: 15px 0 25px 0; flex-wrap: wrap; font-family: sans-serif; }}
+    .snow-card {{ flex: 1; min-width: 200px; background: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; padding: 18px; text-align: center; }}
+    .snow-card-highlight {{ flex: 1; min-width: 200px; background: rgba(46,204,113,0.12); border: 2px solid rgba(46,204,113,0.5); border-radius: 12px; padding: 18px; text-align: center; }}
+    .snow-title {{ font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8; margin-bottom: 8px; font-weight: bold; }}
+    .snow-value {{ font-size: 1.7em; font-weight: 900; margin-bottom: 5px; }}
+    .snow-sub {{ font-size: 0.85em; opacity: 0.9; font-weight: 600; color: #2ecc71; }}
+    .snow-banner {{ background: linear-gradient(90deg, rgba(46,204,113,0.15) 0%, rgba(52,152,219,0.15) 100%); border-left: 5px solid #2ecc71; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 1.02em; }}
+    </style>
+
+    <div class="snow-banner">
+        <div>{texte_objectif}</div>
+        <div style="margin-top: 6px; font-size: 0.92em; opacity: 0.9;">{texte_bascule}</div>
+    </div>
+
+    <div class="snow-container">
+        <div class="snow-card">
+            <div class="snow-title">🏦 Patrimoine dans {annees_max} ans</div>
+            <div class="snow-value">{cap_total:,.0f} €</div>
+            <div class="snow-sub">Dont {effort_cumule:,.0f} € sortis de votre poche</div>
+        </div>
+        <div class="snow-card-highlight">
+            <div class="snow-title">❄️ Gains Purs « Boule de Neige »</div>
+            <div class="snow-value">+{gains_boule_de_neige:,.0f} €</div>
+            <div class="snow-sub">🔥 {part_gratuite_pct:.1f}% du capital créé gratuitement</div>
+        </div>
+        <div class="snow-card-highlight">
+            <div class="snow-title">💸 Future Rente Passive</div>
+            <div class="snow-value">{rente_finale_mois:,.0f} € / mois</div>
+            <div class="snow-sub">🚀 Multipliée par x{multiplicateur_rente:.1f} vs aujourd'hui</div>
+        </div>
+    </div>
+    """
+    st.markdown(html_snowball, unsafe_allow_html=True)
+
+    # --- GRAPHIQUES VISUELS CÔTE À CÔTE ---
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+      st.markdown("**📈 L'Écart Magique : Patrimoine Total vs Votre Effort (DCA)**")
+      st.caption("La zone supérieure représente la richesse créée uniquement par l'effet Boule de Neige :")
+      st.area_chart({
+          "1. Votre Effort d'Épargne Cumulé (€)": series_effort,
+          "2. Patrimoine Total avec Boule de Neige (€)": series_boule_de_neige,
+      })
+
+    with col_g2:
+      st.markdown("**💰 Explosion de votre Rente Mensuelle (€ / mois)**")
+      st.caption(f"Accélération de vos dividendes mensuels face à votre objectif ({objectif_rente} €/mois) :")
+      st.bar_chart({
+          "Rente Mensuelle Générée (€/mois)": series_rente_mensuelle,
+      })
+
+    # --- TABLEAU DES PALIERS ANNUELS ---
+    with st.expander("📋 Voir le détail chiffré année par année (Tableau des Paliers)", expanded=True):
+      st.dataframe(tableau_croissance, use_container_width=True)
+
 
 # ------------------------------------------------------------------------------
 # ONGLET 4 : COACH QUANTITATIF & AGENT IA INTERACTIF
