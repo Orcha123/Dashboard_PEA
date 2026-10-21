@@ -908,32 +908,7 @@ with onglet_radar:
             " de ces valeurs."
         )
 
-  st.markdown("---")
-
-  # --- 4. GRAPHIQUE DE RÉGRESSION LINÉAIRE (3 ANS) ---
-  st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
-  index_defaut = (
-      actions_autorisees.index(choix_action)
-      if choix_action in actions_autorisees
-      else 0
-  )
-
-  action_selectionnee = st.selectbox(
-        "Sélectionnez l'action à analyser visuellement :",
-        actions_autorisees,
-        index=index_defaut,
-        key="select_action_graphique_value"
-    )
-
-
-  if action_selectionnee in historiques_prix:
-    closes = historiques_prix[action_selectionnee]
-    _, _, droite_reg = calculer_regression_lineaire(closes)
-
-    st.line_chart({
-        "Cours Réel (€)": closes,
-        "Tendance 3 Ans (Régression)": droite_reg,
-    })
+  
 
 
 # ------------------------------------------------------------------------------
