@@ -1697,18 +1697,18 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
                 "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
             )
           else:
-            try:
-                url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={st.secrets['GEMINI_API_KEY']}"
-
-                  "system_instruction": {"parts": [{"text": contexte_systeme}]},
-                  "contents": [
-                      {
-                          "role": "user" if m["role"] == "user" else "model",
-                          "parts": [{"text": m["content"]}],
-                      }
-                      for m in st.session_state["messages_ia"]
-                  ],
-              }
+             try:
+                 url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={st.secrets['GEMINI_API_KEY']}"
+                 payload_ia = {
+                     "system_instruction": {"parts": [{"text": contexte_systeme}]},
+                     "contents": [
+                         {
+                             "role": "user" if m["role"] == "user" else "model",
+                             "parts": [{"text": m["content"]}],
+                         }
+                         for m in st.session_state["messages_ia"]
+                     ],
+                 }
               req_ia = urllib.request.Request(
                   url_gemini,
                   data=json.dumps(payload_ia).encode("utf-8"),
