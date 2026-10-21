@@ -675,11 +675,11 @@ with onglet_radar:
     })
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (AVEC SAUVEGARDE CLOUD)
+# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (DESIGN PRO & CAMEMBERT)
 # ------------------------------------------------------------------------------
 portefeuille_utilisateur = {}
 with onglet_portefeuille:
-  st.subheader("💼 Gestionnaire de Portefeuille & Répartition Sectorielle")
+  st.subheader("💼 Gestionnaire de Portefeuille & Analyse Sectorielle")
 
   if st.session_state["user"] is None:
     st.info(
@@ -736,10 +736,10 @@ with onglet_portefeuille:
     st.session_state["portefeuille"] = portefeuille_utilisateur
 
     if st.button("💾 Enregistrer mon portefeuille dans le Cloud", type="primary", use_container_width=True):
-        if sauvegarder_dans_cloud():
-            st.success("✅ Votre portefeuille a été sauvegardé dans votre compte Cloud !")
-        else:
-            st.warning("⚠️ Connectez-vous d'abord dans la barre latérale pour sauvegarder en ligne.")
+      if sauvegarder_dans_cloud():
+        st.success("✅ Votre portefeuille a été sauvegardé dans votre compte Cloud !")
+      else:
+        st.warning("⚠️ Connectez-vous d'abord dans la barre latérale pour sauvegarder en ligne.")
 
   if not portefeuille_utilisateur:
     st.warning(
@@ -748,7 +748,6 @@ with onglet_portefeuille:
         " premières actions !"
     )
   else:
-    lignes_portefeuille = []
     repartition_secteurs = {}
     valeur_totale_portefeuille = 0.0
     cout_total_achat = 0.0
@@ -756,7 +755,7 @@ with onglet_portefeuille:
 
     for nom_act, data_pos in portefeuille_utilisateur.items():
       if nom_act not in WATCHLIST:
-          continue
+        continue
       qte = data_pos["qte"]
       pru = data_pos["pru"]
       info_act = WATCHLIST[nom_act]
@@ -787,32 +786,84 @@ with onglet_portefeuille:
         else 0.0
     )
 
-    c_p1, c_p2, c_p3, c_p4 = st.columns(4)
-    c_p1.metric(
-        "Valorisation Totale PEA", f"{valeur_totale_portefeuille:,.2f} €"
-    )
-    c_p2.metric(
-        "Plus/Moins-Value Latente",
-        f"{plus_value_globale:+,.2f} €",
-        f"{plus_value_pct:+.1f}%",
-    )
-    c_p3.metric(
-        "Dividendes Annuels Estimés",
-        f"{dividendes_annuels_totaux:,.2f} € / an",
-        f"Soit {dividendes_annuels_totaux/12:.1f} €/mois",
-    )
-    c_p4.metric(
-        "Rendement sur PRU (Yield on Cost)",
-        f"{yoc_global:.2f} %",
-        f"Capital investi : {cout_total_achat:,.0f} €",
-    )
+    # --- 1. CARTES DE SYNTHÈSE PATRIMONIALE (DESIGN PRO) ---
+    couleur_pv_card = "rgba(46,204,113,0.12)" if plus_value_globale >= 0 else "rgba(231,76,60,0.12)"
+    bordure_pv_card = "rgba(46,204,113,0.5)" if plus_value_globale >= 0 else "rgba(231,76,60,0.5)"
+    texte_pv_color = "#2ecc71" if plus_value_globale >= 0 else "#e74c3c"
 
-    st.markdown("---")
+    html_kpi = f"""
+    <style>
+    .port-kpi-grid {{ display: flex; gap: 15px; margin: 10px 0 25px 0; flex-wrap: wrap; font-family: sans-serif; }}
+    .port-kpi-card {{ flex: 1; min-width: 200px; background: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; padding: 18px; text-align: center; }}
+    .port-kpi-title {{ font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; margin-bottom: 8px; font-weight: bold; }}
+    .port-kpi-val {{ font-size: 1.65em; font-weight: 900; margin-bottom: 5px; }}
+    .port-kpi-sub {{ font-size: 0.88em; font-weight: 600; opacity: 0.85; }}
+    </style>
+    <div class="port-kpi-grid">
+        <div class="port-kpi-card">
+            <div class="port-kpi-title">🏦 Valorisation Totale PEA</div>
+            <div class="port-kpi-val">{valeur_totale_portefeuille:,.2f} €</div>
+            <div class="port-kpi-sub">Capital investi : {cout_total_achat:,.0f} €</div>
+        </div>
+        <div class="port-kpi-card" style="background: {couleur_pv_card}; border: 2px solid {bordure_pv_card};">
+            <div class="port-kpi-title">📈 Plus/Moins-Value Latente</div>
+            <div class="port-kpi-val" style="color: {texte_pv_color};">{plus_value_globale:+,.2f} €</div>
+            <div class="port-kpi-sub" style="color: {texte_pv_color};">Performance : {plus_value_pct:+.1f} %</div>
+        </div>
+        <div class="port-kpi-card">
+            <div class="port-kpi-title">💸 Dividendes Annuels</div>
+            <div class="port-kpi-val">{dividendes_annuels_totaux:,.2f} €</div>
+            <div class="port-kpi-sub" style="color: #2ecc71;">Soit {dividendes_annuels_totaux/12:,.2f} € / mois</div>
+        </div>
+        <div class="port-kpi-card">
+            <div class="port-kpi-title">🎯 Rendement sur PRU (YoC)</div>
+            <div class="port-kpi-val">{yoc_global:.2f} %</div>
+            <div class="port-kpi-sub">Rendement réel sur coût d'achat</div>
+        </div>
+    </div>
+    """
+    st.markdown(html_kpi, unsafe_allow_html=True)
+
+    # --- 2. TABLEAU VISUEL DES LIGNES EN PORTEFEUILLE ---
+    st.subheader("📋 Détail de mes lignes en portefeuille")
+
+    html_port = """
+    <style>
+    .p-table { width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }
+    .p-table th { border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.85em; background-color: rgba(128,128,128,0.05); }
+    .p-table td { border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }
+    .p-action-name { font-weight: 800; font-size: 1.05em; text-align: left; }
+    .p-sector-tag { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,0.15); opacity: 0.85; margin-top: 3px; }
+    .badge-gain { background: rgba(46,204,113,0.18); color: #2ecc71; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
+    .badge-loss { background: rgba(231,76,60,0.18); color: #e74c3c; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
+    .bar-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
+    </style>
+    <table class="p-table">
+    <thead>
+        <tr>
+            <th style="text-align: left;">Action & Secteur</th>
+            <th>Qté</th>
+            <th>PRU ➔ Cours</th>
+            <th>Valorisation</th>
+            <th>+/- Value Latente</th>
+            <th>Rente & YoC</th>
+            <th style="width: 150px;">Poids PEA</th>
+        </tr>
+    </thead>
+    <tbody>
+    """
 
     alertes_concentration = []
-    for nom_act, data_pos in portefeuille_utilisateur.items():
+    # Tri des lignes de la plus grosse valorisation à la plus petite
+    lignes_triees = sorted(
+        portefeuille_utilisateur.items(),
+        key=lambda x: x[1]["qte"] * prix_temps_reel.get(x[0], WATCHLIST.get(x[0], {}).get("prix_cible", 0)),
+        reverse=True,
+    )
+
+    for nom_act, data_pos in lignes_triees:
       if nom_act not in WATCHLIST:
-          continue
+        continue
       qte = data_pos["qte"]
       pru = data_pos["pru"]
       info_act = WATCHLIST[nom_act]
@@ -833,23 +884,30 @@ with onglet_portefeuille:
       if poids_pct > 25.0:
         alertes_concentration.append((nom_act, poids_pct))
 
-      statut_pv = "🟢" if pv_eur >= 0 else "🔴"
+      classe_pv = "badge-gain" if pv_eur >= 0 else "badge-loss"
+      couleur_barre = "#e67e22" if poids_pct > 25.0 else "#3498db"
+      largeur_barre = min(100, int(poids_pct))
 
-      lignes_portefeuille.append({
-          "Action": nom_act,
-          "Secteur": info_act["secteur"],
-          "Qté": qte,
-          "PRU (€)": round(pru, 2),
-          "Cours Actuel (€)": round(prix_jour, 2),
-          "Valorisation (€)": round(val_ligne, 2),
-          "+/- Value (€)": f"{statut_pv} {pv_eur:+.2f} € ({pv_pct:+.1f}%)",
-          "Rendement/PRU": f"{yoc_ligne:.2f}%",
-          "Dividendes (€/an)": f"{div_ligne:.2f} €",
-          "Poids (%)": f"{poids_pct:.1f}%",
-      })
+      html_port += f"""
+      <tr>
+          <td style="text-align: left;">
+              <div class="p-action-name">{nom_act}</div>
+              <div class="p-sector-tag">{info_act['secteur']}</div>
+          </td>
+          <td><b>{qte}</b></td>
+          <td>{pru:.2f} € ➔ <b>{prix_jour:.2f} €</b></td>
+          <td><b>{val_ligne:,.2f} €</b></td>
+          <td><span class="{classe_pv}">{pv_eur:+,.2f} € ({pv_pct:+.1f}%)</span></td>
+          <td><b>{div_ligne:.2f} €/an</b><br><span style="font-size: 0.82em; opacity: 0.8;">YoC : {yoc_ligne:.2f}%</span></td>
+          <td>
+              <div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
+              <div class="bar-bg"><div style="width: {largeur_barre}%; background: {couleur_barre}; height: 100%;"></div></div>
+          </td>
+      </tr>
+      """
 
-    st.subheader("📋 Détail de mes lignes en portefeuille")
-    st.dataframe(lignes_portefeuille, use_container_width=True)
+    html_port += "</tbody></table>"
+    st.markdown(html_port, unsafe_allow_html=True)
 
     if alertes_concentration:
       for nom_al, p_al in alertes_concentration:
@@ -866,15 +924,61 @@ with onglet_portefeuille:
 
     st.markdown("---")
 
+    # --- 3. RÉPARTITION SECTORIELLE EN CAMEMBERT (DONUT INTERACTIF) ---
     st.subheader("🏭 Répartition Sectorielle de mon Portefeuille")
-    col_graph, col_tab_sec = st.columns([3, 2])
+    col_camembert, col_tab_sec = st.columns([1.1, 1])
 
-    with col_graph:
-      st.caption("Valorisation (€) par secteur d'activité :")
-      st.bar_chart(repartition_secteurs)
+    with col_camembert:
+      st.caption("Survolez le camembert pour voir le détail par secteur :")
+      donnees_camembert = [
+          {
+              "Secteur": f"{sec} ({(val_sec / valeur_totale_portefeuille) * 100:.1f}%)",
+              "Montant": round(val_sec, 2),
+              "Poids": f"{(val_sec / valeur_totale_portefeuille) * 100:.1f} %",
+          }
+          for sec, val_sec in sorted(
+              repartition_secteurs.items(), key=lambda x: x[1], reverse=True
+          )
+      ]
+
+      st.vega_lite_chart(
+          donnees_camembert,
+          {
+              "mark": {
+                  "type": "arc",
+                  "innerRadius": 65,
+                  "outerRadius": 125,
+                  "padAngle": 0.03,
+                  "cornerRadius": 6,
+              },
+              "encoding": {
+                  "theta": {"field": "Montant", "type": "quantitative"},
+                  "color": {
+                      "field": "Secteur",
+                      "type": "nominal",
+                      "scale": {"scheme": "category20"},
+                      "legend": {
+                          "title": "Secteurs & Poids",
+                          "orient": "right",
+                          "labelFontSize": 12,
+                          "titleFontSize": 13,
+                          "labelLimit": 220,
+                      },
+                  },
+                  "tooltip": [
+                      {"field": "Secteur", "type": "nominal", "title": "Secteur"},
+                      {"field": "Montant", "type": "quantitative", "title": "Valorisation (€)"},
+                      {"field": "Poids", "type": "nominal", "title": "Part du PEA"},
+                  ],
+              },
+              "view": {"stroke": None},
+              "height": 300,
+          },
+          use_container_width=True,
+      )
 
     with col_tab_sec:
-      st.caption("Poids de chaque secteur (%) :")
+      st.caption("Diagnostic d'équilibre sectoriel :")
       tableau_secteurs = []
       for sec, val_sec in sorted(
           repartition_secteurs.items(), key=lambda x: x[1], reverse=True
@@ -883,7 +987,7 @@ with onglet_portefeuille:
         etat_sec = "⚠️ Fort (>35%)" if poids_sec > 35 else "✅ Équilibré"
         tableau_secteurs.append({
             "Secteur": sec,
-            "Montant (€)": f"{val_sec:,.2f} €",
+            "Valorisation (€)": f"{val_sec:,.2f} €",
             "Poids (%)": f"{poids_sec:.1f}%",
             "Diagnostic": etat_sec,
         })
