@@ -1709,11 +1709,11 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
                          for m in st.session_state["messages_ia"]
                      ],
                   }
-            req_ia = urllib.request.Request(
-                url_gemini,
-                data=json.dumps(payload_ia).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-            )
+                  req_ia = urllib.request.Request(
+                      url_gemini,
+                      data=json.dumps(payload_ia).encode("utf-8"),
+                      headers={"Content-Type": "application/json"},
+                  )
               with urllib.request.urlopen(req_ia, timeout=20) as resp_ia:
                 res_json = json.loads(resp_ia.read().decode("utf-8"))
                 reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
