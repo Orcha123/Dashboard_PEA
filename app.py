@@ -919,10 +919,12 @@ with onglet_radar:
   )
 
   action_selectionnee = st.selectbox(
-      "Sélectionnez l'action à analyser visuellement :",
-      actions_autorisees,
-      index=index_defaut,
-  )
+        "Sélectionnez l'action à analyser visuellement :",
+        actions_autorisees,
+        index=index_defaut,
+        key="select_action_graphique_value"
+    )
+
 
   if action_selectionnee in historiques_prix:
     closes = historiques_prix[action_selectionnee]
