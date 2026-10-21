@@ -1708,7 +1708,7 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
                          }
                          for m in st.session_state["messages_ia"]
                      ],
-            }
+                  }
             req_ia = urllib.request.Request(
                 url_gemini,
                 data=json.dumps(payload_ia).encode("utf-8"),
