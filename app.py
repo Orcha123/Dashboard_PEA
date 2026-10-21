@@ -1698,7 +1698,7 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
             )
           else:
             try:
-  url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={st.secrets['GEMINI_API_KEY']}"
+                url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={st.secrets['GEMINI_API_KEY']}"
 
                   "system_instruction": {"parts": [{"text": contexte_systeme}]},
                   "contents": [
