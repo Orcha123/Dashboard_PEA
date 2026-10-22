@@ -1109,31 +1109,30 @@ with onglet_portefeuille:
 
     st.subheader("📋 Détail de mes lignes en portefeuille")
 
-    html_port = """
-    <style>
-    .p-table { width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }
-    .p-table th { border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.85em; background-color: rgba(128,128,128,0.05); }
-    .p-table td { border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }
-    .p-action-name { font-weight: 800; font-size: 1.05em; text-align: left; }
-    .p-sector-tag { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,0.15); opacity: 0.85; margin-top: 3px; }
-    .badge-gain { background: rgba(46,204,113,0.18); color: #2ecc71; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
-    .badge-loss { background: rgba(231,76,60,0.18); color: #e74c3c; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
-    .bar-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
-    </style>
-    <table class="p-table">
-    <thead>
-        <tr>
-            <th style="text-align: left;">Action & Secteur</th>
-            <th>Qté</th>
-            <th>PRU ➔ Cours</th>
-            <th>Valorisation</th>
-            <th>+/- Value Latente</th>
-            <th>Rente & YoC</th>
-            <th style="width: 150px;">Poids PEA</th>
-        </tr>
-    </thead>
-    <tbody>
-    """
+    html_port = """<style>
+.p-table { width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }
+.p-table th { border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.85em; background-color: rgba(128,128,128,0.05); }
+.p-table td { border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }
+.p-action-name { font-weight: 800; font-size: 1.05em; text-align: left; }
+.p-sector-tag { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,0.15); opacity: 0.85; margin-top: 3px; }
+.badge-gain { background: rgba(46,204,113,0.18); color: #2ecc71; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
+.badge-loss { background: rgba(231,76,60,0.18); color: #e74c3c; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
+.bar-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
+</style>
+<table class="p-table">
+<thead>
+<tr>
+<th style="text-align: left;">Action & Secteur</th>
+<th>Qté</th>
+<th>PRU ➔ Cours</th>
+<th>Valorisation</th>
+<th>+/- Value Latente</th>
+<th>Rente & YoC</th>
+<th style="width: 150px;">Poids PEA</th>
+</tr>
+</thead>
+<tbody>"""
+
 
     alertes_concentration = []
    
