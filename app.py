@@ -948,12 +948,32 @@ with onglet_portefeuille:
       expanded=False,
   ):
     st.caption(
-        "Indiquez le nombre d'actions que vous possédez dans votre PEA et votre"
-        " Prix de Revient Unitaire (PRU). Cliquez sur le bouton en bas du menu"
-        " pour enregistrer vos modifications."
+        "Indiquez vos liquidités et le nombre d'actions que vous possédez. "
+        "Cliquez sur le bouton en bas du menu pour enregistrer vos modifications."
     )
-    cols_saisie = st.columns(3)
+   
+    # --- NOUVEAU : CHAMP ESPÈCES ---
+    st.markdown("#### 💶 Liquidités (Espèces sur le PEA)")
+    pru_esp_defaut = st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0)
+   
+    montant_especes = st.number_input(
+        "Montant disponible en espèces (€)",
+        min_value=0.0,
+        max_value=10000000.0,
+        value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)),
+        step=50.0,
+        key="pru_Espèces"
+    )
+   
     nouveau_portefeuille_temp = {}
+    if montant_especes > 0:
+        nouveau_portefeuille_temp["Espèces"] = {"qte": 1, "pru": montant_especes}
+        st.session_state["qte_Espèces"] = 1 # Sécurité pour le chargement Supabase
+       
+    st.markdown("---")
+    st.markdown("#### 📈 Mes Actions")
+   
+    cols_saisie = st.columns(3)
 
     for idx, (nom_act, info_act) in enumerate(WATCHLIST.items()):
       col_active = cols_saisie[idx % 3]
@@ -968,7 +988,7 @@ with onglet_portefeuille:
             f"Quantité ({nom_act})",
             min_value=0,
             max_value=10000,
-            value=int(qte_defaut),
+            value=int(st.session_state.get(f"qte_{nom_act}", qte_defaut)),
             step=1,
             key=f"qte_{nom_act}",
         )
@@ -976,7 +996,7 @@ with onglet_portefeuille:
             f"PRU € ({nom_act})",
             min_value=0.0,
             max_value=5000.0,
-            value=float(pru_defaut),
+            value=float(st.session_state.get(f"pru_{nom_act}", pru_defaut)),
             step=0.5,
             key=f"pru_{nom_act}",
         )
@@ -1000,7 +1020,7 @@ with onglet_portefeuille:
     st.warning(
         "Votre portefeuille est vide. Cliquez sur le menu « ✏️ Saisir ou"
         " modifier mes actions détenues » juste au-dessus pour ajouter vos"
-        " premières actions !"
+        " premières actions ou vos liquidités !"
     )
   else:
     repartition_secteurs = {}
@@ -1009,8 +1029,17 @@ with onglet_portefeuille:
     dividendes_annuels_totaux = 0.0
 
     for nom_act, data_pos in portefeuille_utilisateur.items():
+      # Traitement spécifique pour les espèces
+      if nom_act == "Espèces":
+          val_especes = data_pos["pru"]
+          valeur_totale_portefeuille += val_especes
+          cout_total_achat += val_especes
+          repartition_secteurs["Liquidités"] = repartition_secteurs.get("Liquidités", 0.0) + val_especes
+          continue
+         
       if nom_act not in WATCHLIST:
         continue
+       
       qte = data_pos["qte"]
       pru = data_pos["pru"]
       info_act = WATCHLIST[nom_act]
@@ -1107,15 +1136,44 @@ with onglet_portefeuille:
     """
 
     alertes_concentration = []
+   
+    # Tri incluant les espèces
     lignes_triees = sorted(
         portefeuille_utilisateur.items(),
-        key=lambda x: x[1]["qte"] * prix_temps_reel.get(x[0], WATCHLIST.get(x[0], {}).get("prix_cible", 0)),
+        key=lambda x: x[1]["pru"] if x[0] == "Espèces" else (x[1]["qte"] * prix_temps_reel.get(x[0], WATCHLIST.get(x[0], {}).get("prix_cible", 0))),
         reverse=True,
     )
 
     for nom_act, data_pos in lignes_triees:
+      # Affichage spécifique pour les espèces
+      if nom_act == "Espèces":
+          val_especes = data_pos["pru"]
+          poids_pct = ((val_especes / valeur_totale_portefeuille) * 100) if valeur_totale_portefeuille > 0 else 0.0
+         
+          largeur_barre = min(100, int(poids_pct))
+         
+          html_port += f"""
+          <tr>
+              <td style="text-align: left;">
+                  <div class="p-action-name">💶 Espèces</div>
+                  <div class="p-sector-tag">Liquidités</div>
+              </td>
+              <td><b>--</b></td>
+              <td><b>--</b></td>
+              <td><b>{val_especes:,.2f} €</b></td>
+              <td><span style="color: #95a5a6; font-weight: bold; background: rgba(128,128,128,0.15); padding: 5px 10px; border-radius: 6px;">--</span></td>
+              <td><b>--</b></td>
+              <td>
+                  <div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
+                  <div class="bar-bg"><div style="width: {largeur_barre}%; background: #95a5a6; height: 100%;"></div></div>
+              </td>
+          </tr>
+          """
+          continue
+         
       if nom_act not in WATCHLIST:
         continue
+       
       qte = data_pos["qte"]
       pru = data_pos["pru"]
       info_act = WATCHLIST[nom_act]
@@ -1243,7 +1301,6 @@ with onglet_portefeuille:
             "Diagnostic": etat_sec,
         })
       st.dataframe(tableau_secteurs, use_container_width=True)
-
 
 # ------------------------------------------------------------------------------
 # ONGLET 3 : DIVIDENDES, CALENDRIER & SIMULATEUR BOULE DE NEIGE PRO
