@@ -129,7 +129,7 @@ else:
         col_btn1, col_btn2 = st.sidebar.columns(2)
         if col_btn1.button("💾 Sauver", use_container_width=True):
             if sauvegarder_dans_cloud():
-                st.sidebar.toast("✅ Profil sauvegardé dans le Cloud !")
+                st.toast("✅ Profil sauvegardé dans le Cloud !")
         if col_btn2.button("🚪 Sortir", use_container_width=True):
             supabase.auth.sign_out()
             st.session_state["user"] = None
