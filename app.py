@@ -1149,26 +1149,24 @@ with onglet_portefeuille:
       if nom_act == "Espèces":
           val_especes = data_pos["pru"]
           poids_pct = ((val_especes / valeur_totale_portefeuille) * 100) if valeur_totale_portefeuille > 0 else 0.0
-         
           largeur_barre = min(100, int(poids_pct))
          
-          html_port += f"""
-          <tr>
-              <td style="text-align: left;">
-                  <div class="p-action-name">💶 Espèces</div>
-                  <div class="p-sector-tag">Liquidités</div>
-              </td>
-              <td><b>--</b></td>
-              <td><b>--</b></td>
-              <td><b>{val_especes:,.2f} €</b></td>
-              <td><span style="color: #95a5a6; font-weight: bold; background: rgba(128,128,128,0.15); padding: 5px 10px; border-radius: 6px;">--</span></td>
-              <td><b>--</b></td>
-              <td>
-                  <div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
-                  <div class="bar-bg"><div style="width: {largeur_barre}%; background: #95a5a6; height: 100%;"></div></div>
-              </td>
-          </tr>
-          """
+          # Code HTML aligné à gauche pour éviter le bug visuel du "bloc de code"
+          html_port += f"""<tr>
+<td style="text-align: left;">
+<div class="p-action-name">💶 Espèces</div>
+<div class="p-sector-tag">Liquidités</div>
+</td>
+<td><b>--</b></td>
+<td><b>--</b></td>
+<td><b>{val_especes:,.2f} €</b></td>
+<td><span style="color: #95a5a6; font-weight: bold; background: rgba(128,128,128,0.15); padding: 5px 10px; border-radius: 6px;">--</span></td>
+<td><b>--</b></td>
+<td>
+<div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
+<div class="bar-bg"><div style="width: {largeur_barre}%; background: #95a5a6; height: 100%;"></div></div>
+</td>
+</tr>"""
           continue
          
       if nom_act not in WATCHLIST:
@@ -1198,23 +1196,22 @@ with onglet_portefeuille:
       couleur_barre = "#e67e22" if poids_pct > 25.0 else "#3498db"
       largeur_barre = min(100, int(poids_pct))
 
-      html_port += f"""
-      <tr>
-          <td style="text-align: left;">
-              <div class="p-action-name">{nom_act}</div>
-              <div class="p-sector-tag">{info_act['secteur']}</div>
-          </td>
-          <td><b>{qte}</b></td>
-          <td>{pru:.2f} € ➔ <b>{prix_jour:.2f} €</b></td>
-          <td><b>{val_ligne:,.2f} €</b></td>
-          <td><span class="{classe_pv}">{pv_eur:+,.2f} € ({pv_pct:+.1f}%)</span></td>
-          <td><b>{div_ligne:.2f} €/an</b><br><span style="font-size: 0.82em; opacity: 0.8;">YoC : {yoc_ligne:.2f}%</span></td>
-          <td>
-              <div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
-              <div class="bar-bg"><div style="width: {largeur_barre}%; background: {couleur_barre}; height: 100%;"></div></div>
-          </td>
-      </tr>
-      """
+      # Idem, on aligne le HTML tout à gauche
+      html_port += f"""<tr>
+<td style="text-align: left;">
+<div class="p-action-name">{nom_act}</div>
+<div class="p-sector-tag">{info_act['secteur']}</div>
+</td>
+<td><b>{qte}</b></td>
+<td>{pru:.2f} € ➔ <b>{prix_jour:.2f} €</b></td>
+<td><b>{val_ligne:,.2f} €</b></td>
+<td><span class="{classe_pv}">{pv_eur:+,.2f} € ({pv_pct:+.1f}%)</span></td>
+<td><b>{div_ligne:.2f} €/an</b><br><span style="font-size: 0.82em; opacity: 0.8;">YoC : {yoc_ligne:.2f}%</span></td>
+<td>
+<div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
+<div class="bar-bg"><div style="width: {largeur_barre}%; background: {couleur_barre}; height: 100%;"></div></div>
+</td>
+</tr>"""
 
     html_port += "</tbody></table>"
     st.markdown(html_port, unsafe_allow_html=True)
