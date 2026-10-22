@@ -5,11 +5,12 @@ import math
 import re
 from datetime import datetime
 import streamlit as st
+import yfinance as yf
 from supabase import create_client
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Suite Boursière PEA & Dividendes",
+    page_title="Boursy - Suite Boursière PEA & Dividendes",
     page_icon="📈",
     layout="wide",
 )
@@ -91,14 +92,13 @@ else:
         choix_auth = st.sidebar.radio("Accès :", ["Se connecter", "Créer un compte"], horizontal=True)
         email_input = st.sidebar.text_input("Email")
         password_input = st.sidebar.text_input("Mot de passe", type="password")
-       
+        
         if choix_auth == "Se connecter":
             if st.sidebar.button("🔓 Connexion", use_container_width=True):
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email_input, "password": password_input})
                     st.session_state["user"] = res.user
-                   
-                    # Récupération du profil dans la base de données
+                    
                     data = supabase.table("user_data").select("*").eq("user_id", res.user.id).execute()
                     if data.data:
                         profil = data.data[0]
@@ -137,7 +137,7 @@ else:
 
 WATCHLIST = st.session_state["watchlist"]
 
-st.title("📈 Plateforme Boursière PEA - Aide à la Décision & Patrimoine")
+st.title("📈 Boursy - Plateforme Boursière PEA & Dividendes")
 st.caption(f"Dernière mise à jour des marchés : {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
 
 # --- PARAMÈTRES DCA ---
@@ -156,69 +156,52 @@ if nouveau_budget != st.session_state["budget_dca"]:
 
 BUDGET_MENSUEL = st.session_state["budget_dca"]
 
-# --- RECHERCHE INTELLIGENTE & AJOUT (HYBRIDE) ---
-def chercher_sur_yahoo(query):
-    if not query:
-        return []
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode())
-            quotes = data.get("quotes", [])
-            resultats = []
-            for q in quotes:
-                if q.get("quoteType") in ["EQUITY", "ETF"]:
-                    nom = q.get("shortname", q.get("longname", "Inconnu"))
-                    symbole = q.get("symbol", "")
-                    bourse = q.get("exchDisp", "")
-                    resultats.append(f"{nom} ({symbole}) - {bourse}")
-            return resultats
-    except Exception:
-        return []
-
+# --- RECHERCHE PAR MENU DÉROULANT YFINANCE (SBF120) & AJOUT PERSONNALISÉ ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Ajouter / Gérer les actions")
 
-recherche_query = st.sidebar.text_input("1. Rechercher une entreprise :", placeholder="ex: Apple, Total, Axa...")
+catalogue_sbf120 = {
+    "Air Liquide": "AI.PA", "AXA": "CS.PA", "BNP Paribas": "BNP.PA",
+    "Bouygues": "EN.PA", "Capgemini": "CAP.PA", "Crédit Agricole": "ACA.PA",
+    "Danone": "BN.PA", "Edenred": "EDEN.PA", "Eiffage": "FGR.PA",
+    "Engie": "ENGI.PA", "EssilorLuxottica": "EL.PA", "GTT": "GTT.PA",
+    "Hermès": "RMS.PA", "Kering": "KER.PA", "L'Oréal": "OR.PA",
+    "Legrand": "LR.PA", "LVMH": "MC.PA", "Michelin": "ML.PA",
+    "Orange": "ORA.PA", "Pernod Ricard": "RI.PA", "Publicis": "PUB.PA",
+    "Renault": "RNO.PA", "Rubis": "RUI.PA", "Safran": "SAF.PA",
+    "Saint-Gobain": "SGO.PA", "Sanofi": "SAN.PA", "Schneider Electric": "SU.PA",
+    "Société Générale": "GLE.PA", "Stellantis": "STLAP.PA", "Thales": "HO.PA",
+    "TotalEnergies": "TTE.PA", "Veolia": "VIE.PA", "Vinci": "DG.PA"
+}
 
-if recherche_query:
-    resultats_recherche = chercher_sur_yahoo(recherche_query)
-   
-    if resultats_recherche:
-        with st.sidebar.form("formulaire_hybride"):
-            choix_action = st.selectbox("2. Confirmez l'action :", resultats_recherche)
-           
-            st.markdown("**3. Personnalisez vos données :**")
-            nouveau_secteur = st.text_input("Secteur (ex: Tech, Banque)", value="À définir")
-            nouveau_cible = st.number_input("Prix cible (€ ou $)", min_value=0.0, value=0.0, step=1.0)
-            nouveau_div = st.number_input("Dividende annuel (€)", min_value=0.0, value=0.0, step=0.1)
-            nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.0, step=0.05)
-           
-            liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-            nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles)
-           
-            submit_ajout = st.form_submit_button("➕ Ajouter et Sauvegarder")
-           
-            if submit_ajout:
-                match = re.search(r"^(.*) \((.*?)\)", choix_action)
-                if match:
-                    nom_trouve = match.group(1).strip()
-                    symbole_trouve = match.group(2).strip()
-                   
-                    st.session_state["watchlist"][nom_trouve] = {
-                        "symbole": symbole_trouve,
-                        "prix_cible": nouveau_cible,
-                        "secteur": nouveau_secteur,
-                        "div_eur": nouveau_div,
-                        "payout_ratio": nouveau_payout,
-                        "croissance_5a": "N/A",
-                        "mois_div": nouveau_mois
-                    }
-                    sauvegarder_dans_cloud()
-                    st.rerun()
-    else:
-        st.sidebar.warning("Aucune action trouvée. Essayez un autre mot-clé.")
+choix_menu_yf = st.sidebar.selectbox("1. Sélectionner une action (SBF120) :", ["-- Choisir une valeur --"] + sorted(catalogue_sbf120.keys()))
+
+if choix_menu_yf != "-- Choisir une valeur --":
+    symbole_selectionne = catalogue_sbf120[choix_menu_yf]
+    with st.sidebar.form("formulaire_menu_yf"):
+        st.markdown(f"**Action :** {choix_menu_yf} (`{symbole_selectionne}`)")
+        nouveau_secteur = st.text_input("Secteur (ex: Tech, Banque, Énergie)", value="À définir")
+        nouveau_cible = st.number_input("Prix cible (€)", min_value=0.0, value=50.0, step=1.0)
+        nouveau_div = st.number_input("Dividende annuel (€)", min_value=0.0, value=2.0, step=0.1)
+        nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.5, step=0.05)
+        
+        liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+        nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles, default=["Mai"])
+        
+        submit_ajout = st.form_submit_button("➕ Ajouter à Boursy")
+        
+        if submit_ajout:
+            st.session_state["watchlist"][choix_menu_yf] = {
+                "symbole": symbole_selectionne,
+                "prix_cible": nouveau_cible,
+                "secteur": nouveau_secteur,
+                "div_eur": nouveau_div,
+                "payout_ratio": nouveau_payout,
+                "croissance_5a": "N/A",
+                "mois_div": nouveau_mois
+            }
+            sauvegarder_dans_cloud()
+            st.rerun()
 
 with st.sidebar.expander("🗑️ Supprimer une action du radar"):
     action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()))
@@ -242,6 +225,7 @@ if mode_gratuit:
 else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"💎 **Mode Abonné Pro actif** : {len(WATCHLIST)} valeurs débloquées.")
+
 # --- CALCULS TECHNIQUES ---
 def calculer_rsi(clotures, periode=14):
   if len(clotures) < periode + 1:
@@ -565,7 +549,7 @@ with onglet_radar:
   .rad-kpi-title {{ font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; margin-bottom: 8px; font-weight: bold; }}
   .rad-kpi-val {{ font-size: 1.65em; font-weight: 900; margin-bottom: 5px; }}
   .rad-kpi-sub {{ font-size: 0.85em; font-weight: 600; opacity: 0.85; }}
- 
+  
   /* Styles généraux pour les tableaux Pro de l'Onglet 1 */
   .r-table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }}
   .r-table th {{ border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.83em; background-color: rgba(128,128,128,0.05); }}
@@ -643,7 +627,6 @@ with onglet_radar:
   <tbody>
   """
 
-  # Tri automatique des actions du meilleur score au plus faible
   for d in sorted(t1_filtre, key=lambda x: x["Score"], reverse=True):
     ecart_str = str(d["Écart Cible (%)"])
     if "🟢" in ecart_str:
@@ -701,7 +684,7 @@ with onglet_radar:
 
   st.markdown("---")
 
- # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA (AVEC GRAPHIQUE UNIQUEMENT SUR VALUE) ---
+  # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA ---
   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
@@ -748,7 +731,7 @@ with onglet_radar:
 
     st.markdown("---")
     st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
-   
+    
     index_defaut = (
         actions_autorisees.index(choix_action)
         if choix_action in actions_autorisees
@@ -908,11 +891,9 @@ with onglet_radar:
             " de ces valeurs."
         )
 
-  
-
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : MON PORTEFEUILLE & SECTEURS (DESIGN PRO & CAMEMBERT)
+# ONGLET 2 : MON PORTEFEUILLE & SECTEURS
 # ------------------------------------------------------------------------------
 portefeuille_utilisateur = {}
 with onglet_portefeuille:
@@ -1023,7 +1004,6 @@ with onglet_portefeuille:
         else 0.0
     )
 
-    # --- 1. CARTES DE SYNTHÈSE PATRIMONIALE (DESIGN PRO) ---
     couleur_pv_card = "rgba(46,204,113,0.12)" if plus_value_globale >= 0 else "rgba(231,76,60,0.12)"
     bordure_pv_card = "rgba(46,204,113,0.5)" if plus_value_globale >= 0 else "rgba(231,76,60,0.5)"
     texte_pv_color = "#2ecc71" if plus_value_globale >= 0 else "#e74c3c"
@@ -1061,7 +1041,6 @@ with onglet_portefeuille:
     """
     st.markdown(html_kpi, unsafe_allow_html=True)
 
-    # --- 2. TABLEAU VISUEL DES LIGNES EN PORTEFEUILLE ---
     st.subheader("📋 Détail de mes lignes en portefeuille")
 
     html_port = """
@@ -1091,7 +1070,6 @@ with onglet_portefeuille:
     """
 
     alertes_concentration = []
-    # Tri des lignes de la plus grosse valorisation à la plus petite
     lignes_triees = sorted(
         portefeuille_utilisateur.items(),
         key=lambda x: x[1]["qte"] * prix_temps_reel.get(x[0], WATCHLIST.get(x[0], {}).get("prix_cible", 0)),
@@ -1161,7 +1139,6 @@ with onglet_portefeuille:
 
     st.markdown("---")
 
-    # --- 3. RÉPARTITION SECTORIELLE EN CAMEMBERT (DONUT INTERACTIF) ---
     st.subheader("🏭 Répartition Sectorielle de mon Portefeuille")
     col_camembert, col_tab_sec = st.columns([1.1, 1])
 
@@ -1230,6 +1207,7 @@ with onglet_portefeuille:
         })
       st.dataframe(tableau_secteurs, use_container_width=True)
 
+
 # ------------------------------------------------------------------------------
 # ONGLET 3 : DIVIDENDES, CALENDRIER & SIMULATEUR BOULE DE NEIGE PRO
 # ------------------------------------------------------------------------------
@@ -1264,7 +1242,6 @@ with onglet_dividendes:
 
     st.markdown("---")
 
-    # --- 1. LE CALENDRIER VISUEL (DESIGN PRO) ---
     st.subheader("🗓️ Calendrier Annuel des Détachements")
     st.caption("Repérez visuellement les mois de versements et les montants estimés pour chaque ligne de votre portefeuille.")
 
@@ -1325,14 +1302,12 @@ with onglet_dividendes:
 
     st.markdown("---")
 
-    # --- 2. NOUVEAU SIMULATEUR « BOULE DE NEIGE » ULTRA-PERCUTANT ---
     st.subheader("❄️ Machine à Intérêts Composés & Effet Boule de Neige")
     st.caption(
         "Simulez l'explosion de votre rente grâce au réinvestissement automatique des dividendes, "
         f"à votre DCA de {BUDGET_MENSUEL:.0f} €/mois et à la croissance annuelle des entreprises."
     )
 
-    # Curseurs interactifs pour personnaliser la projection
     col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
       objectif_rente = st.slider(
@@ -1359,7 +1334,6 @@ with onglet_dividendes:
           step=0.5,
       )
 
-    # Moteur de calcul de la Boule de Neige
     rendement_base = (
         rendement_moyen_portefeuille / 100
         if rendement_moyen_portefeuille > 0
@@ -1368,8 +1342,8 @@ with onglet_dividendes:
     taux_croissance = croissance_annuelle_pct / 100
 
     cap_total = valeur_totale_portefeuille
-    effort_cumule = valeur_totale_portefeuille  # Ce qui sort vraiment de votre poche
-    gains_boule_de_neige = 0.0  # Ce qui est généré gratuitement par le marché + dividendes
+    effort_cumule = valeur_totale_portefeuille 
+    gains_boule_de_neige = 0.0 
 
     annee_objectif_atteint = None
     annee_bascule_dca = None
@@ -1382,13 +1356,10 @@ with onglet_dividendes:
     for an in range(1, annees_max + 1):
       div_reinvestis_cette_annee = 0.0
       for mois in range(12):
-        # Dividende généré ce mois-ci
         div_du_mois = (cap_total * rendement_base) / 12
         div_reinvestis_cette_annee += div_du_mois
-        # Croissance organique mensuelle du capital
         gain_cours_mois = cap_total * (taux_croissance / 12)
        
-        # Mise à jour des compteurs
         effort_cumule += BUDGET_MENSUEL
         gains_boule_de_neige += (div_du_mois + gain_cours_mois)
         cap_total = effort_cumule + gains_boule_de_neige
@@ -1396,11 +1367,9 @@ with onglet_dividendes:
       rente_an = cap_total * rendement_base
       rente_mois = rente_an / 12
 
-      # Détection de l'année où l'objectif de rente est franchi
       if annee_objectif_atteint is None and rente_mois >= objectif_rente:
         annee_objectif_atteint = an
 
-      # Détection du Point de Bascule (quand les dividendes dépassent l'effort DCA)
       if annee_bascule_dca is None and rente_mois >= BUDGET_MENSUEL:
         annee_bascule_dca = an
 
@@ -1408,7 +1377,6 @@ with onglet_dividendes:
       series_boule_de_neige.append(round(cap_total, 0))
       series_rente_mensuelle.append(round(rente_mois, 1))
 
-      # Création d'une jauge visuelle pour le tableau
       pct_obj = min(100, int((rente_mois / objectif_rente) * 100))
       nb_blocs = int(pct_obj / 10)
       barre_visuelle = "🟩" * nb_blocs + "⬜" * (10 - nb_blocs) + f" {pct_obj}%"
@@ -1422,13 +1390,10 @@ with onglet_dividendes:
           "Objectif Rente": barre_visuelle,
       })
 
-    # Calculs finaux pour les cartes d'impact
     rente_finale_mois = (cap_total * rendement_base) / 12
     multiplicateur_rente = (rente_finale_mois / total_div_mois) if total_div_mois > 0 else 0
     part_gratuite_pct = (gains_boule_de_neige / cap_total * 100) if cap_total > 0 else 0
-    pct_actuel_obj = min(100.0, (total_div_mois / objectif_rente * 100)) if objectif_rente > 0 else 0
 
-    # --- AFFICHAGE DU BANDEAU VISUEL D'IMPACT (HTML/CSS) ---
     texte_objectif = (
         f"🎉 Objectif de <b>{objectif_rente} €/mois</b> atteint dans <b>{annee_objectif_atteint} ans</b> (en {datetime.now().year + annee_objectif_atteint}) !"
         if annee_objectif_atteint
@@ -1476,7 +1441,6 @@ with onglet_dividendes:
     """
     st.markdown(html_snowball, unsafe_allow_html=True)
 
-    # --- GRAPHIQUES VISUELS CÔTE À CÔTE ---
     col_g1, col_g2 = st.columns(2)
     with col_g1:
       st.markdown("**📈 L'Écart Magique : Patrimoine Total vs Votre Effort (DCA)**")
@@ -1493,7 +1457,6 @@ with onglet_dividendes:
           "Rente Mensuelle Générée (€/mois)": series_rente_mensuelle,
       })
 
-    # --- TABLEAU DES PALIERS ANNUELS ---
     with st.expander("📋 Voir le détail chiffré année par année (Tableau des Paliers)", expanded=True):
       st.dataframe(tableau_croissance, use_container_width=True)
 
@@ -1513,13 +1476,11 @@ with onglet_ia:
     lignes_valides = [nom for nom in portefeuille_utilisateur if nom in WATCHLIST]
     nb_lignes = len(lignes_valides)
 
-    # --- 1. CALCULS QUANTITATIFS AVANCÉS ---
     payouts_moy = (
         sum(WATCHLIST[nom]["payout_ratio"] for nom in lignes_valides) / nb_lignes
         if nb_lignes > 0 else 0
     )
 
-    # Détection des mois creux dans le calendrier
     tous_les_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
     mois_couverts = set()
     for nom in lignes_valides:
@@ -1527,11 +1488,9 @@ with onglet_ia:
         mois_couverts.add(m)
     mois_creux = [m for m in tous_les_mois if m not in mois_couverts]
 
-    # Recherche de la ligne la plus lourde et des alertes techniques
     poids_max_nom, poids_max_val = "", 0.0
     analyse_detaillee_lignes = []
    
-    # Dictionnaire rapide des données techniques du Tableau 1
     tech_map = {d["Actif"]: d for d in donnees_t1}
 
     for nom in lignes_valides:
@@ -1557,14 +1516,12 @@ with onglet_ia:
           f"| Payout: {WATCHLIST[nom]['payout_ratio']*100:.0f}% | RSI: {rsi_actuel} | Signal: {decision_actuelle}"
       )
 
-    # Calcul d'un Score Global de Santé sur 100
     score_sante = 0
-    score_sante += min(30, nb_lignes * 5)  # Jusqu'à 30 pts pour la diversification (6 lignes+)
-    score_sante += 30 if payouts_moy <= 0.60 else (15 if payouts_moy <= 0.75 else 5)  # 30 pts sûreté div
-    score_sante += 20 if poids_max_val <= 25 else (10 if poids_max_val <= 35 else 0)  # 20 pts équilibre
-    score_sante += min(20, int(len(mois_couverts) * 1.7))  # 20 pts régularité mensuelle des flux
+    score_sante += min(30, nb_lignes * 5) 
+    score_sante += 30 if payouts_moy <= 0.60 else (15 if payouts_moy <= 0.75 else 5) 
+    score_sante += 20 if poids_max_val <= 25 else (10 if poids_max_val <= 35 else 0) 
+    score_sante += min(20, int(len(mois_couverts) * 1.7)) 
 
-    # --- AFFICHAGE DU DIAGNOSTIC EXÉCUTIF ---
     c_ia1, c_ia2, c_ia3, c_ia4 = st.columns(4)
     c_ia1.metric("Score Santé Globale", f"{score_sante} / 100", "🌟 Solide" if score_sante >= 75 else "⚖️ Perfectible")
     c_ia2.metric("Sûreté Dividendes (Payout)", f"{payouts_moy*100:.1f} %", "🛡️ Sain (<60%)" if payouts_moy <= 0.60 else "⚠️ Élevé")
@@ -1621,13 +1578,11 @@ with onglet_ia:
 
     st.markdown("---")
 
-    # --- 2. AGENT IA CONVERSATIONNEL (CHATBOT) ---
     st.subheader("💬 Discuter avec votre Conseiller IA Privé")
     st.caption(
         "Posez n'importe quelle question : l'Agent IA connaît en temps réel vos lignes, vos PRU, vos dividendes et les indicateurs techniques du jour."
     )
 
-    # Construction du contexte invisible transmis à l'IA
     opportunites_radar = [
         f"{d['Actif']} (Prix: {d['Prix (€)']}€, Cible: {d['Prix Cible (€)']}€, RSI: {d['RSI']}, Score: {d['Score']}/100, Décision: {d['Décision']})"
         for d in donnees_t1
@@ -1663,7 +1618,6 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
           }
       ]
 
-    # Boutons de questions rapides (Suggestions en 1 clic)
     col_q1, col_q2, col_q3 = st.columns(3)
     question_rapide = None
     if col_q1.button("💡 Optimiser mon DCA du mois", use_container_width=True):
@@ -1673,12 +1627,10 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
     if col_q3.button("🗓️ Combler mes mois sans dividendes", use_container_width=True):
       question_rapide = f"Quelles valeurs de ma watchlist me permettraient de toucher des dividendes pendant mes mois creux ({', '.join(mois_creux)}) tout en ayant un bon score technique aujourd'hui ?"
 
-    # Affichage de l'historique de discussion
     for msg in st.session_state["messages_ia"]:
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-    # Zone de saisie du chat
 user_prompt = st.chat_input("Posez votre question financière à l'Agent IA...")
 question_finale = question_rapide or user_prompt
 
