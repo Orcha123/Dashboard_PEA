@@ -722,7 +722,7 @@ with onglet_radar:
   st.markdown("---")
 
   # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA ---
-   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
+  st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
       "🎯 Tableau 3 : Niveaux Techniques",
@@ -769,6 +769,7 @@ with onglet_radar:
       """
     html_t2 += "</tbody></table>"
     st.markdown(html_t2, unsafe_allow_html=True)
+
 
 
     st.markdown("---")
