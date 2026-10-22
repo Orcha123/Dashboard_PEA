@@ -100,19 +100,27 @@ else:
         email_input = st.sidebar.text_input("Email")
         password_input = st.sidebar.text_input("Mot de passe", type="password")
         
-        if choix_auth == "Se connecter":
+         if choix_auth == "Se connecter":
             if st.sidebar.button("🔓 Connexion", use_container_width=True):
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email_input, "password": password_input})
                     st.session_state["user"] = res.user
-                    
+                   
                     data = supabase.table("user_data").select("*").eq("user_id", res.user.id).execute()
                     if data.data:
                         profil = data.data[0]
                         st.session_state["watchlist"] = profil.get("watchlist") or WATCHLIST_DEFAUT.copy()
-                        st.session_state["portefeuille"] = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                        portefeuille_cloud = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                        st.session_state["portefeuille"] = portefeuille_cloud
                         st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
                         st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
+                       
+                        # --- LE CORRECTIF EST ICI ---
+                        # On force les cases de l'interface à prendre les valeurs téléchargées
+                        for nom_act, data_pos in portefeuille_cloud.items():
+                            st.session_state[f"qte_{nom_act}"] = int(data_pos.get("qte", 0))
+                            st.session_state[f"pru_{nom_act}"] = float(data_pos.get("pru", 0.0))
+                           
                     else:
                         sauvegarder_dans_cloud()
                     st.rerun()
@@ -134,25 +142,28 @@ else:
     else:
         st.sidebar.success(f"Connecté : **{st.session_state['user'].email}**")
        
-        # --- NOUVEAU BOUTON POUR FORCER LE CHARGEMENT ET VOIR L'ERREUR ---
         if st.sidebar.button("🔄 Charger mes données", type="primary", use_container_width=True):
             try:
-                # On force la lecture dans Supabase
                 reponse = supabase.table("user_data").select("*").eq("user_id", st.session_state["user"].id).execute()
-               
                 if reponse.data:
                     profil = reponse.data[0]
                     st.session_state["watchlist"] = profil.get("watchlist") or WATCHLIST_DEFAUT.copy()
-                    st.session_state["portefeuille"] = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                    portefeuille_cloud = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                    st.session_state["portefeuille"] = portefeuille_cloud
                     st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
                     st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
-                    st.sidebar.success("✅ Données récupérées avec succès !")
-                    st.rerun() # Rafraîchit la page avec les nouvelles données
+                   
+                    # --- LE CORRECTIF EST ICI AUSSI ---
+                    for nom_act, data_pos in portefeuille_cloud.items():
+                        st.session_state[f"qte_{nom_act}"] = int(data_pos.get("qte", 0))
+                        st.session_state[f"pru_{nom_act}"] = float(data_pos.get("pru", 0.0))
+                       
+                    st.sidebar.success("✅ Données récupérées et appliquées !")
+                    st.rerun()
                 else:
-                    st.sidebar.warning("⚠️ La base de données n'a rien renvoyé pour ce compte.")
+                    st.sidebar.warning("⚠️ La base de données n'a rien renvoyé.")
             except Exception as e:
-                # Si le RLS bloque toujours, l'erreur s'affichera ici !
-                st.sidebar.error(f"Erreur de chargement : {e}")
+                st.sidebar.error(f"Erreur : {e}")
 
         col_btn1, col_btn2 = st.sidebar.columns(2)
         if col_btn1.button("💾 Sauver", use_container_width=True):
@@ -162,6 +173,7 @@ else:
             supabase.auth.sign_out()
             st.session_state["user"] = None
             st.rerun()
+
 
 WATCHLIST = st.session_state["watchlist"]
 
