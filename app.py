@@ -63,23 +63,30 @@ if "budget_dca" not in st.session_state:
 if "est_abonne_pro" not in st.session_state:
     st.session_state["est_abonne_pro"] = False
 
-# --- FONCTION DE SAUVEGARDE CLOUD ---
+# --- FONCTION DE SAUVEGARDE CLOUD CORRIGÉE AVEC AFFICHAGE DES ERREURS ---
 def sauvegarder_dans_cloud():
     if supabase and st.session_state["user"]:
         try:
             payload = {
-                "user_id": st.session_state["user"].id,
-                "email": st.session_state["user"].email,
-                "budget_dca": st.session_state["budget_dca"],
-                "watchlist": st.session_state["watchlist"],
-                "portefeuille": st.session_state["portefeuille"],
+                "user_id": str(st.session_state["user"].id),
+                "email": str(st.session_state["user"].email),
+                "budget_dca": float(st.session_state["budget_dca"]),
+                "watchlist": dict(st.session_state["watchlist"]),
+                "portefeuille": dict(st.session_state["portefeuille"]),
                 "updated_at": datetime.utcnow().isoformat()
             }
-            supabase.table("user_data").upsert(payload).execute()
+            # Exécution de la requête Supabase
+            res = supabase.table("user_data").upsert(payload).execute()
+            st.sidebar.success("✅ Sauvegardé avec succès !")
             return True
         except Exception as e:
-            st.sidebar.error(f"Erreur de sauvegarde Cloud : {e}")
+            # Affichage de l'erreur exacte pour comprendre ce qui bloque
+            st.sidebar.error(f"Erreur Supabase détaillée : {e}")
             return False
+    else:
+        st.sidebar.warning("⚠️ Impossible de sauver : utilisateur non connecté ou Supabase absent.")
+        return False
+
     return False
 
 # --- ESPACE MEMBRE (BARRE LATÉRALE) ---
