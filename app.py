@@ -722,7 +722,7 @@ with onglet_radar:
   st.markdown("---")
 
   # --- 3. SOUS-ONGLETS : ANALYSE APPROFONDIE & DCA ---
-  st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
+   st.subheader("📋 Tableaux d'Analyse Approfondie & DCA")
   tab_val, tab_tech, tab_div, tab_dca = st.tabs([
       "📐 Tableau 2 : Analyse Value",
       "🎯 Tableau 3 : Niveaux Techniques",
@@ -730,7 +730,7 @@ with onglet_radar:
       "💰 Allocation DCA du Mois",
   ])
 
-   with tab_val:
+  with tab_val:
     st.caption("Comparaison du cours actuel avec la tendance longue (droite de régression linéaire sur 3 ans) :")
     html_t2 = """
     <table class="r-table">
