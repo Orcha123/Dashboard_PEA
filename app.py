@@ -133,6 +133,27 @@ else:
                     st.sidebar.error(f"Erreur d'inscription (mot de passe de 6 caractères min.) : {e}")
     else:
         st.sidebar.success(f"Connecté : **{st.session_state['user'].email}**")
+       
+        # --- NOUVEAU BOUTON POUR FORCER LE CHARGEMENT ET VOIR L'ERREUR ---
+        if st.sidebar.button("🔄 Charger mes données", type="primary", use_container_width=True):
+            try:
+                # On force la lecture dans Supabase
+                reponse = supabase.table("user_data").select("*").eq("user_id", st.session_state["user"].id).execute()
+               
+                if reponse.data:
+                    profil = reponse.data[0]
+                    st.session_state["watchlist"] = profil.get("watchlist") or WATCHLIST_DEFAUT.copy()
+                    st.session_state["portefeuille"] = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                    st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
+                    st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
+                    st.sidebar.success("✅ Données récupérées avec succès !")
+                    st.rerun() # Rafraîchit la page avec les nouvelles données
+                else:
+                    st.sidebar.warning("⚠️ La base de données n'a rien renvoyé pour ce compte.")
+            except Exception as e:
+                # Si le RLS bloque toujours, l'erreur s'affichera ici !
+                st.sidebar.error(f"Erreur de chargement : {e}")
+
         col_btn1, col_btn2 = st.sidebar.columns(2)
         if col_btn1.button("💾 Sauver", use_container_width=True):
             if sauvegarder_dans_cloud():
