@@ -730,7 +730,7 @@ with onglet_radar:
       "💰 Allocation DCA du Mois",
   ])
 
-  with tab_val:
+   with tab_val:
     st.caption("Comparaison du cours actuel avec la tendance longue (droite de régression linéaire sur 3 ans) :")
     html_t2 = """
     <table class="r-table">
@@ -745,7 +745,11 @@ with onglet_radar:
     </thead>
     <tbody>
     """
-    for d in t2_filtre:
+   
+    # --- NOUVEAU : Tri intelligent des actions de la plus décotée à la plus surévaluée ---
+    lignes_t2_triees = sorted(t2_filtre, key=lambda x: float(x["Écart %"].replace("%", "")))
+   
+    for d in lignes_t2_triees:
       st_val = d["Statut Value"]
       if "DÉCOTE" in st_val:
         b_val = f"<span class='b-green'>{st_val}</span>"
@@ -765,6 +769,7 @@ with onglet_radar:
       """
     html_t2 += "</tbody></table>"
     st.markdown(html_t2, unsafe_allow_html=True)
+
 
     st.markdown("---")
     st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
