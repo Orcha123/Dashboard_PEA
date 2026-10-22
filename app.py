@@ -99,8 +99,8 @@ else:
         choix_auth = st.sidebar.radio("Accès :", ["Se connecter", "Créer un compte"], horizontal=True)
         email_input = st.sidebar.text_input("Email")
         password_input = st.sidebar.text_input("Mot de passe", type="password")
-        
-         if choix_auth == "Se connecter":
+       
+        if choix_auth == "Se connecter":
             if st.sidebar.button("🔓 Connexion", use_container_width=True):
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email_input, "password": password_input})
@@ -115,7 +115,6 @@ else:
                         st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
                         st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
                        
-                        # --- LE CORRECTIF EST ICI ---
                         # On force les cases de l'interface à prendre les valeurs téléchargées
                         for nom_act, data_pos in portefeuille_cloud.items():
                             st.session_state[f"qte_{nom_act}"] = int(data_pos.get("qte", 0))
@@ -153,7 +152,6 @@ else:
                     st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
                     st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
                    
-                    # --- LE CORRECTIF EST ICI AUSSI ---
                     for nom_act, data_pos in portefeuille_cloud.items():
                         st.session_state[f"qte_{nom_act}"] = int(data_pos.get("qte", 0))
                         st.session_state[f"pru_{nom_act}"] = float(data_pos.get("pru", 0.0))
@@ -173,7 +171,6 @@ else:
             supabase.auth.sign_out()
             st.session_state["user"] = None
             st.rerun()
-
 
 WATCHLIST = st.session_state["watchlist"]
 
