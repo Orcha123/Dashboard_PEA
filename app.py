@@ -86,20 +86,58 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
         st.session_state["pru_Espèces"] = 0.0
         st.session_state["qte_Espèces"] = 0
 
-# --- FONCTION DE SAUVEGARDE CLOUD CORRIGÉE AVEC AFFICHAGE DES ERREURS ---
+# --- FONCTION DE SAUVEGARDE CLOUD AVEC SNAPSHOT HISTORIQUE ---
 def sauvegarder_dans_cloud():
     if supabase and st.session_state["user"]:
         try:
+            user_id_str = str(st.session_state["user"].id)
+            watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+           
+            # 1. Sauvegarde du profil principal
             payload = {
-                "user_id": str(st.session_state["user"].id),
+                "user_id": user_id_str,
                 "email": str(st.session_state["user"].email),
                 "budget_dca": float(st.session_state["budget_dca"]),
-                "watchlist": dict(st.session_state["watchlist"]),
+                "watchlist": dict(watchlist_actuelle),
                 "portefeuille": dict(st.session_state["portefeuille"]),
                 "updated_at": datetime.utcnow().isoformat()
             }
-            res = supabase.table("user_data").upsert(payload).execute()
-            st.sidebar.success("✅ Sauvegardé avec succès !")
+            supabase.table("user_data").upsert(payload).execute()
+           
+            # 2. Enregistrement du Snapshot uniquement si les vrais cours sont chargés
+            dict_prix = st.session_state.get("prix_temps_reel", globals().get("prix_temps_reel", {}))
+            if dict_prix:
+                pf_actuel = st.session_state["portefeuille"]
+                val_totale = 0.0
+                cap_investi = 0.0
+                rente_tot = 0.0
+               
+                for nom, data in pf_actuel.items():
+                    if nom == "Espèces":
+                        val_esp = float(data.get("pru", 0.0))
+                        val_totale += val_esp
+                        cap_investi += val_esp
+                    elif nom in watchlist_actuelle:
+                        q = float(data.get("qte", 0.0))
+                        pru = float(data.get("pru", 0.0))
+                        cours = float(dict_prix.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
+                        val_totale += q * cours
+                        cap_investi += q * pru
+                        rente_tot += q * float(watchlist_actuelle[nom].get("div_eur", 0.0))
+               
+                date_du_jour = datetime.now().strftime("%Y-%m-%d")
+                snapshot_payload = {
+                    "user_id": user_id_str,
+                    "date": date_du_jour,
+                    "capital_investi": round(cap_investi, 2),
+                    "valorisation_pea": round(val_totale, 2),
+                    "rente_annuelle": round(rente_tot, 2)
+                }
+                # Remplace le snapshot du jour s'il existe déjà pour éviter les doublons
+                supabase.table("portfolio_history").delete().eq("user_id", user_id_str).eq("date", date_du_jour).execute()
+                supabase.table("portfolio_history").insert(snapshot_payload).execute()
+           
+            st.sidebar.success("✅ Sauvegardé & Snapshot du jour mis à jour !")
             return True
         except Exception as e:
             st.sidebar.error(f"Erreur Supabase détaillée : {e}")
@@ -107,6 +145,7 @@ def sauvegarder_dans_cloud():
     else:
         st.sidebar.warning("⚠️ Impossible de sauver : utilisateur non connecté ou Supabase absent.")
         return False
+
 
 # --- ESPACE MEMBRE (BARRE LATÉRALE) ---
 st.sidebar.header("👤 Espace Membre")
@@ -463,6 +502,7 @@ for nom, info in WATCHLIST.items():
 
   prix_temps_reel[nom] = prix_actuel
   historiques_prix[nom] = closes
+  st.session_state["prix_temps_reel"] = prix_temps_reel
 
   if nom not in actions_autorisees:
     continue
@@ -1509,6 +1549,53 @@ with onglet_portefeuille:
       })
     else:
       st.info("Ajoutez au moins une action dans votre portefeuille pour afficher la courbe d'historique.")
+      # --- JOURNAL DES SNAPSHOTS CLOUD (SANS PANDAS) ---
+    st.markdown("---")
+    st.subheader("📸 Mes Snapshots Patrimoniaux Enregistrés (Cloud)")
+    st.caption("Historique réel de vos sauvegardes horodatées dans Supabase (évolution de votre capital investi, de la valorisation et de votre rente) :")
+
+    if supabase and st.session_state["user"]:
+      try:
+        res_snap = (
+            supabase.table("portfolio_history")
+            .select("*")
+            .eq("user_id", str(st.session_state["user"].id))
+            .order("date", desc=False)
+            .execute()
+        )
+        snapshots_bruts = res_snap.data if res_snap.data else []
+      except Exception:
+        snapshots_bruts = []
+
+      snapshots_par_date = {}
+      for s in snapshots_bruts:
+        snapshots_par_date[s["date"]] = s
+      liste_snapshots = list(snapshots_par_date.values())
+
+      if liste_snapshots:
+        st.line_chart({
+            "Valorisation Enregistrée (€)": [float(s["valorisation_pea"]) for s in liste_snapshots],
+            "Capital Investi Enregistré (€)": [float(s["capital_investi"]) for s in liste_snapshots],
+        })
+
+        with st.expander(f"📋 Voir le journal détaillé des {len(liste_snapshots)} date(s) enregistrée(s)", expanded=False):
+          tableau_snap = []
+          for s in reversed(liste_snapshots):
+            val_s = float(s["valorisation_pea"])
+            cap_s = float(s["capital_investi"])
+            pv_s = val_s - cap_s
+            tableau_snap.append({
+                "Date": s["date"],
+                "Capital Investi": f"{cap_s:,.2f} €",
+                "Valorisation PEA": f"{val_s:,.2f} €",
+                "+/- Value": f"{pv_s:+,.2f} €",
+                "Rente Annuelle": f"{float(s['rente_annuelle']):,.2f} €/an",
+            })
+          st.dataframe(tableau_snap, use_container_width=True)
+      else:
+        st.info("💡 Cliquez sur « 💾 Sauver » pour enregistrer votre première photo patrimoniale datée.")
+    else:
+      st.info("🔒 Connectez-vous à votre Espace Membre pour consulter vos snapshots historiques enregistrés dans le Cloud.")
 # ------------------------------------------------------------------------------
 # ONGLET 3 : DIVIDENDES, CALENDRIER & SIMULATEUR BOULE DE NEIGE PRO
 # ------------------------------------------------------------------------------
