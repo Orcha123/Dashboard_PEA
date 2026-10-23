@@ -2103,9 +2103,10 @@ Si l'utilisateur demande d'analyser la progression de son portefeuille, commente
       question_rapide = "Fais-moi un audit critique et sans complaisance des vulnérabilités de mon portefeuille actuel (concentration sectorielle, payout ratio, écart au PRU)."
     if col_q5.button("🗓️ Mois creux Div.", use_container_width=True):
       question_rapide = f"Quelles valeurs de ma watchlist me permettraient de toucher des dividendes pendant mes mois creux ({', '.join(mois_creux)}) tout en ayant un bon score technique aujourd'hui ?"
+
+    for msg in st.session_state["messages_ia"]:
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-
     # Formulaire confiné uniquement dans l'Onglet 4 (n'apparaît jamais sur les onglets 1, 2 et 3)
     with st.form("formulaire_chat_ia", clear_on_submit=True):
       col_in, col_sub = st.columns([5, 1])
