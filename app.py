@@ -197,8 +197,15 @@ else:
 
 WATCHLIST = st.session_state["watchlist"]
 
+# --- BOUTON D'ACTUALISATION DES COURS EN DIRECT (SANS DÉCONNEXION) ---
+if st.sidebar.button("🔄 Actualiser les cours Bourse", use_container_width=True):
+    st.cache_data.clear()
+    st.toast("⚡ Cours boursiers actualisés en direct !")
+    st.rerun()
+
 st.title("📈 Boursy - Plateforme Boursière PEA & Dividendes")
-st.caption(f"Dernière mise à jour des marchés : {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
+st.caption(f"Dernière mise à jour des marchés : {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}")
+
 
 # --- PARAMÈTRES DCA ---
 st.sidebar.markdown("---")
