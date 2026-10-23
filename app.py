@@ -273,7 +273,28 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
         st.session_state[f"qte_{action_a_suppr}"] = 0
         sauvegarder_dans_cloud()
         st.rerun()
+# --- ÉDITEUR RAPIDE DES PRIX CIBLES ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Personnaliser les Prix Cibles")
 
+with st.sidebar.expander("Modifier un Prix Cible"):
+    action_cible_mod = st.selectbox("Choisir l'action :", list(WATCHLIST.keys()), key="select_mod_cible")
+    p_cible_actuel = float(WATCHLIST[action_cible_mod].get("prix_cible", 50.0))
+    nouveau_prix_cible_saisi = st.number_input(
+        f"Nouveau prix cible (€) pour {action_cible_mod}",
+        min_value=1.0,
+        max_value=5000.0,
+        value=p_cible_actuel,
+        step=1.0,
+        key="input_nouveau_prix_cible"
+    )
+    if st.button("💾 Mettre à jour le prix cible", use_container_width=True):
+        st.session_state["watchlist"][action_cible_mod]["prix_cible"] = float(nouveau_prix_cible_saisi)
+        if sauvegarder_dans_cloud():
+            st.sidebar.success(f"✅ Prix cible de {action_cible_mod} fixé à {nouveau_prix_cible_saisi:.2f} € !")
+        else:
+            st.sidebar.success(f"✅ Prix cible mis à jour localement ({nouveau_prix_cible_saisi:.2f} €) !")
+        st.rerun()
 st.sidebar.markdown("---")
 st.sidebar.header("🔐 Mode d'accès (Test)")
 mode_gratuit = st.sidebar.checkbox(
