@@ -104,11 +104,14 @@ def sauvegarder_dans_cloud():
             }
             supabase.table("user_data").upsert(payload).execute()
            
-            # 2. Calcul des métriques globales actuelles pour le snapshot historique
+            # 2. Calcul sécurisé des métriques pour le snapshot historique
             pf_actuel = st.session_state["portefeuille"]
             val_totale = 0.0
             cap_investi = 0.0
             rente_tot = 0.0
+           
+            # Récupération sécurisée du dictionnaire des prix (si disponible globalement)
+            dict_prix = globals().get("prix_temps_reel", {})
            
             for nom, data in pf_actuel.items():
                 if nom == "Espèces":
@@ -118,7 +121,7 @@ def sauvegarder_dans_cloud():
                 elif nom in watchlist_actuelle:
                     q = float(data.get("qte", 0.0))
                     pru = float(data.get("pru", 0.0))
-                    cours = float(prix_temps_reel.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
+                    cours = float(dict_prix.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
                     val_totale += q * cours
                     cap_investi += q * pru
                     rente_tot += q * float(watchlist_actuelle[nom].get("div_eur", 0.0))
