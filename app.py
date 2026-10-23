@@ -1409,7 +1409,7 @@ with onglet_portefeuille:
             "Diagnostic": etat_sec,
         })
       st.dataframe(tableau_secteurs, use_container_width=True)
-st.markdown("---")
+    st.markdown("---")
     st.subheader("📈 Courbe d'Historique & Création de Valeur du PEA")
     st.caption("Évolution comparée de la valorisation réelle de votre portefeuille face à votre capital investi (Coût d'achat PRU + Espèces) :")
 
