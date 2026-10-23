@@ -1409,7 +1409,78 @@ with onglet_portefeuille:
             "Diagnostic": etat_sec,
         })
       st.dataframe(tableau_secteurs, use_container_width=True)
+st.markdown("---")
+    st.subheader("📈 Courbe d'Historique & Création de Valeur du PEA")
+    st.caption("Évolution comparée de la valorisation réelle de votre portefeuille face à votre capital investi (Coût d'achat PRU + Espèces) :")
 
+    choix_periode_hist = st.radio(
+        "Période d'analyse :",
+        ["1 Mois", "6 Mois", "1 An", "3 Ans (Max)"],
+        index=2,
+        horizontal=True,
+        key="radio_periode_hist_pea",
+    )
+
+    correspondance_jours = {
+        "1 Mois": 22,
+        "6 Mois": 126,
+        "1 An": 252,
+        "3 Ans (Max)": 756,
+    }
+    nb_jours_cible = correspondance_jours[choix_periode_hist]
+
+    # Identification des actions détenues disposant d'un historique Yahoo Finance
+    lignes_hist_valides = [
+        nom_act for nom_act, data_pos in portefeuille_utilisateur.items()
+        if nom_act != "Espèces" and nom_act in historiques_prix and len(historiques_prix[nom_act]) > 5
+    ]
+
+    if lignes_hist_valides:
+      longueur_dispo = min(len(historiques_prix[nom_act]) for nom_act in lignes_hist_valides)
+      nb_points = min(nb_jours_cible, longueur_dispo)
+
+      especes_hist = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0))
+      serie_valorisation_pea = []
+      serie_capital_investi = []
+
+      for i in range(-nb_points, 0):
+        val_jour = especes_hist
+        for nom_act in lignes_hist_valides:
+          qte_act = portefeuille_utilisateur[nom_act]["qte"]
+          prix_hist_jour = historiques_prix[nom_act][i]
+          val_jour += qte_act * prix_hist_jour
+
+        serie_valorisation_pea.append(round(val_jour, 2))
+        serie_capital_investi.append(round(cout_total_achat, 2))
+
+      val_debut_periode = serie_valorisation_pea[0]
+      val_fin_periode = serie_valorisation_pea[-1]
+      evol_periode_eur = val_fin_periode - val_debut_periode
+      evol_periode_pct = ((evol_periode_eur / val_debut_periode) * 100) if val_debut_periode > 0 else 0.0
+      plus_haut_periode = max(serie_valorisation_pea)
+      plus_bas_periode = min(serie_valorisation_pea)
+
+      col_h1, col_h2, col_h3 = st.columns(3)
+      col_h1.metric(
+          f"Variation sur {choix_periode_hist}",
+          f"{evol_periode_eur:+,.2f} €",
+          f"{evol_periode_pct:+.2f} % sur la période",
+      )
+      col_h2.metric(
+          f"Plus Haut ({choix_periode_hist})",
+          f"{plus_haut_periode:,.2f} €",
+      )
+      col_h3.metric(
+          f"Plus Bas ({choix_periode_hist})",
+          f"{plus_bas_periode:,.2f} €",
+      )
+
+      st.line_chart({
+          "Valorisation Totale PEA (€)": serie_valorisation_pea,
+          "Capital Investi / PRU Total (€)": serie_capital_investi,
+      })
+    else:
+      st.info("Ajoutez au moins une action dans votre portefeuille pour afficher la courbe d'historique.")
 # ------------------------------------------------------------------------------
 # ONGLET 3 : DIVIDENDES, CALENDRIER & SIMULATEUR BOULE DE NEIGE PRO
 # ------------------------------------------------------------------------------
