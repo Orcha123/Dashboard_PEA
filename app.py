@@ -86,58 +86,20 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
         st.session_state["pru_Espèces"] = 0.0
         st.session_state["qte_Espèces"] = 0
 
-# --- FONCTION DE SAUVEGARDE CLOUD AVEC SNAPSHOT HISTORIQUE ---
+# --- FONCTION DE SAUVEGARDE CLOUD CORRIGÉE AVEC AFFICHAGE DES ERREURS ---
 def sauvegarder_dans_cloud():
     if supabase and st.session_state["user"]:
         try:
-            user_id_str = str(st.session_state["user"].id)
-            watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
-           
-            # 1. Sauvegarde du profil principal
             payload = {
-                "user_id": user_id_str,
+                "user_id": str(st.session_state["user"].id),
                 "email": str(st.session_state["user"].email),
                 "budget_dca": float(st.session_state["budget_dca"]),
-                "watchlist": dict(watchlist_actuelle),
+                "watchlist": dict(st.session_state["watchlist"]),
                 "portefeuille": dict(st.session_state["portefeuille"]),
                 "updated_at": datetime.utcnow().isoformat()
             }
-            supabase.table("user_data").upsert(payload).execute()
-           
-            # 2. Calcul sécurisé des métriques pour le snapshot historique
-            pf_actuel = st.session_state["portefeuille"]
-            val_totale = 0.0
-            cap_investi = 0.0
-            rente_tot = 0.0
-           
-            # Récupération sécurisée du dictionnaire des prix (si disponible globalement)
-            dict_prix = globals().get("prix_temps_reel", {})
-           
-            for nom, data in pf_actuel.items():
-                if nom == "Espèces":
-                    val_esp = float(data.get("pru", 0.0))
-                    val_totale += val_esp
-                    cap_investi += val_esp
-                elif nom in watchlist_actuelle:
-                    q = float(data.get("qte", 0.0))
-                    pru = float(data.get("pru", 0.0))
-                    cours = float(dict_prix.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
-                    val_totale += q * cours
-                    cap_investi += q * pru
-                    rente_tot += q * float(watchlist_actuelle[nom].get("div_eur", 0.0))
-           
-            # 3. Enregistrement de la photo (snapshot) du jour dans portfolio_history
-            date_du_jour = datetime.now().strftime("%Y-%m-%d")
-            snapshot_payload = {
-                "user_id": user_id_str,
-                "date": date_du_jour,
-                "capital_investi": round(cap_investi, 2),
-                "valorisation_pea": round(val_totale, 2),
-                "rente_annuelle": round(rente_tot, 2)
-            }
-            supabase.table("portfolio_history").insert(snapshot_payload).execute()
-           
-            st.sidebar.success("✅ Sauvegardé & Snapshot enregistré !")
+            res = supabase.table("user_data").upsert(payload).execute()
+            st.sidebar.success("✅ Sauvegardé avec succès !")
             return True
         except Exception as e:
             st.sidebar.error(f"Erreur Supabase détaillée : {e}")
@@ -1468,10 +1430,9 @@ with onglet_portefeuille:
             "Diagnostic": etat_sec,
         })
       st.dataframe(tableau_secteurs, use_container_width=True)
-    # --- COURBE D'HISTORIQUE & CRÉATION DE VALEUR DU PEA ---
     st.markdown("---")
     st.subheader("📈 Courbe d'Historique & Création de Valeur du PEA")
-    st.caption("Évolution comparée de la valorisation réelle de votre portefeuille face à votre capital investi :")
+    st.caption("Évolution comparée de la valorisation réelle de votre portefeuille face à votre capital investi (Coût d'achat PRU + Espèces) :")
 
     choix_periode_hist = st.radio(
         "Période d'analyse :",
@@ -1481,90 +1442,66 @@ with onglet_portefeuille:
         key="radio_periode_hist_pea",
     )
 
-    # Récupération des snapshots réels depuis Supabase si l'utilisateur est connecté
-    historique_supabase = []
-    if supabase and st.session_state["user"]:
-      try:
-        res_hist = supabase.table("portfolio_history").select("*").eq("user_id", str(st.session_state["user"].id)).order("date", desc=False).execute()
-        if res_hist.data:
-          historique_supabase = res_hist.data
-      except Exception:
-        pass
+    correspondance_jours = {
+        "1 Mois": 22,
+        "6 Mois": 126,
+        "1 An": 252,
+        "3 Ans (Max)": 756,
+    }
+    nb_jours_cible = correspondance_jours[choix_periode_hist]
 
-    if historique_supabase and len(historique_supabase) >= 2:
-      # Utilisation des vraies données enregistrées par l'utilisateur
-      series_dates = [h["date"] for h in historique_supabase]
-      series_val_pea = [h["valorisation_pea"] for h in historique_supabase]
-      series_cap_inv = [h["capital_investi"] for h in historique_supabase]
+    # Identification des actions détenues disposant d'un historique Yahoo Finance
+    lignes_hist_valides = [
+        nom_act for nom_act, data_pos in portefeuille_utilisateur.items()
+        if nom_act != "Espèces" and nom_act in historiques_prix and len(historiques_prix[nom_act]) > 5
+    ]
 
-      val_debut_periode = series_val_pea[0]
-      val_fin_periode = series_val_pea[-1]
+    if lignes_hist_valides:
+      longueur_dispo = min(len(historiques_prix[nom_act]) for nom_act in lignes_hist_valides)
+      nb_points = min(nb_jours_cible, longueur_dispo)
+
+      especes_hist = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0))
+      serie_valorisation_pea = []
+      serie_capital_investi = []
+
+      for i in range(-nb_points, 0):
+        val_jour = especes_hist
+        for nom_act in lignes_hist_valides:
+          qte_act = portefeuille_utilisateur[nom_act]["qte"]
+          prix_hist_jour = historiques_prix[nom_act][i]
+          val_jour += qte_act * prix_hist_jour
+
+        serie_valorisation_pea.append(round(val_jour, 2))
+        serie_capital_investi.append(round(cout_total_achat, 2))
+
+      val_debut_periode = serie_valorisation_pea[0]
+      val_fin_periode = serie_valorisation_pea[-1]
       evol_periode_eur = val_fin_periode - val_debut_periode
       evol_periode_pct = ((evol_periode_eur / val_debut_periode) * 100) if val_debut_periode > 0 else 0.0
-      plus_haut_periode = max(series_val_pea)
-      plus_bas_periode = min(series_val_pea)
+      plus_haut_periode = max(serie_valorisation_pea)
+      plus_bas_periode = min(serie_valorisation_pea)
 
       col_h1, col_h2, col_h3 = st.columns(3)
-      col_h1.metric("Variation Enregistrée", f"{evol_periode_eur:+,.2f} €", f"{evol_periode_pct:+.1f} %")
-      col_h2.metric("Plus Haut Historique", f"{plus_haut_periode:,.2f} €")
-      col_h3.metric("Plus Bas Historique", f"{plus_bas_periode:,.2f} €")
+      col_h1.metric(
+          f"Variation sur {choix_periode_hist}",
+          f"{evol_periode_eur:+,.2f} €",
+          f"{evol_periode_pct:+.2f} % sur la période",
+      )
+      col_h2.metric(
+          f"Plus Haut ({choix_periode_hist})",
+          f"{plus_haut_periode:,.2f} €",
+      )
+      col_h3.metric(
+          f"Plus Bas ({choix_periode_hist})",
+          f"{plus_bas_periode:,.2f} €",
+      )
 
-      df_historique_reel = pd.DataFrame({
-          "Date": series_dates,
-          "Valorisation Totale PEA (€)": series_val_pea,
-          "Capital Investi (€)": series_cap_inv
-      }).set_index("Date")
-
-      st.line_chart(df_historique_reel)
-      st.caption("✨ *Courbe alimentée par vos sauvegardes régulières dans le Cloud.*")
-
+      st.line_chart({
+          "Valorisation Totale PEA (€)": serie_valorisation_pea,
+          "Capital Investi / PRU Total (€)": serie_capital_investi,
+      })
     else:
-      # Mode secours : Reconstitution via Yahoo Finance si aucun snapshot n'est encore enregistré
-      correspondance_jours = {"1 Mois": 22, "6 Mois": 126, "1 An": 252, "3 Ans (Max)": 756}
-      nb_jours_cible = correspondance_jours[choix_periode_hist]
-
-      lignes_hist_valides = [
-          nom_act for nom_act, data_pos in portefeuille_utilisateur.items()
-          if nom_act != "Espèces" and nom_act in historiques_prix and len(historiques_prix[nom_act]) > 5
-      ]
-
-      if lignes_hist_valides:
-        longueur_dispo = min(len(historiques_prix[nom_act]) for nom_act in lignes_hist_valides)
-        nb_points = min(nb_jours_cible, longueur_dispo)
-
-        especes_hist = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0))
-        serie_valorisation_pea = []
-        serie_capital_investi = []
-
-        for i in range(-nb_points, 0):
-          val_jour = especes_hist
-          for nom_act in lignes_hist_valides:
-            qte_act = portefeuille_utilisateur[nom_act]["qte"]
-            prix_hist_jour = historiques_prix[nom_act][i]
-            val_jour += qte_act * prix_hist_jour
-
-          serie_valorisation_pea.append(round(val_jour, 2))
-          serie_capital_investi.append(round(cout_total_achat, 2))
-
-        val_debut_periode = serie_valorisation_pea[0]
-        val_fin_periode = serie_valorisation_pea[-1]
-        evol_periode_eur = val_fin_periode - val_debut_periode
-        evol_periode_pct = ((evol_periode_eur / val_debut_periode) * 100) if val_debut_periode > 0 else 0.0
-        plus_haut_periode = max(serie_valorisation_pea)
-        plus_bas_periode = min(serie_valorisation_pea)
-
-        col_h1, col_h2, col_h3 = st.columns(3)
-        col_h1.metric(f"Variation sur {choix_periode_hist}", f"{evol_periode_eur:+,.2f} €", f"{evol_periode_pct:+.1f} %")
-        col_h2.metric(f"Plus Haut ({choix_periode_hist})", f"{plus_haut_periode:,.2f} €")
-        col_h3.metric(f"Plus Bas ({choix_periode_hist})", f"{plus_bas_periode:,.2f} €")
-
-        st.line_chart({
-            "Valorisation Totale PEA (€)": serie_valorisation_pea,
-            "Capital Investi / PRU Total (€)": serie_capital_investi,
-        })
-        st.info("💡 *Cliquez sur « Enregistrer mon portefeuille dans le Cloud » dans l'éditeur ci-dessus pour enregistrer votre premier point historique officiel dans la base.*")
-      else:
-        st.info("Ajoutez au moins une action dans votre portefeuille pour afficher la courbe d'historique.") 
+      st.info("Ajoutez au moins une action dans votre portefeuille pour afficher la courbe d'historique.")
 # ------------------------------------------------------------------------------
 # ONGLET 3 : DIVIDENDES, CALENDRIER & SIMULATEUR BOULE DE NEIGE PRO
 # ------------------------------------------------------------------------------
