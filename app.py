@@ -1918,9 +1918,47 @@ with onglet_ia:
 
     st.markdown("---")
 
+    # --- ANALYSE DE LA COURBE D'HISTORIQUE POUR L'AGENT IA ---
+    lignes_hist_ia = [
+        nom_act for nom_act in lignes_valides
+        if nom_act in historiques_prix and len(historiques_prix[nom_act]) > 5
+    ]
+    resume_historique_ia = "Historique non disponible."
+    if lignes_hist_ia:
+      longueur_max_ia = min(len(historiques_prix[n]) for n in lignes_hist_ia)
+      bilans_periodes = []
+      for label_p, nb_j in [("1 Mois", 22), ("6 Mois", 126), ("1 An", 252), ("3 Ans", 756)]:
+        pts_p = min(nb_j, longueur_max_ia)
+        val_depart = especes_dispo_ia + sum(
+            portefeuille_utilisateur[n]["qte"] * historiques_prix[n][-pts_p]
+            for n in lignes_hist_ia
+        )
+        val_arrivee = valeur_totale_portefeuille
+        diff_e = val_arrivee - val_depart
+        diff_p = (diff_e / val_depart * 100) if val_depart > 0 else 0.0
+        bilans_periodes.append(f"{label_p} : {diff_e:+.2f} € ({diff_p:+.1f}%)")
+
+      pts_1an = min(252, longueur_max_ia)
+      courbe_1an = [
+          especes_dispo_ia + sum(portefeuille_utilisateur[n]["qte"] * historiques_prix[n][i] for n in lignes_hist_ia)
+          for i in range(-pts_1an, 0)
+      ]
+      plus_haut_1a = max(courbe_1an)
+      plus_bas_1a = min(courbe_1an)
+      ecart_plus_haut_pct = ((valeur_totale_portefeuille - plus_haut_1a) / plus_haut_1a * 100) if plus_haut_1a > 0 else 0.0
+
+      resume_historique_ia = (
+          f"Progression de la courbe du portefeuille : {' | '.join(bilans_periodes)}. "
+          f"Sur 1 an : Plus Haut à {plus_haut_1a:.2f} €, Plus Bas à {plus_bas_1a:.2f} € "
+          f"(écart actuel par rapport au plus haut 1 an : {ecart_plus_haut_pct:+.1f}%). "
+          f"Création de valeur nette face au Capital Investi ({cout_total_achat:.2f} €) : {plus_value_globale:+.2f} € ({plus_value_pct:+.1f}%)."
+      )
+
+      st.info(f"📈 **Synthèse de votre Courbe d'Historique transmise à l'IA :** {'  •  '.join(bilans_periodes)}")
+
     st.subheader("💬 Discuter avec votre Conseiller IA Privé")
     st.caption(
-        "Posez n'importe quelle question : l'Agent IA connaît en temps réel vos lignes, vos PRU, votre poche d'espèces, vos dividendes et les indicateurs techniques du jour."
+        "Posez n'importe quelle question : l'Agent IA connaît en temps réel vos lignes, vos PRU, votre courbe d'historique, votre poche d'espèces et les indicateurs techniques du jour."
     )
 
     opportunites_radar = [
@@ -1933,6 +1971,7 @@ Tu t'adresses directement à l'utilisateur de la plateforme. Ton ton est profess
 
 Voici les données EXACTES en temps réel du portefeuille de l'utilisateur :
 - Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_globale:+.2f} € soit {plus_value_pct:+.1f}%)
+- Analyse de la Courbe d'Historique (1M / 6M / 1A / 3A) : {resume_historique_ia}
 - Poche d'Espèces immédiatement disponible sur le PEA : {especes_dispo_ia:.2f} €
 - Dividendes annuels générés : {dividendes_annuels_totaux:.2f} €/an (soit {dividendes_annuels_totaux/12:.2f} €/mois) | Yield on Cost (Rendement sur PRU) : {yoc_global:.2f}%
 - Budget DCA mensuel : {BUDGET_MENSUEL:.0f} €/mois
@@ -1944,7 +1983,7 @@ Détail des lignes détenues en portefeuille :
 Radar complet des valeurs suivies aujourd'hui (avec indicateurs techniques temps réel) :
 {chr(10).join(opportunites_radar)}
 
-Si la poche d'espèces est supérieure à 0 €, propose toujours une analyse précise sur la meilleure façon de l'utiliser selon les opportunités (comme pour le DCA). Réponds toujours en utilisant précisément ces chiffres. Donne des analyses pointues (marge de sécurité, effet sur le PRU, exposition sectorielle, pérennité du payout ratio) tout en rappelant brièvement que cela constitue une aide à la décision et non un conseil financier réglementé."""
+Si l'utilisateur demande d'analyser la progression de son portefeuille, commente l'évolution sur 1 mois, 6 mois, 1 an et 3 ans, l'écart entre la valorisation et le capital investi, la résilience face aux plus hauts/plus bas et les moteurs de cette performance. Si la poche d'espèces est supérieure à 0 €, propose toujours une analyse précise sur la meilleure façon de l'utiliser selon les opportunités. Réponds toujours en utilisant précisément ces chiffres."""
 
     if "messages_ia" not in st.session_state:
       st.session_state["messages_ia"] = [
@@ -1952,24 +1991,24 @@ Si la poche d'espèces est supérieure à 0 €, propose toujours une analyse pr
               "role": "assistant",
               "content": (
                   f"Bonjour ! J'ai analysé vos **{nb_lignes} lignes** en portefeuille "
-                  f"(valorisées à **{valeur_totale_portefeuille:,.0f} €** dont **{especes_dispo_ia:,.0f} € d'espèces** pour **{dividendes_annuels_totaux/12:.1f} €/mois** de dividendes). "
-                  "Souhaitez-vous que l'on optimise l'investissement de votre **DCA et de vos espèces**, que l'on analyse une valeur précise, ou que l'on regarde comment combler vos mois creux ?"
+                  f"(valorisées à **{valeur_totale_portefeuille:,.0f} €** dont **{especes_dispo_ia:,.0f} € d'espèces** pour **{dividendes_annuels_totaux/12:.1f} €/mois** de dividendes) ainsi que votre **courbe d'historique**. "
+                  "Que souhaitez-vous analyser aujourd'hui ?"
               ),
           }
       ]
 
-    col_q1, col_q2, col_q3, col_q4 = st.columns(4)
+    col_q1, col_q2, col_q3, col_q4, col_q5 = st.columns(5)
     question_rapide = None
-    if col_q1.button("💡 Optimiser mon DCA du mois", use_container_width=True):
+    if col_q1.button("💡 Optimiser mon DCA", use_container_width=True):
       question_rapide = f"Avec mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci, quelles actions précises dois-je acheter en priorité pour optimiser mon rendement et renforcer mes lignes sous leur PRU ?"
-    if col_q2.button("💶 Investir ma poche d'Espèces", use_container_width=True):
+    if col_q2.button("💶 Investir mes Espèces", use_container_width=True):
       question_rapide = f"J'ai actuellement {especes_dispo_ia:.2f} € dans ma poche d'espèces sur mon PEA. Propose-moi un plan d'achat précis (actions, quantités, impact PRU) selon les meilleures opportunités du jour, comme pour mon DCA."
-    if col_q3.button("🛡️ Analyser les risques PEA", use_container_width=True):
+    if col_q3.button("📈 Analyser ma Courbe", use_container_width=True):
+      question_rapide = "Analyse en détail la progression de mon portefeuille grâce à ma courbe d'historique (1 mois, 6 mois, 1 an et 3 ans), l'écart par rapport à mon capital investi (PRU), ma résistance par rapport aux plus hauts/bas et les actions qui tirent ma performance."
+    if col_q4.button("🛡️ Audit des risques", use_container_width=True):
       question_rapide = "Fais-moi un audit critique et sans complaisance des vulnérabilités de mon portefeuille actuel (concentration sectorielle, payout ratio, écart au PRU)."
-    if col_q4.button("🗓️ Combler mes mois creux", use_container_width=True):
+    if col_q5.button("🗓️ Mois creux Div.", use_container_width=True):
       question_rapide = f"Quelles valeurs de ma watchlist me permettraient de toucher des dividendes pendant mes mois creux ({', '.join(mois_creux)}) tout en ayant un bon score technique aujourd'hui ?"
-
-    for msg in st.session_state["messages_ia"]:
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
