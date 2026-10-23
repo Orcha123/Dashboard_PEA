@@ -91,13 +91,14 @@ def sauvegarder_dans_cloud():
     if supabase and st.session_state["user"]:
         try:
             user_id_str = str(st.session_state["user"].id)
+            watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
            
             # 1. Sauvegarde du profil principal
             payload = {
                 "user_id": user_id_str,
                 "email": str(st.session_state["user"].email),
                 "budget_dca": float(st.session_state["budget_dca"]),
-                "watchlist": dict(st.session_state["watchlist"]),
+                "watchlist": dict(watchlist_actuelle),
                 "portefeuille": dict(st.session_state["portefeuille"]),
                 "updated_at": datetime.utcnow().isoformat()
             }
@@ -114,15 +115,15 @@ def sauvegarder_dans_cloud():
                     val_esp = float(data.get("pru", 0.0))
                     val_totale += val_esp
                     cap_investi += val_esp
-                elif nom in WATCHLIST:
+                elif nom in watchlist_actuelle:
                     q = float(data.get("qte", 0.0))
                     pru = float(data.get("pru", 0.0))
-                    cours = float(prix_temps_reel.get(nom, WATCHLIST[nom]["prix_cible"]))
+                    cours = float(prix_temps_reel.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
                     val_totale += q * cours
                     cap_investi += q * pru
-                    rente_tot += q * float(WATCHLIST[nom]["div_eur"])
+                    rente_tot += q * float(watchlist_actuelle[nom].get("div_eur", 0.0))
            
-            # 3. Enregistrement de la photo (snapshot) du jour
+            # 3. Enregistrement de la photo (snapshot) du jour dans portfolio_history
             date_du_jour = datetime.now().strftime("%Y-%m-%d")
             snapshot_payload = {
                 "user_id": user_id_str,
@@ -131,10 +132,9 @@ def sauvegarder_dans_cloud():
                 "valorisation_pea": round(val_totale, 2),
                 "rente_annuelle": round(rente_tot, 2)
             }
-            # On évite les doublons multiples le même jour en faisant un upsert ou un insert simple
             supabase.table("portfolio_history").insert(snapshot_payload).execute()
            
-            st.sidebar.success("✅ Sauvegardé & Snapshot historique enregistré !")
+            st.sidebar.success("✅ Sauvegardé & Snapshot enregistré !")
             return True
         except Exception as e:
             st.sidebar.error(f"Erreur Supabase détaillée : {e}")
