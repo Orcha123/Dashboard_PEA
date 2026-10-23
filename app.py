@@ -63,6 +63,29 @@ if "budget_dca" not in st.session_state:
 if "est_abonne_pro" not in st.session_state:
     st.session_state["est_abonne_pro"] = False
 
+# --- FONCTION DE SYNCHRONISATION DES CASES (CORRECTION DU BUG DES VALEURS À 0) ---
+def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
+    """Force à 0 toutes les actions non présentes dans portefeuille_cloud pour éviter le retour des valeurs par défaut."""
+    toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()))
+    for nom_act in toutes_les_actions:
+        if nom_act in portefeuille_cloud and isinstance(portefeuille_cloud[nom_act], dict):
+            qte_val = int(portefeuille_cloud[nom_act].get("qte", 0))
+            pru_val = float(portefeuille_cloud[nom_act].get("pru", 0.0))
+            st.session_state[f"qte_{nom_act}"] = qte_val
+            st.session_state[f"pru_{nom_act}"] = pru_val
+        else:
+            st.session_state[f"qte_{nom_act}"] = 0
+            cible_def = float(watchlist_courante.get(nom_act, {}).get("prix_cible", 0.0))
+            st.session_state[f"pru_{nom_act}"] = cible_def
+
+    # Synchronisation spécifique de la poche d'Espèces
+    if "Espèces" in portefeuille_cloud and isinstance(portefeuille_cloud["Espèces"], dict):
+        st.session_state["pru_Espèces"] = float(portefeuille_cloud["Espèces"].get("pru", 0.0))
+        st.session_state["qte_Espèces"] = 1
+    else:
+        st.session_state["pru_Espèces"] = 0.0
+        st.session_state["qte_Espèces"] = 0
+
 # --- FONCTION DE SAUVEGARDE CLOUD CORRIGÉE AVEC AFFICHAGE DES ERREURS ---
 def sauvegarder_dans_cloud():
     if supabase and st.session_state["user"]:
@@ -75,19 +98,15 @@ def sauvegarder_dans_cloud():
                 "portefeuille": dict(st.session_state["portefeuille"]),
                 "updated_at": datetime.utcnow().isoformat()
             }
-            # Exécution de la requête Supabase
             res = supabase.table("user_data").upsert(payload).execute()
             st.sidebar.success("✅ Sauvegardé avec succès !")
             return True
         except Exception as e:
-            # Affichage de l'erreur exacte pour comprendre ce qui bloque
             st.sidebar.error(f"Erreur Supabase détaillée : {e}")
             return False
     else:
         st.sidebar.warning("⚠️ Impossible de sauver : utilisateur non connecté ou Supabase absent.")
         return False
-
-    return False
 
 # --- ESPACE MEMBRE (BARRE LATÉRALE) ---
 st.sidebar.header("👤 Espace Membre")
@@ -109,17 +128,19 @@ else:
                     data = supabase.table("user_data").select("*").eq("user_id", res.user.id).execute()
                     if data.data:
                         profil = data.data[0]
-                        st.session_state["watchlist"] = profil.get("watchlist") or WATCHLIST_DEFAUT.copy()
-                        portefeuille_cloud = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                        wl_cloud = profil.get("watchlist")
+                        st.session_state["watchlist"] = wl_cloud if wl_cloud is not None else WATCHLIST_DEFAUT.copy()
+                       
+                        # Respect strict d'un portefeuille vide ou avec des lignes passées à 0
+                        pf_raw = profil.get("portefeuille")
+                        portefeuille_cloud = pf_raw if pf_raw is not None else PORTEFEUILLE_DEFAUT.copy()
                         st.session_state["portefeuille"] = portefeuille_cloud
+                       
                         st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
                         st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
                        
-                        # On force les cases de l'interface à prendre les valeurs téléchargées
-                        for nom_act, data_pos in portefeuille_cloud.items():
-                            st.session_state[f"qte_{nom_act}"] = int(data_pos.get("qte", 0))
-                            st.session_state[f"pru_{nom_act}"] = float(data_pos.get("pru", 0.0))
-                           
+                        # Mise à jour intégrale des champs (y compris remise à 0 des lignes supprimées/vendues)
+                        synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
                     else:
                         sauvegarder_dans_cloud()
                     st.rerun()
@@ -146,15 +167,17 @@ else:
                 reponse = supabase.table("user_data").select("*").eq("user_id", st.session_state["user"].id).execute()
                 if reponse.data:
                     profil = reponse.data[0]
-                    st.session_state["watchlist"] = profil.get("watchlist") or WATCHLIST_DEFAUT.copy()
-                    portefeuille_cloud = profil.get("portefeuille") or PORTEFEUILLE_DEFAUT.copy()
+                    wl_cloud = profil.get("watchlist")
+                    st.session_state["watchlist"] = wl_cloud if wl_cloud is not None else WATCHLIST_DEFAUT.copy()
+                   
+                    pf_raw = profil.get("portefeuille")
+                    portefeuille_cloud = pf_raw if pf_raw is not None else PORTEFEUILLE_DEFAUT.copy()
                     st.session_state["portefeuille"] = portefeuille_cloud
+                   
                     st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
                     st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", False))
                    
-                    for nom_act, data_pos in portefeuille_cloud.items():
-                        st.session_state[f"qte_{nom_act}"] = int(data_pos.get("qte", 0))
-                        st.session_state[f"pru_{nom_act}"] = float(data_pos.get("pru", 0.0))
+                    synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
                        
                     st.sidebar.success("✅ Données récupérées et appliquées !")
                     st.rerun()
@@ -221,12 +244,12 @@ if choix_menu_yf != "-- Choisir une valeur --":
         nouveau_cible = st.number_input("Prix cible (€)", min_value=0.0, value=50.0, step=1.0)
         nouveau_div = st.number_input("Dividende annuel (€)", min_value=0.0, value=2.0, step=0.1)
         nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.5, step=0.05)
-        
+       
         liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
         nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles, default=["Mai"])
-        
+       
         submit_ajout = st.form_submit_button("➕ Ajouter à Boursy")
-        
+       
         if submit_ajout:
             st.session_state["watchlist"][choix_menu_yf] = {
                 "symbole": symbole_selectionne,
@@ -247,6 +270,7 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
             del st.session_state["watchlist"][action_a_suppr]
         if action_a_suppr in st.session_state["portefeuille"]:
             del st.session_state["portefeuille"][action_a_suppr]
+        st.session_state[f"qte_{action_a_suppr}"] = 0
         sauvegarder_dans_cloud()
         st.rerun()
 
@@ -329,9 +353,10 @@ def calculer_ema_serie(clotures, periode):
       emas.append(ema)
   return emas
 
-def verifier_croisement_2_12(clotures):
+def analyser_signal_ema_2_12(clotures):
+  """Retourne un signal à 3 états : ACHAT (Vert), NEUTRE (Blanc), VENTE (Rouge)."""
   if len(clotures) < 15:
-    return False
+    return "⚪ Neutre", 0
   ema2_serie = calculer_ema_serie(clotures, 2)
   ema12_serie = calculer_ema_serie(clotures, 12)
   valides = [
@@ -340,10 +365,24 @@ def verifier_croisement_2_12(clotures):
       if e2 is not None and e12 is not None
   ]
   if len(valides) < 2:
-    return False
+    return "⚪ Neutre", 0
   veille_e2, veille_e12 = valides[-2]
   jour_e2, jour_e12 = valides[-1]
-  return veille_e2 <= veille_e12 and jour_e2 > jour_e12
+  ecart_pct = ((jour_e2 - jour_e12) / jour_e12 * 100) if jour_e12 > 0 else 0.0
+
+  # 1. Croisement haussier ou dynamique d'achat court terme (Vert)
+  if veille_e2 <= veille_e12 and jour_e2 > jour_e12:
+    return "🟢 Achat (Croisement)", 15
+  elif jour_e2 > jour_e12 and ecart_pct >= 0.20:
+    return "🟢 Achat (Haussier)", 12
+  # 2. Croisement baissier ou alerte de vente court terme (Rouge)
+  elif veille_e2 >= veille_e12 and jour_e2 < jour_e12:
+    return "🔴 Vente (Croisement)", -10
+  elif jour_e2 < jour_e12 and ecart_pct <= -0.25:
+    return "🔴 Vente (Baissier)", -5
+  # 3. Zone d'attente / consolidation (Blanc)
+  else:
+    return "⚪ Neutre", 5
 
 def calculer_regression_lineaire(clotures):
   n = len(clotures)
@@ -406,7 +445,7 @@ for nom, info in WATCHLIST.items():
   rsi = calculer_rsi(closes)
   borne_inf, borne_sup = calculer_bollinger(closes)
   macd_val, macd_sig = calculer_macd(closes)
-  croisement_2_12 = verifier_croisement_2_12(closes)
+  statut_ema_2_12, pts_ema = analyser_signal_ema_2_12(closes)
   val_reg, ecart_reg_pct, droite_reg = calculer_regression_lineaire(closes)
   support_30j = min(bas[-30:]) if len(bas) >= 30 else min(bas)
   resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
@@ -416,42 +455,67 @@ for nom, info in WATCHLIST.items():
   else:
     distance_cible_pct = 0.0
 
+  # --- NOUVEAU SCORING GLOBAL SUR 100 (FONDAMENTAUX + VALUE + TIMING EMA/RSI/MACD) ---
   score = 0
-  if prix_cible > 0 and prix_actuel <= prix_cible:
-    score += 25
-  elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
-    score += 12
 
-  ecart_haut = ((prix_actuel - plus_haut_52s) / plus_haut_52s) * 100
-  if ecart_haut <= -20:
+  # 1. Pilier Fondamentaux & Dividendes (sur 35 points)
+  payout_r = info.get("payout_ratio", 0.60)
+  if payout_r <= 0.55:
     score += 20
-  elif ecart_haut <= -10:
-    score += 10
+  elif payout_r <= 0.70:
+    score += 14
+  else:
+    score += 6
 
-  if prix_actuel <= borne_inf:
+  if rendement_actuel >= 0.05:
     score += 15
-  elif prix_actuel <= borne_inf * 1.02:
+  elif rendement_actuel >= 0.03:
+    score += 10
+  else:
+    score += 5
+
+  # 2. Pilier Décote Value : Prix Cible & Régression 3 ans (sur 30 points)
+  if prix_cible > 0 and prix_actuel <= prix_cible:
+    score += 15
+  elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
     score += 8
 
-  if macd_val > macd_sig:
-    score += 10
-  if rsi <= 30:
+  if ecart_reg_pct <= -10:
     score += 15
+  elif ecart_reg_pct < 0:
+    score += 10
+  elif ecart_reg_pct <= 5:
+    score += 4
+
+  # 3. Pilier Timing Technique : EMA 2/12 + RSI + MACD + Bollinger (sur 35 points)
+  score += pts_ema  # +15/+12 si Achat, +5 si Neutre, -5/-10 si Vente
+
+  if rsi <= 30:
+    score += 12
   elif rsi <= 45:
     score += 8
+  elif rsi >= 70:
+    score -= 8
 
-  if croisement_2_12:
-    score += 15
+  if macd_val > macd_sig:
+    score += 8
+  else:
+    score -= 2
 
-  est_surevalue = prix_cible > 0 and prix_actuel >= prix_cible * 1.20 and (
+  if prix_actuel <= borne_inf * 1.02:
+    score += 5
+
+  score = int(min(100, max(0, score)))
+
+  est_surevalue = (prix_cible > 0 and prix_actuel >= prix_cible * 1.20 and (
       rsi >= 70 or prix_actuel >= borne_sup
-  )
+  )) or ("🔴 Vente (Croisement)" in statut_ema_2_12 and rsi >= 65)
 
   if est_surevalue:
     decision = "⚠️ ALLÈGEMENT"
-  elif score >= 65:
+  elif score >= 65 and "🔴" not in statut_ema_2_12:
     decision = "🔥 ACHAT FORT"
-  elif score >= 40:
+  elif score >= 45 and "🔴" not in statut_ema_2_12:
     decision = "✅ ACCUMULATION"
   else:
     decision = "⏸️ CONSERVATION"
@@ -470,7 +534,7 @@ for nom, info in WATCHLIST.items():
       "Écart Cible (%)": dist_str if prix_cible > 0 else "N/A",
       "RSI": round(rsi, 1),
       "MACD": "🟢" if macd_val > macd_sig else "🔴",
-      "EMA 2/12": "🟢 Croisement" if croisement_2_12 else "⚪ Neutre",
+      "EMA 2/12": statut_ema_2_12,
       "Score": score,
       "Décision": decision,
   })
@@ -521,7 +585,7 @@ for nom, info in WATCHLIST.items():
       "Zone": zone,
   })
 
-  if score >= 40 and not est_surevalue:
+  if score >= 45 and not est_surevalue and "🔴" not in statut_ema_2_12:
     resultats_analysed.append({
         "nom": nom,
         "score": score,
@@ -575,7 +639,7 @@ with onglet_radar:
       for d in donnees_t1
       if "ACHAT" in d["Décision"] or "ACCUMULATION" in d["Décision"]
   )
-  nb_croisements = sum(1 for d in donnees_t1 if "Croisement" in d["EMA 2/12"])
+  nb_croisements = sum(1 for d in donnees_t1 if "🟢" in d["EMA 2/12"])
 
   # --- 1. CARTES KPI DU RADAR (DESIGN PRO) ---
   html_radar_kpi = f"""
@@ -586,7 +650,7 @@ with onglet_radar:
   .rad-kpi-title {{ font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; margin-bottom: 8px; font-weight: bold; }}
   .rad-kpi-val {{ font-size: 1.65em; font-weight: 900; margin-bottom: 5px; }}
   .rad-kpi-sub {{ font-size: 0.85em; font-weight: 600; opacity: 0.85; }}
-  
+ 
   /* Styles généraux pour les tableaux Pro de l'Onglet 1 */
   .r-table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }}
   .r-table th {{ border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.83em; background-color: rgba(128,128,128,0.05); }}
@@ -603,12 +667,12 @@ with onglet_radar:
       <div class="rad-kpi-card">
           <div class="rad-kpi-title">🎯 Opportunités d'Achat</div>
           <div class="rad-kpi-val">{nb_opportunites} / {len(actions_autorisees)}</div>
-          <div class="rad-kpi-sub" style="color: #2ecc71;">Scores techniques ≥ 40/100</div>
+          <div class="rad-kpi-sub" style="color: #2ecc71;">Scores globaux ≥ 45/100</div>
       </div>
       <div class="rad-kpi-card">
           <div class="rad-kpi-title">⚡ Signaux EMA 2/12</div>
           <div class="rad-kpi-val">{nb_croisements} Actif(s)</div>
-          <div class="rad-kpi-sub">Croisement haussier court terme</div>
+          <div class="rad-kpi-sub">En signal d'achat court terme</div>
       </div>
       <div class="rad-kpi-card">
           <div class="rad-kpi-title">💰 Budget DCA Configuré</div>
@@ -643,7 +707,7 @@ with onglet_radar:
     t3_filtre = [d for d in donnees_t3 if d["Actif"] == choix_action]
     t4_filtre = [d for d in donnees_t4 if d["Actif"] == choix_action]
 
-  # --- 2. TABLEAU 1 : TIMING & MOMENTUM (DESIGN PRO) ---
+  # --- 2. TABLEAU 1 : TIMING & MOMENTUM (DESIGN PRO AVEC 3 ÉTATS VERT / BLANC / ROUGE) ---
   st.subheader("📊 Tableau 1 : Timing & Momentum (Aide à la Décision)")
 
   html_t1 = """
@@ -681,11 +745,17 @@ with onglet_radar:
     else:
       rsi_html = f"<b>{rsi_v}</b>"
 
+    # Affichage à 3 états : Vert (Achat), Rouge (Vente/Croisement baissier), Blanc (Neutre)
     ema_str = d["EMA 2/12"]
-    ema_html = f"<span class='b-green'>{ema_str}</span>" if "Croisement" in ema_str else f"<span style='opacity:0.6;'>{ema_str}</span>"
+    if "🟢" in ema_str:
+      ema_html = f"<span class='b-green'>{ema_str}</span>"
+    elif "🔴" in ema_str:
+      ema_html = f"<span class='b-red'>{ema_str}</span>"
+    else:
+      ema_html = f"<span class='b-neutral'>{ema_str}</span>"
 
     sc = d["Score"]
-    c_bar = "#2ecc71" if sc >= 65 else ("#3498db" if sc >= 40 else "#95a5a6")
+    c_bar = "#2ecc71" if sc >= 65 else ("#3498db" if sc >= 45 else "#e74c3c")
 
     dec = d["Décision"]
     if "ACHAT FORT" in dec:
@@ -727,7 +797,7 @@ with onglet_radar:
       "📐 Tableau 2 : Analyse Value",
       "🎯 Tableau 3 : Niveaux Techniques",
       "🛡️ Tableau 4 : Sûreté Dividendes",
-      "💰 Allocation DCA du Mois",
+      "💰 Allocation DCA & Simulateur PRU",
   ])
 
   with tab_val:
@@ -746,7 +816,6 @@ with onglet_radar:
     <tbody>
     """
    
-    # --- NOUVEAU : Tri intelligent des actions de la plus décotée à la plus surévaluée ---
     lignes_t2_triees = sorted(t2_filtre, key=lambda x: float(x["Écart %"].replace("%", "")))
    
     for d in lignes_t2_triees:
@@ -770,11 +839,9 @@ with onglet_radar:
     html_t2 += "</tbody></table>"
     st.markdown(html_t2, unsafe_allow_html=True)
 
-
-
     st.markdown("---")
     st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
-    
+   
     index_defaut = (
         actions_autorisees.index(choix_action)
         if choix_action in actions_autorisees
@@ -881,7 +948,7 @@ with onglet_radar:
     st.caption(f"Répartition optimale de votre budget mensuel ({BUDGET_MENSUEL:.0f} €) sur les meilleures opportunités actuelles :")
     if not candidats_tries:
       st.warning(
-          "Aucune action n'atteint le seuil d'achat ce mois-ci (Scores < 40)."
+          "Aucune action n'atteint le seuil d'achat ce mois-ci (Scores < 45)."
       )
     else:
       total_investi = 0
@@ -934,6 +1001,49 @@ with onglet_radar:
             " de ces valeurs."
         )
 
+    # --- NOUVEAU : SIMULATEUR D'IMPACT PRU AVANT ACHAT ---
+    st.markdown("---")
+    st.subheader("🧮 Simulateur d'Impact PRU & Liquidités (Avant Achat)")
+    st.caption("Testez l'impact d'un achat sur votre PRU, votre rendement sur coût (YoC) et vos liquidités avant de passer votre ordre :")
+
+    col_sim1, col_sim2, col_sim3 = st.columns(3)
+    with col_sim1:
+      act_sim = st.selectbox("🎯 Action à simuler", actions_autorisees, key="sim_pru_action")
+      cours_def_sim = float(prix_temps_reel.get(act_sim, WATCHLIST[act_sim]["prix_cible"]))
+      prix_exec_sim = st.number_input("Prix d'achat estimé (€)", min_value=0.01, value=cours_def_sim, step=0.10, key="sim_pru_prix")
+
+    pos_actuelle_sim = st.session_state["portefeuille"].get(act_sim, {})
+    qte_detenue_def = int(pos_actuelle_sim.get("qte", 0))
+    pru_detenu_def = float(pos_actuelle_sim.get("pru", cours_def_sim))
+    esp_dispo_def = float(st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0))
+
+    with col_sim2:
+      qte_act_sim = st.number_input("Quantité déjà détenue", min_value=0, value=qte_detenue_def, step=1)
+      pru_act_sim = st.number_input("PRU actuel (€)", min_value=0.0, value=pru_detenu_def, step=0.10)
+
+    with col_sim3:
+      qte_ajout_sim = st.number_input("➕ Quantité à acheter", min_value=1, value=1, step=1)
+      budget_sim_dispo = st.number_input("💶 Budget dispo (DCA ou Espèces €)", min_value=0.0, value=float(BUDGET_MENSUEL + esp_dispo_def), step=10.0)
+
+    cout_ordre_sim = qte_ajout_sim * prix_exec_sim
+    nouvelle_qte_sim = qte_act_sim + qte_ajout_sim
+    ancien_inv_sim = qte_act_sim * pru_act_sim
+    nouvel_inv_sim = ancien_inv_sim + cout_ordre_sim
+    nouveau_pru_sim = (nouvel_inv_sim / nouvelle_qte_sim) if nouvelle_qte_sim > 0 else 0.0
+    variation_pru_pct = ((nouveau_pru_sim - pru_act_sim) / pru_act_sim * 100) if (qte_act_sim > 0 and pru_act_sim > 0) else 0.0
+
+    div_u_sim = float(WATCHLIST[act_sim]["div_eur"])
+    ancien_yoc_sim = (div_u_sim / pru_act_sim * 100) if (qte_act_sim > 0 and pru_act_sim > 0) else 0.0
+    nouveau_yoc_sim = (div_u_sim / nouveau_pru_sim * 100) if nouveau_pru_sim > 0 else 0.0
+    rente_ajoutee_sim = qte_ajout_sim * div_u_sim
+    reliquat_sim = budget_sim_dispo - cout_ordre_sim
+
+    ms1, ms2, ms3, ms4 = st.columns(4)
+    ms1.metric("Nouveau PRU", f"{nouveau_pru_sim:.2f} €", f"{variation_pru_pct:+.2f} %", delta_color="inverse")
+    ms2.metric("Nouveau YoC (Rendement/PRU)", f"{nouveau_yoc_sim:.2f} %", f"{nouveau_yoc_sim - ancien_yoc_sim:+.2f} %")
+    ms3.metric("Gain de Rente Annuelle", f"+{rente_ajoutee_sim:.2f} €/an", f"+{rente_ajoutee_sim/12:.2f} €/mois")
+    ms4.metric("Reliquat Liquidités", f"{reliquat_sim:.2f} €", f"-{cout_ordre_sim:.2f} € (Coût ordre)", delta_color="off")
+
 
 # ------------------------------------------------------------------------------
 # ONGLET 2 : MON PORTEFEUILLE & SECTEURS
@@ -958,7 +1068,7 @@ with onglet_portefeuille:
         "Cliquez sur le bouton en bas du menu pour enregistrer vos modifications."
     )
    
-    # --- NOUVEAU : CHAMP ESPÈCES ---
+    # --- CHAMP ESPÈCES ---
     st.markdown("#### 💶 Liquidités (Espèces sur le PEA)")
     pru_esp_defaut = st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0)
    
@@ -974,7 +1084,9 @@ with onglet_portefeuille:
     nouveau_portefeuille_temp = {}
     if montant_especes > 0:
         nouveau_portefeuille_temp["Espèces"] = {"qte": 1, "pru": montant_especes}
-        st.session_state["qte_Espèces"] = 1 # Sécurité pour le chargement Supabase
+        st.session_state["qte_Espèces"] = 1
+    else:
+        st.session_state["qte_Espèces"] = 0
        
     st.markdown("---")
     st.markdown("#### 📈 Mes Actions")
@@ -1035,7 +1147,6 @@ with onglet_portefeuille:
     dividendes_annuels_totaux = 0.0
 
     for nom_act, data_pos in portefeuille_utilisateur.items():
-      # Traitement spécifique pour les espèces
       if nom_act == "Espèces":
           val_especes = data_pos["pru"]
           valeur_totale_portefeuille += val_especes
@@ -1139,10 +1250,8 @@ with onglet_portefeuille:
 </thead>
 <tbody>"""
 
-
     alertes_concentration = []
    
-    # Tri incluant les espèces
     lignes_triees = sorted(
         portefeuille_utilisateur.items(),
         key=lambda x: x[1]["pru"] if x[0] == "Espèces" else (x[1]["qte"] * prix_temps_reel.get(x[0], WATCHLIST.get(x[0], {}).get("prix_cible", 0))),
@@ -1150,13 +1259,11 @@ with onglet_portefeuille:
     )
 
     for nom_act, data_pos in lignes_triees:
-      # Affichage spécifique pour les espèces
       if nom_act == "Espèces":
           val_especes = data_pos["pru"]
           poids_pct = ((val_especes / valeur_totale_portefeuille) * 100) if valeur_totale_portefeuille > 0 else 0.0
           largeur_barre = min(100, int(poids_pct))
          
-          # Code HTML aligné à gauche pour éviter le bug visuel du "bloc de code"
           html_port += f"""<tr>
 <td style="text-align: left;">
 <div class="p-action-name">💶 Espèces</div>
@@ -1201,7 +1308,6 @@ with onglet_portefeuille:
       couleur_barre = "#e67e22" if poids_pct > 25.0 else "#3498db"
       largeur_barre = min(100, int(poids_pct))
 
-      # Idem, on aligne le HTML tout à gauche
       html_port += f"""<tr>
 <td style="text-align: left;">
 <div class="p-action-name">{nom_act}</div>
@@ -1396,6 +1502,14 @@ with onglet_dividendes:
 
     st.markdown(html_cal, unsafe_allow_html=True)
 
+    # --- NOUVEAU : DIAGRAMME EN BÂTONS DES DIVIDENDES MOIS PAR MOIS ---
+    st.markdown("#### 📊 Diagramme en Bâtons de vos Versements Mensuels")
+    donnees_barres_div = {
+        f"{idx+1:02d} - {m}": round(totaux_mensuels[m], 2)
+        for idx, m in enumerate(liste_des_mois)
+    }
+    st.bar_chart(donnees_barres_div, color="#2ecc71", height=280)
+
     st.markdown("---")
 
     st.subheader("❄️ Machine à Intérêts Composés & Effet Boule de Neige")
@@ -1438,8 +1552,8 @@ with onglet_dividendes:
     taux_croissance = croissance_annuelle_pct / 100
 
     cap_total = valeur_totale_portefeuille
-    effort_cumule = valeur_totale_portefeuille 
-    gains_boule_de_neige = 0.0 
+    effort_cumule = valeur_totale_portefeuille
+    gains_boule_de_neige = 0.0
 
     annee_objectif_atteint = None
     annee_bascule_dca = None
@@ -1558,7 +1672,7 @@ with onglet_dividendes:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 4 : COACH QUANTITATIF & AGENT IA INTERACTIF
+# ONGLET 4 : COACH QUANTITATIF & AGENT IA INTERACTIF (BARRE 100% ISOLÉE)
 # ------------------------------------------------------------------------------
 with onglet_ia:
   st.subheader("🤖 Audit Patrimonial Pointu & Agent IA Interactif")
@@ -1571,6 +1685,7 @@ with onglet_ia:
   else:
     lignes_valides = [nom for nom in portefeuille_utilisateur if nom in WATCHLIST]
     nb_lignes = len(lignes_valides)
+    especes_dispo_ia = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0))
 
     payouts_moy = (
         sum(WATCHLIST[nom]["payout_ratio"] for nom in lignes_valides) / nb_lignes
@@ -1613,10 +1728,10 @@ with onglet_ia:
       )
 
     score_sante = 0
-    score_sante += min(30, nb_lignes * 5) 
-    score_sante += 30 if payouts_moy <= 0.60 else (15 if payouts_moy <= 0.75 else 5) 
-    score_sante += 20 if poids_max_val <= 25 else (10 if poids_max_val <= 35 else 0) 
-    score_sante += min(20, int(len(mois_couverts) * 1.7)) 
+    score_sante += min(30, nb_lignes * 5)
+    score_sante += 30 if payouts_moy <= 0.60 else (15 if payouts_moy <= 0.75 else 5)
+    score_sante += 20 if poids_max_val <= 25 else (10 if poids_max_val <= 35 else 0)
+    score_sante += min(20, int(len(mois_couverts) * 1.7))
 
     c_ia1, c_ia2, c_ia3, c_ia4 = st.columns(4)
     c_ia1.metric("Score Santé Globale", f"{score_sante} / 100", "🌟 Solide" if score_sante >= 75 else "⚖️ Perfectible")
@@ -1626,6 +1741,42 @@ with onglet_ia:
 
     st.markdown("---")
     st.subheader("🔬 Rapports d'Analyse Croisée (Portefeuille vs Marché)")
+
+    # --- NOUVEAU : PROPOSITION AUTOMATIQUE D'ALLOCATION DE LA POCHE D'ESPÈCES ---
+    if especes_dispo_ia > 0:
+      st.markdown("#### 💶 Plan d'Utilisation de votre Poche d'Espèces (Méthode DCA)")
+      budget_esp_temp = especes_dispo_ia
+      achats_esp = {item["nom"]: 0 for item in candidats_tries}
+      cont_esp = True
+      while cont_esp:
+        cont_esp = False
+        for item in candidats_tries:
+          if budget_esp_temp >= item["prix"]:
+            achats_esp[item["nom"]] += 1
+            budget_esp_temp -= item["prix"]
+            cont_esp = True
+
+      lignes_esp_txt = []
+      rente_esp_creee = 0.0
+      for item in candidats_tries:
+        nb_e = achats_esp[item["nom"]]
+        if nb_e > 0:
+          cout_e = nb_e * item["prix"]
+          div_e = nb_e * item["div_eur"]
+          rente_esp_creee += div_e
+          lignes_esp_txt.append(f"**{nb_e}x {item['nom']}** ({cout_e:.2f} € ➔ +{div_e:.2f} €/an)")
+
+      if lignes_esp_txt:
+        st.info(
+            f"💡 **Vous avez {especes_dispo_ia:,.2f} € d'espèces disponibles sur votre PEA.** "
+            f"Selon les meilleurs scores du jour, vous pouvez investir **{especes_dispo_ia - budget_esp_temp:.2f} €** sur : "
+            + ", ".join(lignes_esp_txt)
+            + f" | **Rente immédiate ajoutée : +{rente_esp_creee:.2f} €/an** (Reliquat espèces : {budget_esp_temp:.2f} €)."
+        )
+      else:
+        st.info(
+            f"💡 **Espèces disponibles ({especes_dispo_ia:.2f} €)** : Montant inférieur au prix unitaire des meilleures opportunités du jour. Cumulez cette poche avec votre prochain DCA de {BUDGET_MENSUEL:.0f} €."
+        )
 
     col_diag1, col_diag2 = st.columns(2)
 
@@ -1657,15 +1808,16 @@ with onglet_ia:
         pru = portefeuille_utilisateur[nom]["pru"]
         prix_j = prix_temps_reel.get(nom, WATCHLIST[nom]["prix_cible"])
         rsi_j = tech_map.get(nom, {}).get("RSI", 50)
+        ema_j = tech_map.get(nom, {}).get("EMA 2/12", "")
        
         if prix_j < pru and rsi_j < 40:
           st.success(
               f"🟢 **Opportunité de baisse de PRU sur {nom}** : Le cours actuel ({prix_j:.2f} €) est sous votre PRU ({pru:.2f} €) avec un RSI bas ({rsi_j}). Renforcer maintenant abaissera votre point mort tout en dopant votre rendement sur coût."
           )
           alertes_trouvees = True
-        elif prix_j > pru * 1.25 and rsi_j > 68:
+        elif "🔴" in ema_j or (prix_j > pru * 1.25 and rsi_j > 68):
           st.warning(
-              f"🔥 **Surchauffe sur {nom}** : Vous êtes à +{((prix_j-pru)/pru*100):.1f}% de plus-value avec un RSI tendu ({rsi_j}). Mettez le DCA en pause sur cette valeur."
+              f"🔥 **Alerte / Surchauffe sur {nom}** : Signal EMA ({ema_j}) ou RSI tendu ({rsi_j}). Mettez le DCA en pause sur cette valeur."
           )
           alertes_trouvees = True
 
@@ -1676,11 +1828,11 @@ with onglet_ia:
 
     st.subheader("💬 Discuter avec votre Conseiller IA Privé")
     st.caption(
-        "Posez n'importe quelle question : l'Agent IA connaît en temps réel vos lignes, vos PRU, vos dividendes et les indicateurs techniques du jour."
+        "Posez n'importe quelle question : l'Agent IA connaît en temps réel vos lignes, vos PRU, votre poche d'espèces, vos dividendes et les indicateurs techniques du jour."
     )
 
     opportunites_radar = [
-        f"{d['Actif']} (Prix: {d['Prix (€)']}€, Cible: {d['Prix Cible (€)']}€, RSI: {d['RSI']}, Score: {d['Score']}/100, Décision: {d['Décision']})"
+        f"{d['Actif']} (Prix: {d['Prix (€)']}€, Cible: {d['Prix Cible (€)']}€, RSI: {d['RSI']}, EMA 2/12: {d['EMA 2/12']}, Score: {d['Score']}/100, Décision: {d['Décision']})"
         for d in donnees_t1
     ]
 
@@ -1689,6 +1841,7 @@ Tu t'adresses directement à l'utilisateur de la plateforme. Ton ton est profess
 
 Voici les données EXACTES en temps réel du portefeuille de l'utilisateur :
 - Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_globale:+.2f} € soit {plus_value_pct:+.1f}%)
+- Poche d'Espèces immédiatement disponible sur le PEA : {especes_dispo_ia:.2f} €
 - Dividendes annuels générés : {dividendes_annuels_totaux:.2f} €/an (soit {dividendes_annuels_totaux/12:.2f} €/mois) | Yield on Cost (Rendement sur PRU) : {yoc_global:.2f}%
 - Budget DCA mensuel : {BUDGET_MENSUEL:.0f} €/mois
 - Mois sans aucun dividende : {', '.join(mois_creux) if mois_creux else 'Aucun'}
@@ -1699,7 +1852,7 @@ Détail des lignes détenues en portefeuille :
 Radar complet des valeurs suivies aujourd'hui (avec indicateurs techniques temps réel) :
 {chr(10).join(opportunites_radar)}
 
-Réponds toujours en utilisant précisément ces chiffres. Donne des analyses pointues (marge de sécurité, effet sur le PRU, exposition sectorielle, pérennité du payout ratio) tout en rappelant brièvement que cela constitue une aide à la décision et non un conseil financier réglementé."""
+Si la poche d'espèces est supérieure à 0 €, propose toujours une analyse précise sur la meilleure façon de l'utiliser selon les opportunités (comme pour le DCA). Réponds toujours en utilisant précisément ces chiffres. Donne des analyses pointues (marge de sécurité, effet sur le PRU, exposition sectorielle, pérennité du payout ratio) tout en rappelant brièvement que cela constitue une aide à la décision et non un conseil financier réglementé."""
 
     if "messages_ia" not in st.session_state:
       st.session_state["messages_ia"] = [
@@ -1707,101 +1860,113 @@ Réponds toujours en utilisant précisément ces chiffres. Donne des analyses po
               "role": "assistant",
               "content": (
                   f"Bonjour ! J'ai analysé vos **{nb_lignes} lignes** en portefeuille "
-                  f"(valorisées à **{valeur_totale_portefeuille:,.0f} €** pour **{dividendes_annuels_totaux/12:.1f} €/mois** de dividendes). "
-                  "Souhaitez-vous que l'on optimise l'investissement de vos prochains **"
-                  f"{BUDGET_MENSUEL:.0f} €**, que l'on analyse une valeur précise, ou que l'on regarde comment combler vos mois creux ?"
+                  f"(valorisées à **{valeur_totale_portefeuille:,.0f} €** dont **{especes_dispo_ia:,.0f} € d'espèces** pour **{dividendes_annuels_totaux/12:.1f} €/mois** de dividendes). "
+                  "Souhaitez-vous que l'on optimise l'investissement de votre **DCA et de vos espèces**, que l'on analyse une valeur précise, ou que l'on regarde comment combler vos mois creux ?"
               ),
           }
       ]
 
-    col_q1, col_q2, col_q3 = st.columns(3)
+    col_q1, col_q2, col_q3, col_q4 = st.columns(4)
     question_rapide = None
     if col_q1.button("💡 Optimiser mon DCA du mois", use_container_width=True):
       question_rapide = f"Avec mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci, quelles actions précises dois-je acheter en priorité pour optimiser mon rendement et renforcer mes lignes sous leur PRU ?"
-    if col_q2.button("🛡️ Analyser les risques de mon PEA", use_container_width=True):
+    if col_q2.button("💶 Investir ma poche d'Espèces", use_container_width=True):
+      question_rapide = f"J'ai actuellement {especes_dispo_ia:.2f} € dans ma poche d'espèces sur mon PEA. Propose-moi un plan d'achat précis (actions, quantités, impact PRU) selon les meilleures opportunités du jour, comme pour mon DCA."
+    if col_q3.button("🛡️ Analyser les risques PEA", use_container_width=True):
       question_rapide = "Fais-moi un audit critique et sans complaisance des vulnérabilités de mon portefeuille actuel (concentration sectorielle, payout ratio, écart au PRU)."
-    if col_q3.button("🗓️ Combler mes mois sans dividendes", use_container_width=True):
+    if col_q4.button("🗓️ Combler mes mois creux", use_container_width=True):
       question_rapide = f"Quelles valeurs de ma watchlist me permettraient de toucher des dividendes pendant mes mois creux ({', '.join(mois_creux)}) tout en ayant un bon score technique aujourd'hui ?"
 
     for msg in st.session_state["messages_ia"]:
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-user_prompt = st.chat_input("Posez votre question financière à l'Agent IA...")
-question_finale = question_rapide or user_prompt
+    # Formulaire confiné uniquement dans l'Onglet 4 (n'apparaît jamais sur les onglets 1, 2 et 3)
+    with st.form("formulaire_chat_ia", clear_on_submit=True):
+      col_in, col_sub = st.columns([5, 1])
+      with col_in:
+        user_prompt = st.text_input(
+            "Posez votre question financière à l'Agent IA...",
+            placeholder="Posez votre question financière à l'Agent IA...",
+            label_visibility="collapsed",
+        )
+      with col_sub:
+        submit_chat = st.form_submit_button("Envoyer 🚀", use_container_width=True)
 
-if question_finale:
-    st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
-    with st.chat_message("user"):
+    question_finale = question_rapide or (user_prompt if submit_chat and user_prompt else None)
+
+    if question_finale:
+      st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
+      with st.chat_message("user"):
         st.markdown(question_finale)
 
-    with st.chat_message("assistant"):
+      with st.chat_message("assistant"):
         with st.spinner("Analyse des marchés et de votre portefeuille en cours..."):
-            api_key = (
-                str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
-                if hasattr(st, "secrets")
-                else ""
+          api_key = (
+              str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
+              if hasattr(st, "secrets")
+              else ""
+          )
+
+          if not api_key:
+            reponse_ia = (
+                "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
+                "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
             )
+          else:
+            payload_ia = {
+                "system_instruction": {"parts": [{"text": contexte_systeme}]},
+                "contents": [
+                    {
+                        "role": "user" if m["role"] == "user" else "model",
+                        "parts": [{"text": m["content"]}],
+                    }
+                    for m in st.session_state["messages_ia"]
+                ],
+            }
 
-            if not api_key:
-                reponse_ia = (
-                    "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
-                    "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
+            modeles_candidats = [
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-flash-latest",
+                "gemini-2.5-pro",
+                "gemini-pro-latest",
+            ]
+
+            try:
+              url_liste = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+              with urllib.request.urlopen(url_liste, timeout=10) as resp_liste:
+                data_liste = json.loads(resp_liste.read().decode("utf-8"))
+                for mod in data_liste.get("models", []):
+                  nom_mod = mod.get("name", "").replace("models/", "")
+                  methodes = mod.get("supportedGenerationMethods", [])
+                  if "generateContent" in methodes and "gemini" in nom_mod:
+                    if nom_mod not in modeles_candidats:
+                      modeles_candidats.append(nom_mod)
+            except Exception:
+              pass
+
+            reponse_ia = None
+            derniere_erreur = ""
+
+            for modele in modeles_candidats:
+              try:
+                url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modele}:generateContent?key={api_key}"
+                req_ia = urllib.request.Request(
+                    url_gemini,
+                    data=json.dumps(payload_ia).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
                 )
-            else:
-                payload_ia = {
-                    "system_instruction": {"parts": [{"text": contexte_systeme}]},
-                    "contents": [
-                        {
-                            "role": "user" if m["role"] == "user" else "model",
-                            "parts": [{"text": m["content"]}],
-                        }
-                        for m in st.session_state["messages_ia"]
-                    ],
-                }
+                with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
+                  res_json = json.loads(resp_ia.read().decode("utf-8"))
+                  reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                  break
+              except Exception as e:
+                derniere_erreur = str(e)
+                continue
 
-                modeles_candidats = [
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-flash-latest",
-                    "gemini-2.5-pro",
-                    "gemini-pro-latest",
-                ]
+            if not reponse_ia:
+              reponse_ia = f"❌ Erreur de communication avec le moteur IA : {derniere_erreur}"
 
-                try:
-                    url_liste = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-                    with urllib.request.urlopen(url_liste, timeout=10) as resp_liste:
-                        data_liste = json.loads(resp_liste.read().decode("utf-8"))
-                        for mod in data_liste.get("models", []):
-                            nom_mod = mod.get("name", "").replace("models/", "")
-                            methodes = mod.get("supportedGenerationMethods", [])
-                            if "generateContent" in methodes and "gemini" in nom_mod:
-                                if nom_mod not in modeles_candidats:
-                                    modeles_candidats.append(nom_mod)
-                except Exception:
-                    pass
-
-                reponse_ia = None
-                derniere_erreur = ""
-
-                for modele in modeles_candidats:
-                    try:
-                        url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modele}:generateContent?key={api_key}"
-                        req_ia = urllib.request.Request(
-                            url_gemini,
-                            data=json.dumps(payload_ia).encode("utf-8"),
-                            headers={"Content-Type": "application/json"},
-                        )
-                        with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
-                            res_json = json.loads(resp_ia.read().decode("utf-8"))
-                            reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
-                            break
-                    except Exception as e:
-                        derniere_erreur = str(e)
-                        continue
-
-                if not reponse_ia:
-                    reponse_ia = f"❌ Erreur de communication avec le moteur IA : {derniere_erreur}"
-
-            st.markdown(reponse_ia)
-            st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
+          st.markdown(reponse_ia)
+          st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
