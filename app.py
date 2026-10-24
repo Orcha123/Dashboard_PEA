@@ -1209,6 +1209,14 @@ with onglet_portefeuille:
             sauvegarder_dans_cloud()
 
     portefeuille_utilisateur = st.session_state["portefeuille"]
+    valeur_totale_portefeuille = 0.0
+    cout_total_achat = 0.0
+    dividendes_bruts_totaux_eur = 0.0
+    dividendes_nets_totaux_eur = 0.0
+    repartition_secteurs = {}
+    exposition_eur = 0.0
+    exposition_usd = 0.0
+    lignes_triees = []
 
     if not portefeuille_utilisateur:
         st.warning("Votre portefeuille est vide. Ouvrez le volet ci-dessus pour renseigner vos lignes.")
@@ -1224,13 +1232,6 @@ with onglet_portefeuille:
         taux_net_eur = 1.0 if "Réinvestissement" in mode_fiscal_pea else (1.0 - 0.172)
         taux_net_usd = 0.70
 
-        valeur_totale_portefeuille = 0.0
-        cout_total_achat = 0.0
-        dividendes_bruts_totaux_eur = 0.0
-        dividendes_nets_totaux_eur = 0.0
-        repartition_secteurs = {}
-        exposition_eur = 0.0
-        exposition_usd = 0.0
         lignes_detaillees = []
 
         for nom_act, data_pos in portefeuille_utilisateur.items():
@@ -1426,7 +1427,6 @@ with onglet_portefeuille:
                 for sec, montant_s in secteurs_tries
             ])
 
-            # Camembert / Donut interactif Vega-Lite natif Streamlit
             spec_camembert = {
                 "height": 310,
                 "mark": {"type": "arc", "innerRadius": 55, "outerRadius": 125, "stroke": "#ffffff", "strokeWidth": 2},
@@ -1448,7 +1448,6 @@ with onglet_portefeuille:
             }
             st.vega_lite_chart(df_camembert, spec_camembert, use_container_width=True)
 
-            # Légende détaillée sous le camembert
             html_sec = "<div style='background:rgba(128,128,128,0.04); padding:14px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);'>"
             for row_s in df_camembert.to_dict("records"):
                 pct_s = row_s["Poids (%)"]
@@ -1551,7 +1550,6 @@ with onglet_dividendes:
         """
         afficher_html(html_div_kpi)
 
-        # 1. VRAI CALENDRIER VISUEL MOIS PAR MOIS (12 CARTES DE JANVIER À DÉCEMBRE)
         st.markdown("#### 🗓️ Calendrier Mois par Mois des Dividendes Versés sur l'Année")
         html_grille_12mois = "<div class='cal-grid'>"
         for idx_m, m_code in enumerate(mois_ordre, start=1):
@@ -1583,7 +1581,6 @@ with onglet_dividendes:
         html_grille_12mois += "</div>"
         afficher_html(html_grille_12mois)
 
-        # 2. DIAGRAMME EN BÂTONS DES DIVIDENDES MENSUELS (ORDRE CHRONOLOGIQUE)
         st.markdown("#### 📊 Diagramme en Bâtons des Dividendes par Mois (€)")
         df_bar_div = pd.DataFrame([
             {"Ordre": i, "Mois": noms_mois_complets[m], "Dividendes (€)": round(revenus_par_mois[m], 2)}
@@ -1603,7 +1600,6 @@ with onglet_dividendes:
         }
         st.vega_lite_chart(df_bar_div, spec_bar_div, use_container_width=True)
 
-        # 3. SIMULATEUR D'EFFET BOULE DE NEIGE INTERACTIF AVEC CURSEURS & GRAPHIQUES
         st.markdown("---")
         st.markdown("#### ❄️ Simulateur Interactif d'Effet Boule de Neige (DCA + Dividendes Réinvestis)")
 
@@ -1622,7 +1618,6 @@ with onglet_dividendes:
 
         cap_courant = valeur_totale_portefeuille
         cap_investi_cumule = cout_total_achat if cout_total_achat > 0 else valeur_totale_portefeuille
-        div_cumules = 0.0
         lignes_proj = []
         donnees_graph_boule = []
 
@@ -1631,7 +1626,6 @@ with onglet_dividendes:
             cap_investi_cumule += apport_annuel
             plus_value_croissance = cap_courant * (croissance_annuelle_pct / 100.0)
             div_annee = (cap_courant + apport_annuel / 2.0) * (rendement_simule_pct / 100.0)
-            div_cumules += div_annee
             cap_courant = cap_courant + apport_annuel + plus_value_croissance + div_annee
             rente_mensuelle_an = div_annee / 12.0
 
@@ -1698,7 +1692,7 @@ with onglet_dividendes:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 4 : COACH & AUDIT IA 2.0 (INTERFACE COMPLÈTE + MOTEUR GEMINI AVANCÉ)
+# ONGLET 4 : COACH & AUDIT IA 2.0 (AUTO-DISCOVERY GEMINI + MOTEUR HYBRIDE)
 # ------------------------------------------------------------------------------
 with onglet_ia:
     st.subheader("🤖 Coach & Audit IA 2.0 (Diagnostic Instantané & Intelligence Gemini)")
@@ -1706,7 +1700,6 @@ with onglet_ia:
     quota_utilise = st.session_state.get("quota_ia_utilise", 0)
     quota_restant = max(0, quota_ia_max - quota_utilise)
 
-    # Calcul du Diagnostic Local Instantané du Portefeuille
     nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST)
     poids_max_ligne = 0.0
     nom_max_ligne = "Aucune"
@@ -1747,10 +1740,151 @@ with onglet_ia:
     """
     afficher_html(html_ia_header)
 
-    def appeler_gemini_coach(question_utilisateur):
-        cle_gemini = str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'") if hasattr(st, "secrets") else ""
+    def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
+        """Moteur Expert Boursy 2.0 : Génère un audit financier complet et chiffré en cas de quota ou indisponibilité de l'API externe."""
+        plus_value_glob = valeur_totale_portefeuille - cout_total_achat
+        pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
+        rente_mens_nette = dividendes_nets_totaux_eur / 12.0
+
+        top_3_lignes = [
+            f"**{l['nom_act']}** ({l['val_eur']:,.0f} €, soit {(l['val_eur']/valeur_totale_portefeuille*100 if valeur_totale_portefeuille>0 else 0):.1f}% du portefeuille, PV : `{l['pv_eur']:+,.0f} €`)"
+            for l in lignes_triees if not l["est_especes"]
+        ][:3]
+        top_3_radar = [
+            f"**{d['Actif']}** (Score `{d['Score']}/100` — {d['Décision']}, Cours : {d['Prix']}, Cible : {d['Prix Cible']}, RSI : {d['RSI']})"
+            for d in sorted(donnees_t1, key=lambda x: x["Score"], reverse=True)[:3]
+        ]
+
+        if code_audit == "AUDIT_1":
+            return f"""### 🔍 Audit Complet 360° & Optimisation Fiscale
+
+#### 1. Bilan Patrimonial & Performance Globale
+* **Valorisation Totale :** Votre portefeuille s'élève à **{valeur_totale_portefeuille:,.2f} €** pour un capital investi de **{cout_total_achat:,.2f} €**, soit une performance latente de **{plus_value_glob:+,.2f} € ({pv_pct_glob:+.2f}%)**.
+* **Score de Santé Global :** **{note_sante_pf}/100** avec **{nb_lignes_actions} ligne(s) active(s)** répartie(s) sur **{len(repartition_secteurs)} secteur(s)**.
+* **Vos Piliers Principaux (par poids décroissant) :** {', '.join(top_3_lignes) if top_3_lignes else 'Aucune ligne enregistrée'}.
+
+#### 2. Analyse de Concentration & PRU
+* **Concentration Maximale :** Votre première ligne (**{nom_max_ligne}**) pèse **{poids_max_ligne:.1f}%** de votre patrimoine. {'✅ Excellente maîtrise du risque (< 30%).' if poids_max_ligne <= 30 else '⚠️ Attention : cette ligne dépasse le seuil prudentiel de 30%. Privilégiez le renforcement de vos lignes secondaires lors de vos prochains DCA.'}
+* **Qualité des Points d'Entrée (PRU) :** Les lignes affichant une moins-value latente mais un **Payout Ratio sain (< 65%)** constituent vos meilleures opportunités de moyennage à la baisse pour booster votre rendement sur coût d'achat (*Yield on Cost*).
+
+#### 3. Bilan Fiscal PEA (EUR) vs CTO (USD)
+* **Exposition Devises :** **{exposition_eur:,.0f} € en zone Euro (PEA)** contre **{exposition_usd:,.0f} € en Dollars US (CTO)**.
+* **Efficience Fiscale des Dividendes :** Vos actions produisent **{dividendes_bruts_totaux_eur:,.2f} € brut/an**, soit **{dividendes_nets_totaux_eur:,.2f} € net/an ({rente_mens_nette:.2f} € net/mois)**. En logeant vos valeurs européennes de rendement sur PEA, vous économisez **100 % d'impôt** tant que les dividendes sont réinvestis dans l'enveloppe.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_2":
+            achats_txt = "\n".join(
+                f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
+                for item in candidats_tries if achats_simules.get(item["nom"], 0) > 0
+            )
+            if not achats_txt:
+                achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
+            return f"""### 🛒 Plan d'Action DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
+
+#### 1. Lecture de la Météo des Marchés
+* **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
+* **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
+
+#### 2. Top 3 des Signaux Techniques du Jour
+* {chr(10).join('* ' + s for s in top_3_radar)}
+
+#### 3. Répartition Optimale de votre Enveloppe de {BUDGET_MENSUEL:.0f} €
+{achats_txt}
+* **Total investi ce mois-ci :** **{montant_investi_dca:.2f} €** (Liquidités restantes pour le mois suivant : **{budget_courant:.2f} €**)
+* **Nouveaux dividendes annuels acquis :** **+{montant_tot_div_dca:.2f} € / an**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_3":
+            return f"""### 🌍 Arbitrage Stratégique : PEA (EUR) vs Actions US ($)
+
+#### 1. Analyse du Taux de Change EUR/USD
+* **Parité actuelle :** **1 € = {TAUX_USD_EUR:.4f} $** (soit **1 $ = {1/TAUX_USD_EUR:.4f} €**).
+* **Impact Devises :** {'L Euro est actuellement solide face au Dollar (> 1.08 $), ce qui offre un point d entrée avantageux pour convertir des Euros vers des actifs américains en CTO.' if TAUX_USD_EUR >= 1.08 else 'Le Dollar est actuellement fort face à l Euro : privilégiez en priorité le renforcement de vos pépites européennes en PEA pour éviter d acheter du Dollar au plus haut.'}
+
+#### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
+* **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
+* **Poche Accélérateur US (Microsoft, Apple, Realty Income, Coca-Cola...) :** Apporte une **croissance séculaire à 2 chiffres** et des versements trimestriels ou mensuels qui lissent votre calendrier de rente.
+* **Recommandation d'équilibre :** Visez une répartition cible de **75 % à 85 % sur votre PEA** (jusqu'au plafond de 150 000 € de versements) et **15 % à 25 % sur les géants US** lors des replis de leur RSI sous 40.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_4":
+            choc_20 = valeur_totale_portefeuille * 0.80
+            return f"""### 🛡️ Stress-Test, Gestion des Risques & Diversification
+
+#### 1. Simulation de Krach Boursier (-20 % sur les marchés)
+* **Valorisation après choc de -20 % :** Votre portefeuille passerait temporairement de **{valeur_totale_portefeuille:,.0f} €** à **{choc_20:,.0f} €** (soit un repli latent de `-{valeur_totale_portefeuille * 0.20:,.0f} €`).
+* **Résilience de votre Rente Passive :** Même en cas de baisse de 20 % des cours boursiers, **votre rente de dividendes ({dividendes_bruts_totaux_eur:,.2f} €/an) dépend du nombre d'actions détenues** et non des fluctuations quotidiennes du marché ! Mieux encore : votre DCA mensuel de **{BUDGET_MENSUEL:.0f} €** achètera **25 % d'actions en plus** pendant la baisse.
+
+#### 2. Diagnostic de Concentration Sectorielle
+* **Ligne numéro 1 :** **{nom_max_ligne}** représente **{poids_max_ligne:.1f}%** du portefeuille.
+* **Nombre de secteurs couverts :** **{len(repartition_secteurs)} secteur(s)**.
+* **Pistes de sécurisation :** Assurez-vous qu'aucun secteur cyclique (Banque, Énergie, Luxe) ne dépasse **35 %** du total. Renforcez les secteurs défensifs (**Santé via Sanofi / J&J**, **Gaz industriels via Air Liquide**, **Consommation de base**) pour amortir la volatilité (ATR).
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_5":
+            manque_100 = max(0.0, (100.0 * 12) - dividendes_nets_totaux_eur)
+            cap_requis_100 = manque_100 / 0.055
+            return f"""### 💵 Optimisation de la Rente & Accélération Boule de Neige
+
+#### 1. Trajectoire Actuelle de vos Revenus Passifs
+* **Rente Annuelle Actuelle :** **{dividendes_bruts_totaux_eur:,.2f} € brut / an** (**{dividendes_nets_totaux_eur:,.2f} € net / an**).
+* **Revenu Mensuel Lissé :** **{rente_mens_nette:,.2f} € net / mois** (couvrant déjà **{taux_couverture_dca:.1f}%** de votre effort d'épargne DCA annuel).
+
+#### 2. Feuille de Route vers le Palier des 100 € / mois (1 200 € / an)
+* **Écart restant à combler :** Il vous manque **{manque_100:,.2f} € de dividendes annuels** pour franchir le cap symbolique des **100 € / mois**.
+* **Capital additionnel nécessaire (à 5,5 % de rendement moyen) :** Environ **{cap_requis_100:,.0f} €**, soit environ **{max(1, int(cap_requis_100 / max(1, BUDGET_MENSUEL + rente_mens_nette)))} mois** avec votre DCA de **{BUDGET_MENSUEL:.0f} €/mois** et le réinvestissement intégral de vos dividendes.
+
+#### 3. Comment lisser vos 12 mois de versements
+* **Action concrète :** En Europe, beaucoup de sociétés paient en **Mai/Juin**. Pour encaisser des dividendes chaque mois de l'année, appuyez-vous sur **TotalEnergies** (Jan/Avr/Juil/Oct), **Pernod Ricard / Vinci** (Avr/Juil/Nov), ou des valeurs trimestrielles/mensuelles comme **Realty Income** et **Microsoft**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        else:
+            q_low = question_utilisateur.lower()
+            focus_actions = []
+            for d in donnees_t1:
+                nom_b = d["NomBrut"]
+                if nom_b.lower() in q_low:
+                    info_w = WATCHLIST.get(nom_b, {})
+                    pos_pf = portefeuille_utilisateur.get(nom_b)
+                    txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
+                    focus_actions.append(
+                        f"* **{d['Actif']}** : Cours actuel **{d['Prix']}** | Prix Cible : **{d['Prix Cible']}** ({d['Écart Cible (%)']}) | "
+                        f"RSI : **{d['RSI']}** | Stochastique : **{d['Stoch']}%** | Signal EMA 2/12 : **{d['EMA 2/12']}** | "
+                        f"Rendement : **{(info_w.get('div_eur',0)/ max(0.01, prix_temps_reel.get(nom_b, 1))*100):.2f}%** | "
+                        f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
+                    )
+
+            bloc_focus = "\n".join(focus_actions) if focus_actions else "* Voici les 3 meilleures opportunités détectées sur votre radar aujourd'hui :\n  * " + "\n  * ".join(top_3_radar)
+
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Analyse Technique & Fondamentale en Direct
+{bloc_focus}
+
+#### 2. Recommandation Stratégique par rapport à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
+* **Discipline de Prix Cible & PRU :** Tant que le cours d'une action est **inférieur à votre Prix Cible** (ou inférieur à votre PRU actuel) avec un **RSI < 45** et un **Score ≥ 50/100**, le renforcement progressif via votre enveloppe DCA de **{BUDGET_MENSUEL:.0f} €/mois** est optimal.
+* **Gestion du Timing :** Si le titre affiche un RSI supérieur à 65 ou dépasse nettement son objectif de cours, patientez sur un repli vers le **Support 30J** ou la **Borne Basse de Bollinger** avant d'exécuter votre ordre.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+    def appeler_gemini_coach(question_utilisateur, code_audit=""):
+        cle_gemini = ""
+        if hasattr(st, "secrets"):
+            for nom_secret in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
+                val_s = str(st.secrets.get(nom_secret, "")).strip().strip('"').strip("'")
+                if val_s:
+                    cle_gemini = val_s
+                    break
+
         if not cle_gemini:
-            return "⚠️ Clé `GEMINI_API_KEY` absente des Secrets Streamlit Cloud. Veuillez vérifier vos paramètres."
+            return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
         resume_pf = []
         for l_it in lignes_triees:
@@ -1760,7 +1894,7 @@ with onglet_ia:
                 p_l = (l_it["val_eur"] / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0
                 resume_pf.append(
                     f"- {l_it['nom_act']} ({l_it['env_label']}) : Qté={l_it['qte']}, PRU={l_it['pru']} {l_it['sym']}, "
-                    f"Cours={l_it['prix_jour']:.2f} {l_it['sym']}, Val={l_it['val_eur']:.1f} € (Poids {poids:.1f}%), "
+                    f"Cours={l_it['prix_jour']:.2f} {l_it['sym']}, Val={l_it['val_eur']:.1f} € (Poids {p_l:.1f}%), "
                     f"PV={l_it['pv_eur']:+.1f} € ({l_it['pv_pct']:+.1f}%), Div Net={l_it['div_net_l']:.2f} €/an"
                 )
 
@@ -1769,11 +1903,12 @@ with onglet_ia:
             for d in donnees_t1[:15]
         ]
 
+        plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
-- Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_globale:+.2f} €)
+- Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_glob:+.2f} €)
 - Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
 - Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois
 - Détail des lignes du portefeuille (triées par poids décroissant) :
@@ -1785,42 +1920,87 @@ Mission demandée par l'utilisateur : {question_utilisateur}
 
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
-        modeles_test = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-        for mod in modeles_test:
+        # 1. Découverte dynamique des modèles actifs sur la clé API de l'utilisateur
+        modeles_candidats = []
+        try:
+            url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={cle_gemini}"
+            req_list = urllib.request.Request(url_list, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req_list, timeout=8) as resp_l:
+                data_l = json.loads(resp_l.read().decode("utf-8"))
+                for m_info in data_l.get("models", []):
+                    methodes = m_info.get("supportedGenerationMethods", [])
+                    nom_m = m_info.get("name", "").replace("models/", "")
+                    if "generateContent" in methodes and "gemini" in nom_m:
+                        modeles_candidats.append(nom_m)
+        except Exception:
+            pass
+
+        priorite_modeles = [
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-pro",
+        ]
+        for pm in priorite_modeles:
+            if pm not in modeles_candidats:
+                modeles_candidats.append(pm)
+
+        # Tri pour tester les modèles Flash les plus rapides en premier
+        modeles_ordonnes = sorted(
+            modeles_candidats,
+            key=lambda x: (0 if "2.5-flash" in x else (1 if "2.0-flash" in x else (2 if "flash" in x else 3)))
+        )
+
+        for mod in modeles_ordonnes[:5]:
             try:
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={cle_gemini}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
-                req_ia = urllib.request.Request(url_api, data=payload_ia, headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req_ia, timeout=28) as resp_ia:
+                req_ia = urllib.request.Request(
+                    url_api,
+                    data=payload_ia,
+                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                )
+                with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
                     res_json = json.loads(resp_ia.read().decode("utf-8"))
                     texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
-                    return texte_rep
+                    if texte_rep:
+                        return texte_rep
             except Exception:
                 continue
-        return "❌ Impossible de joindre l'API Gemini pour le moment. Vérifiez que votre clé API Gemini est valide dans les Secrets Streamlit."
+
+        # 2. Bascule automatique vers le Moteur Expert Hybride en cas de quota API dépassé
+        return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
     st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
 
     col_ia1, col_ia2, col_ia3 = st.columns(3)
     prompt_choisi = None
+    code_audit_choisi = ""
     titre_audit = ""
 
     if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", use_container_width=True):
         titre_audit = "Audit Complet 360° & Fiscalité"
+        code_audit_choisi = "AUDIT_1"
         prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
     if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
         titre_audit = "Plan d'Action DCA du Mois"
+        code_audit_choisi = "AUDIT_2"
         prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci ?"
     if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", use_container_width=True):
         titre_audit = "Arbitrage PEA (EUR) vs Actions US ($)"
+        code_audit_choisi = "AUDIT_3"
         prompt_choisi = "Analyse la pertinence d'arbitrer ou de renforcer mes valeurs européennes de rendement en PEA face aux géants américains en CTO compte tenu de la parité EUR/USD actuelle et de mes lignes."
 
     col_ia4, col_ia5 = st.columns(2)
     if col_ia4.button("🛡️ 4. Stress-Test, Risques & Diversification", use_container_width=True):
         titre_audit = "Stress-Test, Risques & Diversification"
+        code_audit_choisi = "AUDIT_4"
         prompt_choisi = "Analyse les risques de concentration de mon portefeuille (poids de mes plus grosses lignes et secteurs dominants), fais un stress-test en cas de baisse de marché de 20% et donne-moi des pistes concrètes de diversification."
     if col_ia5.button("💵 5. Optimisation de la Rente & Boule de Neige", use_container_width=True):
         titre_audit = "Optimisation de la Rente & Calendrier"
+        code_audit_choisi = "AUDIT_5"
         prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et propose une stratégie pour accélérer mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
 
     st.markdown("---")
@@ -1835,6 +2015,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         if st.button("✨ Lancer l'Analyse IA", type="primary", use_container_width=True):
             if question_libre.strip():
                 titre_audit = f"Question libre : {question_libre.strip()}"
+                code_audit_choisi = "LIBRE"
                 prompt_choisi = question_libre.strip()
     with col_q_clear:
         if st.button("🗑️ Effacer", use_container_width=True):
@@ -1847,7 +2028,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez à l'offre Boursy Pro pour disposer de 15 audits par jour !")
         else:
             with st.spinner("🧠 Le Coach IA 2.0 analyse la météo des marchés, votre portefeuille et les indicateurs techniques en direct..."):
-                reponse_texte = appeler_gemini_coach(prompt_choisi)
+                reponse_texte = appeler_gemini_coach(prompt_choisi, code_audit_choisi)
                 st.session_state["quota_ia_utilise"] = quota_utilise + 1
                 st.session_state["reponse_ia_coach"] = reponse_texte
                 st.session_state["historique_chat_ia"].insert(0, {
