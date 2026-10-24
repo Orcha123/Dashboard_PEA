@@ -1476,7 +1476,152 @@ with onglet_dividendes:
         max_m = max(revenus_par_mois.values()) if max(revenus_par_mois.values()) > 0 else 1.0
         for m in mois_ordre:
             val_m = revenus_par_mois[m]
-         
-…
+            det_str = ", ".join(details_par_mois[m]) if details_par_mois[m] else "<span style='opacity:0.5;'>Aucun détachement</span>"
+            pct_bar = (val_m / max_m * 100) if max_m > 0 else 0
+            badge_m = f"<span class='b-green'>{val_m:.2f} €</span>" if val_m > 0 else "<span class='b-neutral'>0.00 €</span>"
+            html_cal += f"""
+            <tr>
+                <td class="r-name">{m}</td>
+                <td>{badge_m}</td>
+                <td style="text-align:left; font-size:0.9em;">{det_str}</td>
+                <td><div class="score-bg"><div style="width:{pct_bar}%; background:#2ecc71; height:100%;"></div></div></td>
+            </tr>
+            """
+        html_cal += "</tbody></table>"
+        afficher_html(html_cal)
 
-[Message tronqué]  Afficher l'intégralité du message
+        st.markdown("#### ❄️ Simulateur d'Effet Boule de Neige sur 10 Ans (DCA + Dividendes Réinvestis)")
+        rendement_moy_proj = (total_annuel_div / valeur_totale_portefeuille) if valeur_totale_portefeuille > 0 else 0.045
+        rendement_moy_proj = max(0.03, min(0.09, rendement_moy_proj))
+
+        cap_proj = valeur_totale_portefeuille
+        lignes_proj = []
+        for annee in range(1, 11):
+            apport_an = BUDGET_MENSUEL * 12
+            div_an = (cap_proj + apport_an / 2) * rendement_moy_proj
+            cap_proj = cap_proj + apport_an + div_an
+            lignes_proj.append({
+                "Horizon": f"Année +{annee} ({datetime.now().year + annee})",
+                "Capital Cumulé Estimé": f"{cap_proj:,.0f} €",
+                "Rente Annuelle Estimée": f"{div_an:,.0f} € / an",
+                "Rente Mensuelle Moyenne": f"{div_an/12:,.1f} € / mois",
+            })
+
+        html_proj = "<table class='r-table'><thead><tr><th style='text-align:left;'>Horizon</th><th>Capital Projeté (€)</th><th>Rente Annuelle (€/an)</th><th>Rente Mensuelle (€/mois)</th></tr></thead><tbody>"
+        for lp in lignes_proj:
+            html_proj += f"<tr><td class='r-name'>{lp['Horizon']}</td><td><b>{lp['Capital Cumulé Estimé']}</b></td><td style='color:#2ecc71; font-weight:800;'>{lp['Rente Annuelle Estimée']}</td><td><span class='b-blue'>{lp['Rente Mensuelle Moyenne']}</span></td></tr>"
+        html_proj += "</tbody></table>"
+        afficher_html(html_proj)
+
+
+# ------------------------------------------------------------------------------
+# ONGLET 4 : COACH & AUDIT IA 2.0 (CONNECTÉ À L'API GEMINI PRO)
+# ------------------------------------------------------------------------------
+with onglet_ia:
+    st.subheader("🤖 Coach & Audit IA 2.0 (Propulsé par Google Gemini)")
+
+    quota_utilise = st.session_state.get("quota_ia_utilise", 0)
+    quota_restant = max(0, quota_ia_max - quota_utilise)
+
+    html_ia_header = f"""
+    <div class="argon-grid">
+        <div class="argon-card">
+            <div class="argon-title">⚡ Crédits d'Audit IA du Jour</div>
+            <div class="argon-val" style="color:#9b59b6;">{quota_restant} / {quota_ia_max} disponibles</div>
+            <div class="argon-sub">{'Offre Découverte (2/j)' if mode_gratuit else 'Abonné Boursy Pro (15/j)'}</div>
+        </div>
+        <div class="argon-card">
+            <div class="argon-title">🧠 Contexte Transmis au Coach</div>
+            <div class="argon-val">{len(portefeuille_utilisateur)} lignes & {len(donnees_t1)} signaux</div>
+            <div class="argon-sub">Météo VIX ({vix_val:.1f}), EUR/USD ({TAUX_USD_EUR:.3f}) & Indicateurs inclus</div>
+        </div>
+    </div>
+    """
+    afficher_html(html_ia_header)
+
+    def appeler_gemini_coach(question_utilisateur):
+        cle_gemini = str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'") if hasattr(st, "secrets") else ""
+        if not cle_gemini:
+            return "⚠️ Clé `GEMINI_API_KEY` absente des Secrets Streamlit Cloud. Veuillez vérifier vos paramètres."
+
+        resume_pf = []
+        for nom_a, d_pos in portefeuille_utilisateur.items():
+            if nom_a == "Espèces":
+                resume_pf.append(f"- Espèces : {d_pos['pru']} €")
+            elif nom_a in WATCHLIST:
+                dev_a = WATCHLIST[nom_a].get("devise", "EUR")
+                cours_a = prix_temps_reel.get(nom_a, WATCHLIST[nom_a]["prix_cible"])
+                resume_pf.append(f"- {nom_a} ({dev_a}) : Qté={d_pos['qte']}, PRU={d_pos['pru']} {dev_a}, Cours={cours_a:.2f} {dev_a}, Div={WATCHLIST[nom_a]['div_eur']} {dev_a}")
+
+        resume_radar = [f"- {d['Actif']} : Prix={d['Prix']}, Cible={d['Prix Cible']}, RSI={d['RSI']}, Stoch={d['Stoch']}%, EMA={d['EMA 2/12']}, Score={d['Score']}/100 ({d['Décision']})" for d in donnees_t1[:12]]
+
+        prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert pédagogique en gestion de portefeuille PEA, actions internationales (US) et stratégie DCA à dividendes.
+Voici les données en direct de l'utilisateur :
+- Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
+- Budget DCA mensuel : {BUDGET_MENSUEL} €
+- Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
+- Portefeuille actuel :
+{chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
+- Radar technique et fondamental du jour :
+{chr(10).join(resume_radar)}
+
+Demande de l'utilisateur : {question_utilisateur}
+
+Réponds en français de manière structurée, concrète, chiffrée et bienveillante (rappelle brièvement qu'il s'agit d'une analyse pédagogique et non d'un conseil en investissement financier réglementé).
+"""
+        modeles_test = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        for mod in modeles_test:
+            try:
+                url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={cle_gemini}"
+                payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
+                req_ia = urllib.request.Request(url_api, data=payload_ia, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
+                    res_json = json.loads(resp_ia.read().decode("utf-8"))
+                    texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                    return texte_rep
+            except Exception:
+                continue
+        return "❌ Impossible de joindre l'API Gemini pour le moment. Vérifiez que votre clé API Gemini est valide dans les Secrets Streamlit."
+
+    st.markdown("#### 🚀 Lancer un Audit Intelligent en 1 Clic")
+    col_ia1, col_ia2, col_ia3 = st.columns(3)
+
+    prompt_choisi = None
+    if col_ia1.button("🔍 1. Audit Complet & Fiscalité", use_container_width=True):
+        prompt_choisi = "Réalise un audit complet de mon portefeuille actuel : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), lignes en plus ou moins-value, et optimisation de ma rente."
+    if col_ia2.button("🛒 2. Optimiser mon DCA selon le VIX", use_container_width=True):
+        prompt_choisi = f"Compte tenu du niveau actuel du VIX ({vix_val:.1f}) et des scores techniques (RSI, Stochastique, EMA 2/12), comment répartir au mieux mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci ?"
+    if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", use_container_width=True):
+        prompt_choisi = "Analyse l'intérêt d'arbitrer ou de renforcer mes valeurs européennes de rendement face aux valeurs de croissance américaines compte tenu du taux EUR/USD actuel."
+
+    question_libre = st.text_input("💬 Ou posez votre propre question boursière au Coach IA :", placeholder="Ex: Que penses-tu de mon PRU sur Rubis et TotalEnergies ? Dois-je renforcer Microsoft ?")
+    if st.button("✨ Analyser ma question avec Gemini", type="primary"):
+        if question_libre.strip():
+            prompt_choisi = question_libre.strip()
+
+    if prompt_choisi:
+        if quota_restant <= 0:
+            st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez à l'offre Boursy Pro pour disposer de 15 audits par jour !")
+        else:
+            with st.spinner("🧠 Le Coach IA 2.0 analyse la météo des marchés, votre portefeuille et les indicateurs techniques..."):
+                reponse_texte = appeler_gemini_coach(prompt_choisi)
+                st.session_state["quota_ia_utilise"] = quota_utilise + 1
+                st.session_state["reponse_ia_coach"] = reponse_texte
+                st.rerun()
+
+    if st.session_state.get("reponse_ia_coach"):
+        st.markdown("---")
+        st.markdown("### 📋 Rapport d'Analyse de votre Coach IA 2.0")
+        st.markdown(st.session_state["reponse_ia_coach"])
+
+# Footer & Mentions Légales
+st.markdown("---")
+with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales d'Utilisation (Non-CIF)"):
+    st.caption(
+        "**Avertissement légal :** La plateforme Boursy (`boursy.streamlit.app`) est un outil logiciel d'analyse statistique, "
+        "technique et patrimoniale à vocation strictement pédagogique. Les scores algorithmiques, indicateurs (RSI, Stochastique, Bollinger, MACD, EMA) "
+        "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
+        "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
+    )
+afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime</div>")
+ 
