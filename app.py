@@ -14,6 +14,12 @@ st.set_page_config(
     layout="wide",
 )
 
+# --- FONCTION ANTI-BUG D'AFFICHAGE HTML STREAMLIT ---
+def afficher_html(html_brut):
+    """Supprime les indentations et lignes vides pour empêcher Streamlit d'afficher le HTML en bloc de code."""
+    html_propre = "\n".join(ligne.strip() for ligne in html_brut.splitlines() if ligne.strip())
+    st.markdown(html_propre, unsafe_allow_html=True)
+
 # --- CONNEXION À SUPABASE ---
 @st.cache_resource
 def init_supabase():
@@ -62,7 +68,7 @@ if "budget_dca" not in st.session_state:
 if "est_abonne_pro" not in st.session_state:
     st.session_state["est_abonne_pro"] = True
 
-# --- FONCTION DE SYNCHRONISATION DES CASES (CORRECTION DU BUG DES VALEURS À 0) ---
+# --- FONCTION DE SYNCHRONISATION DES CASES ---
 def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
     """Force à 0 toutes les actions non présentes dans portefeuille_cloud pour éviter le retour des valeurs par défaut."""
     toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()))
@@ -77,7 +83,6 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
             cible_def = float(watchlist_courante.get(nom_act, {}).get("prix_cible", 0.0))
             st.session_state[f"pru_{nom_act}"] = cible_def
 
-    # Synchronisation spécifique de la poche d'Espèces
     if "Espèces" in portefeuille_cloud and isinstance(portefeuille_cloud["Espèces"], dict):
         st.session_state["pru_Espèces"] = float(portefeuille_cloud["Espèces"].get("pru", 0.0))
         st.session_state["qte_Espèces"] = 1
@@ -132,7 +137,6 @@ def sauvegarder_dans_cloud():
                     "valorisation_pea": round(val_totale, 2),
                     "rente_annuelle": round(rente_tot, 2)
                 }
-                # Remplace le snapshot du jour s'il existe déjà pour éviter les doublons
                 supabase.table("portfolio_history").delete().eq("user_id", user_id_str).eq("date", date_du_jour).execute()
                 supabase.table("portfolio_history").insert(snapshot_payload).execute()
 
@@ -423,7 +427,6 @@ def calculer_ema_serie(clotures, periode):
     return emas
 
 def analyser_signal_ema_2_12(clotures):
-    """Retourne un signal à 3 états : ACHAT (Vert), NEUTRE (Blanc), VENTE (Rouge)."""
     if len(clotures) < 15:
         return "⚪ Neutre", 0
     ema2_serie = calculer_ema_serie(clotures, 2)
@@ -677,7 +680,6 @@ montant_tot_div = sum(
     achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries
 )
 
-# Initialisation sécurisée des variables partagées entre onglets
 portefeuille_utilisateur = {}
 valeur_totale_portefeuille = 0.0
 cout_total_achat = 0.0
@@ -723,7 +725,6 @@ with onglet_radar:
     .rad-kpi-title {{ font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.75; margin-bottom: 8px; font-weight: bold; }}
     .rad-kpi-val {{ font-size: 1.65em; font-weight: 900; margin-bottom: 5px; }}
     .rad-kpi-sub {{ font-size: 0.85em; font-weight: 600; opacity: 0.85; }}
-
     .r-table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }}
     .r-table th {{ border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.83em; background-color: rgba(128,128,128,0.05); }}
     .r-table td {{ border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }}
@@ -734,7 +735,6 @@ with onglet_radar:
     .b-neutral {{ background: rgba(128,128,128,0.15); opacity: 0.85; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 0.9em; }}
     .score-bg {{ width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }}
     </style>
-
     <div class="rad-kpi-grid">
         <div class="rad-kpi-card">
             <div class="rad-kpi-title">🎯 Opportunités d'Achat</div>
@@ -758,7 +758,7 @@ with onglet_radar:
         </div>
     </div>
     """
-    st.markdown(html_radar_kpi, unsafe_allow_html=True)
+    afficher_html(html_radar_kpi)
 
     st.subheader("🔎 Filtrer ou rechercher une valeur")
     options_filtre = ["📋 Afficher toutes les actions"] + actions_autorisees
@@ -856,7 +856,7 @@ with onglet_radar:
         """
 
     html_t1 += "</tbody></table>"
-    st.markdown(html_t1, unsafe_allow_html=True)
+    afficher_html(html_t1)
 
     st.markdown("---")
 
@@ -905,7 +905,7 @@ with onglet_radar:
             </tr>
             """
         html_t2 += "</tbody></table>"
-        st.markdown(html_t2, unsafe_allow_html=True)
+        afficher_html(html_t2)
 
         st.markdown("---")
         st.subheader("🔍 Analyse Visuelle & Droite de Régression (3 Ans)")
@@ -965,7 +965,7 @@ with onglet_radar:
             </tr>
             """
         html_t4 += "</tbody></table>"
-        st.markdown(html_t4, unsafe_allow_html=True)
+        afficher_html(html_t4)
 
     with tab_div:
         st.caption("Analyse du rendement, de la croissance et de la soutenabilité du dividende (Payout Ratio) :")
@@ -1010,7 +1010,7 @@ with onglet_radar:
             </tr>
             """
         html_t3 += "</tbody></table>"
-        st.markdown(html_t3, unsafe_allow_html=True)
+        afficher_html(html_t3)
 
     with tab_dca:
         st.caption(f"Répartition optimale de votre budget mensuel ({BUDGET_MENSUEL:.0f} €) sur les meilleures opportunités actuelles :")
@@ -1062,7 +1062,7 @@ with onglet_radar:
                 </tbody>
                 </table>
                 """
-                st.markdown(html_dca_box, unsafe_allow_html=True)
+                afficher_html(html_dca_box)
             else:
                 st.warning(
                     "Le budget mensuel est trop faible pour acheter une action entière"
@@ -1288,33 +1288,35 @@ with onglet_portefeuille:
             </div>
         </div>
         """
-        st.markdown(html_kpi, unsafe_allow_html=True)
+        afficher_html(html_kpi)
 
         st.subheader("📋 Détail de mes lignes en portefeuille")
 
-        html_port = """<style>
-.p-table { width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }
-.p-table th { border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.85em; background-color: rgba(128,128,128,0.05); }
-.p-table td { border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }
-.p-action-name { font-weight: 800; font-size: 1.05em; text-align: left; }
-.p-sector-tag { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,0.15); opacity: 0.85; margin-top: 3px; }
-.badge-gain { background: rgba(46,204,113,0.18); color: #2ecc71; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
-.badge-loss { background: rgba(231,76,60,0.18); color: #e74c3c; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
-.bar-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
-</style>
-<table class="p-table">
-<thead>
-<tr>
-<th style="text-align: left;">Action & Secteur</th>
-<th>Qté</th>
-<th>PRU ➔ Cours</th>
-<th>Valorisation</th>
-<th>+/- Value Latente</th>
-<th>Rente & YoC</th>
-<th style="width: 150px;">Poids PEA</th>
-</tr>
-</thead>
-<tbody>"""
+        html_port = """
+        <style>
+        .p-table { width: 100%; border-collapse: collapse; font-family: sans-serif; margin-bottom: 20px; font-size: 0.95em; }
+        .p-table th { border-bottom: 3px solid rgba(128,128,128,0.3); padding: 12px 10px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.85em; background-color: rgba(128,128,128,0.05); }
+        .p-table td { border-bottom: 1px solid rgba(128,128,128,0.15); padding: 12px 10px; text-align: center; vertical-align: middle; }
+        .p-action-name { font-weight: 800; font-size: 1.05em; text-align: left; }
+        .p-sector-tag { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; background: rgba(128,128,128,0.15); opacity: 0.85; margin-top: 3px; }
+        .badge-gain { background: rgba(46,204,113,0.18); color: #2ecc71; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
+        .badge-loss { background: rgba(231,76,60,0.18); color: #e74c3c; padding: 5px 10px; border-radius: 6px; font-weight: bold; display: inline-block; }
+        .bar-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
+        </style>
+        <table class="p-table">
+        <thead>
+        <tr>
+        <th style="text-align: left;">Action & Secteur</th>
+        <th>Qté</th>
+        <th>PRU ➔ Cours</th>
+        <th>Valorisation</th>
+        <th>+/- Value Latente</th>
+        <th>Rente & YoC</th>
+        <th style="width: 150px;">Poids PEA</th>
+        </tr>
+        </thead>
+        <tbody>
+        """
 
         alertes_concentration = []
 
@@ -1330,21 +1332,23 @@ with onglet_portefeuille:
                 poids_pct = ((val_especes / valeur_totale_portefeuille) * 100) if valeur_totale_portefeuille > 0 else 0.0
                 largeur_barre = min(100, int(poids_pct))
 
-                html_port += f"""<tr>
-<td style="text-align: left;">
-<div class="p-action-name">💶 Espèces</div>
-<div class="p-sector-tag">Liquidités</div>
-</td>
-<td><b>--</b></td>
-<td><b>--</b></td>
-<td><b>{val_especes:,.2f} €</b></td>
-<td><span style="color: #95a5a6; font-weight: bold; background: rgba(128,128,128,0.15); padding: 5px 10px; border-radius: 6px;">--</span></td>
-<td><b>--</b></td>
-<td>
-<div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
-<div class="bar-bg"><div style="width: {largeur_barre}%; background: #95a5a6; height: 100%;"></div></div>
-</td>
-</tr>"""
+                html_port += f"""
+                <tr>
+                <td style="text-align: left;">
+                <div class="p-action-name">💶 Espèces</div>
+                <div class="p-sector-tag">Liquidités</div>
+                </td>
+                <td><b>--</b></td>
+                <td><b>--</b></td>
+                <td><b>{val_especes:,.2f} €</b></td>
+                <td><span style="color: #95a5a6; font-weight: bold; background: rgba(128,128,128,0.15); padding: 5px 10px; border-radius: 6px;">--</span></td>
+                <td><b>--</b></td>
+                <td>
+                <div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
+                <div class="bar-bg"><div style="width: {largeur_barre}%; background: #95a5a6; height: 100%;"></div></div>
+                </td>
+                </tr>
+                """
                 continue
 
             if nom_act not in WATCHLIST:
@@ -1374,24 +1378,26 @@ with onglet_portefeuille:
             couleur_barre = "#e67e22" if poids_pct > 25.0 else "#3498db"
             largeur_barre = min(100, int(poids_pct))
 
-            html_port += f"""<tr>
-<td style="text-align: left;">
-<div class="p-action-name">{nom_act}</div>
-<div class="p-sector-tag">{info_act['secteur']}</div>
-</td>
-<td><b>{qte}</b></td>
-<td>{pru:.2f} € ➔ <b>{prix_jour:.2f} €</b></td>
-<td><b>{val_ligne:,.2f} €</b></td>
-<td><span class="{classe_pv}">{pv_eur:+,.2f} € ({pv_pct:+.1f}%)</span></td>
-<td><b>{div_ligne:.2f} €/an</b><br><span style="font-size: 0.82em; opacity: 0.8;">YoC : {yoc_ligne:.2f}%</span></td>
-<td>
-<div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
-<div class="bar-bg"><div style="width: {largeur_barre}%; background: {couleur_barre}; height: 100%;"></div></div>
-</td>
-</tr>"""
+            html_port += f"""
+            <tr>
+            <td style="text-align: left;">
+            <div class="p-action-name">{nom_act}</div>
+            <div class="p-sector-tag">{info_act['secteur']}</div>
+            </td>
+            <td><b>{qte}</b></td>
+            <td>{pru:.2f} € ➔ <b>{prix_jour:.2f} €</b></td>
+            <td><b>{val_ligne:,.2f} €</b></td>
+            <td><span class="{classe_pv}">{pv_eur:+,.2f} € ({pv_pct:+.1f}%)</span></td>
+            <td><b>{div_ligne:.2f} €/an</b><br><span style="font-size: 0.82em; opacity: 0.8;">YoC : {yoc_ligne:.2f}%</span></td>
+            <td>
+            <div style="font-weight: bold; font-size: 0.9em;">{poids_pct:.1f} %</div>
+            <div class="bar-bg"><div style="width: {largeur_barre}%; background: {couleur_barre}; height: 100%;"></div></div>
+            </td>
+            </tr>
+            """
 
         html_port += "</tbody></table>"
-        st.markdown(html_port, unsafe_allow_html=True)
+        afficher_html(html_port)
 
         if alertes_concentration:
             for nom_al, p_al in alertes_concentration:
@@ -1549,7 +1555,7 @@ with onglet_portefeuille:
             st.info("Ajoutez au moins une action dans votre portefeuille pour afficher la courbe d'historique.")
 
         # ======================================================================
-        # NOUVEAU : TABLEAU DE BORD PATRIMONIAL AVANCÉ DES SNAPSHOTS CLOUD
+        # TABLEAU DE BORD PATRIMONIAL AVANCÉ DES SNAPSHOTS CLOUD
         # ======================================================================
         st.markdown("---")
         st.subheader("📸 Tableau de Bord Patrimonial & Snapshots Cloud (Historique Réel)")
@@ -1798,7 +1804,7 @@ with onglet_dividendes:
                 html_cal += "<td></td>"
         html_cal += "</tr></tbody></table>"
 
-        st.markdown(html_cal, unsafe_allow_html=True)
+        afficher_html(html_cal)
 
         st.markdown("#### 📊 Diagramme en Bâtons de vos Versements Mensuels")
         donnees_barres_div = {
@@ -1922,12 +1928,10 @@ with onglet_dividendes:
         .snow-sub {{ font-size: 0.85em; opacity: 0.9; font-weight: 600; color: #2ecc71; }}
         .snow-banner {{ background: linear-gradient(90deg, rgba(46,204,113,0.15) 0%, rgba(52,152,219,0.15) 100%); border-left: 5px solid #2ecc71; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; font-size: 1.02em; }}
         </style>
-
         <div class="snow-banner">
             <div>{texte_objectif}</div>
             <div style="margin-top: 6px; font-size: 0.92em; opacity: 0.9;">{texte_bascule}</div>
         </div>
-
         <div class="snow-container">
             <div class="snow-card">
                 <div class="snow-title">🏦 Patrimoine dans {annees_max} ans</div>
@@ -1946,7 +1950,7 @@ with onglet_dividendes:
             </div>
         </div>
         """
-        st.markdown(html_snowball, unsafe_allow_html=True)
+        afficher_html(html_snowball)
 
         col_g1, col_g2 = st.columns(2)
         with col_g1:
@@ -2040,22 +2044,19 @@ with onglet_ia:
         c_ia3.metric("Plus Forte Concentration", f"{poids_max_val:.1f} %", f"Ligne : {poids_max_nom}")
         c_ia4.metric("Couverture Calendrier", f"{len(mois_couverts)} / 12 mois", f"{len(mois_creux)} mois sans versement")
 
-        # --- NOUVEAU : BULLETIN DE SANTÉ PROACTIF DU JOUR ---
         meilleure_opp_jour = candidats_tries[0]["nom"] if candidats_tries else "Aucune valeur"
         meilleur_score_jour = candidats_tries[0]["score"] if candidats_tries else 0
-        st.markdown(
-            f"""
-            <div style="background: linear-gradient(90deg, rgba(52,152,219,0.14) 0%, rgba(46,204,113,0.14) 100%); border-left: 5px solid #3498db; padding: 15px 20px; border-radius: 8px; margin: 15px 0; font-family: sans-serif;">
-                <div style="font-weight: 800; font-size: 1.05em; margin-bottom: 6px;">🩺 Bulletin Proactif du Coach IA ({datetime.now().strftime('%d/%m/%Y')})</div>
-                <div style="font-size: 0.95em; line-height: 1.5;">
-                    • <b>Top Opportunité DCA du jour :</b> <b>{meilleure_opp_jour}</b> (Score : {meilleur_score_jour}/100).<br>
-                    • <b>Opportunités de baisse de PRU :</b> {', '.join(lignes_sous_pru) if lignes_sous_pru else 'Toutes vos lignes solides sont actuellement au-dessus de leur PRU.'}<br>
-                    • <b>Liquidités mobilisables :</b> Vous disposez de <b>{especes_dispo_ia:,.2f} €</b> d'espèces + <b>{BUDGET_MENSUEL:.0f} €</b> de budget DCA mensuel.
-                </div>
+        html_bulletin = f"""
+        <div style="background: linear-gradient(90deg, rgba(52,152,219,0.14) 0%, rgba(46,204,113,0.14) 100%); border-left: 5px solid #3498db; padding: 15px 20px; border-radius: 8px; margin: 15px 0; font-family: sans-serif;">
+            <div style="font-weight: 800; font-size: 1.05em; margin-bottom: 6px;">🩺 Bulletin Proactif du Coach IA ({datetime.now().strftime('%d/%m/%Y')})</div>
+            <div style="font-size: 0.95em; line-height: 1.5;">
+                • <b>Top Opportunité DCA du jour :</b> <b>{meilleure_opp_jour}</b> (Score : {meilleur_score_jour}/100).<br>
+                • <b>Opportunités de baisse de PRU :</b> {', '.join(lignes_sous_pru) if lignes_sous_pru else 'Toutes vos lignes solides sont actuellement au-dessus de leur PRU.'}<br>
+                • <b>Liquidités mobilisables :</b> Vous disposez de <b>{especes_dispo_ia:,.2f} €</b> d'espèces + <b>{BUDGET_MENSUEL:.0f} €</b> de budget DCA mensuel.
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>
+        """
+        afficher_html(html_bulletin)
 
         st.markdown("---")
         st.subheader("🔬 Rapports d'Analyse Croisée (Portefeuille vs Marché)")
@@ -2143,7 +2144,6 @@ with onglet_ia:
 
         st.markdown("---")
 
-        # --- ANALYSE DE LA COURBE D'HISTORIQUE & DES SNAPSHOTS CLOUD POUR L'IA ---
         lignes_hist_ia = [
             nom_act for nom_act in lignes_valides
             if nom_act in historiques_prix and len(historiques_prix[nom_act]) > 5
@@ -2181,7 +2181,6 @@ with onglet_ia:
 
             st.info(f"📈 **Synthèse de votre Courbe d'Historique transmise à l'IA :** {'  •  '.join(bilans_periodes)}")
 
-        # Résumé des Snapshots Cloud transmis à Gemini
         snaps_mem = st.session_state.get("liste_snapshots", [])
         if snaps_mem:
             details_snaps_ia = [
@@ -2237,7 +2236,6 @@ Règles d'analyse :
                 }
             ]
 
-        # 6 boutons rapides répartis sur 2 rangées de 3 colonnes
         r1_c1, r1_c2, r1_c3 = st.columns(3)
         r2_c1, r2_c2, r2_c3 = st.columns(3)
         question_rapide = None
@@ -2352,15 +2350,13 @@ Règles d'analyse :
 # PIED DE PAGE LÉGAL SAAS & AVERTISSEMENT RÉGLEMENTAIRE (NON-CIF)
 # ==============================================================================
 st.markdown("---")
-st.markdown(
-    """
-    <div style="text-align: center; font-size: 0.80em; opacity: 0.72; padding: 12px 25px; border-radius: 8px; background: rgba(128,128,128,0.06); font-family: sans-serif; line-height: 1.5;">
-        ⚖️ <b>Avertissement Légal & Réglementaire (Non-CIF) :</b> <b>Boursy</b> est un outil logiciel (SaaS) d'analyse mathématique, de suivi statistique et de visualisation patrimoniale.
-        Les scores, indicateurs techniques, simulations DCA et réponses générées par l'intelligence artificielle sont fournis à titre strictement informatif et pédagogique.
-        Ils ne constituent en aucun cas un conseil en investissement financier réglementé (CIF), ni une incitation à l'achat ou à la vente d'instruments financiers.
-        Investir en bourse comporte un risque de perte en capital et les performances passées ne préjugent pas des performances futures.<br>
-        🔒 <b>Protection des données :</b> Vos données de portefeuille sont chiffrées et strictement isolées au sein de votre espace personnel sécurisé Cloud.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+html_footer = """
+<div style="text-align: center; font-size: 0.80em; opacity: 0.72; padding: 12px 25px; border-radius: 8px; background: rgba(128,128,128,0.06); font-family: sans-serif; line-height: 1.5;">
+    ⚖️ <b>Avertissement Légal & Réglementaire (Non-CIF) :</b> <b>Boursy</b> est un outil logiciel (SaaS) d'analyse mathématique, de suivi statistique et de visualisation patrimoniale.
+    Les scores, indicateurs techniques, simulations DCA et réponses générées par l'intelligence artificielle sont fournis à titre strictement informatif et pédagogique.
+    Ils ne constituent en aucun cas un conseil en investissement financier réglementé (CIF), ni une incitation à l'achat ou à la vente d'instruments financiers.
+    Investir en bourse comporte un risque de perte en capital et les performances passées ne préjugent pas des performances futures.<br>
+    🔒 <b>Protection des données :</b> Vos données de portefeuille sont chiffrées et strictement isolées au sein de votre espace personnel sécurisé Cloud.
+</div>
+"""
+afficher_html(html_footer)
