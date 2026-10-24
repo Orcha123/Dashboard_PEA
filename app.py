@@ -46,6 +46,13 @@ STYLE_ARGON = """
 .b-purple { background: rgba(155,89,182,0.18); color: #9b59b6; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
 .b-neutral { background: rgba(128,128,128,0.15); opacity: 0.9; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
 .score-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
+.cal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 15px 0 25px 0; font-family: 'Segoe UI', sans-serif; }
+.cal-card { background: rgba(128,128,128,0.04); border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; min-height: 125px; }
+.cal-card-active { background: linear-gradient(145deg, rgba(46,204,113,0.10) 0%, rgba(52,152,219,0.05) 100%); border: 1px solid rgba(46,204,113,0.38); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; min-height: 125px; }
+.cal-month { font-size: 0.92em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; opacity: 0.85; border-bottom: 1px solid rgba(128,128,128,0.15); padding-bottom: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+.cal-total { font-size: 1.25em; font-weight: 900; color: #2ecc71; }
+.cal-pill { display: inline-block; background: rgba(128,128,128,0.13); border-radius: 5px; padding: 3px 7px; font-size: 0.80em; font-weight: 600; margin: 2px 3px 2px 0; }
+.ia-box { background: linear-gradient(145deg, rgba(155,89,182,0.08) 0%, rgba(52,152,219,0.06) 100%); border: 1px solid rgba(155,89,182,0.32); border-radius: 14px; padding: 20px 24px; margin-top: 15px; font-family: 'Segoe UI', sans-serif; }
 </style>
 """
 afficher_html(STYLE_ARGON)
@@ -130,7 +137,6 @@ def envoyer_email_alerte(destinataire, liste_alertes):
 # ==============================================================================
 @st.cache_data(ttl=1800)
 def recuperer_taux_change():
-    """Récupère le taux de change EUR/USD en direct via Yahoo Finance (1 EUR = X USD)."""
     try:
         url = "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?range=1d&interval=1d"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -143,7 +149,6 @@ def recuperer_taux_change():
 
 @st.cache_data(ttl=1800)
 def recuperer_indice_meteo(symbole):
-    """Récupère le niveau et la variation journalière d'un indice boursier."""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=5d&interval=1d"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -165,7 +170,7 @@ WATCHLIST_DEFAUT = {
     "TotalEnergies": {"symbole": "TTE.PA", "prix_cible": 58.0, "secteur": "Énergie", "div_eur": 3.22, "payout_ratio": 0.42, "croissance_5a": "+6.1%", "mois_div": ["Jan", "Avr", "Juil", "Oct"], "devise": "EUR"},
     "Air Liquide": {"symbole": "AI.PA", "prix_cible": 165.0, "secteur": "Chimie/Industrie", "div_eur": 3.20, "payout_ratio": 0.55, "croissance_5a": "+8.5%", "mois_div": ["Mai"], "devise": "EUR"},
     "Vinci": {"symbole": "DG.PA", "prix_cible": 105.0, "secteur": "Concessions/BTP", "div_eur": 4.50, "payout_ratio": 0.52, "croissance_5a": "+7.5%", "mois_div": ["Avr", "Nov"], "devise": "EUR"},
-    "AXA": {"symbole": "CS.PA", "prix_cible": 32.0, "secteur": "Assurance", "div_eur": 1.98, "payout_ratio": 0.55, "croissance_5a": "+9.2%", "mois_div": ["Mai"], "devise": "EUR"},
+    "AXA": {"symbole": "CS.PA", "prix_cible": 35.0, "secteur": "Assurance", "div_eur": 1.98, "payout_ratio": 0.55, "croissance_5a": "+9.2%", "mois_div": ["Mai"], "devise": "EUR"},
     "Sanofi": {"symbole": "SAN.PA", "prix_cible": 90.0, "secteur": "Santé", "div_eur": 3.76, "payout_ratio": 0.58, "croissance_5a": "+4.8%", "mois_div": ["Mai"], "devise": "EUR"},
     "Rubis": {"symbole": "RUI.PA", "prix_cible": 25.0, "secteur": "Énergie/Stockage", "div_eur": 1.98, "payout_ratio": 0.62, "croissance_5a": "+3.5%", "mois_div": ["Juin"], "devise": "EUR"},
     "Pernod Ricard": {"symbole": "RI.PA", "prix_cible": 70.0, "secteur": "Spiritueux", "div_eur": 4.70, "payout_ratio": 0.55, "croissance_5a": "+6.0%", "mois_div": ["Juil", "Nov"], "devise": "EUR"},
@@ -253,6 +258,8 @@ if "est_abonne_pro" not in st.session_state:
     st.session_state["est_abonne_pro"] = False
 if "reponse_ia_coach" not in st.session_state:
     st.session_state["reponse_ia_coach"] = ""
+if "historique_chat_ia" not in st.session_state:
+    st.session_state["historique_chat_ia"] = []
 
 date_jour_str = datetime.now().strftime("%Y-%m-%d")
 if st.session_state.get("quota_ia_date") != date_jour_str:
@@ -794,8 +801,8 @@ if st.session_state["user"] is None:
         <div style="font-size: 1.15em; font-weight: 900; margin-bottom: 8px;">🚀 Bienvenue sur Boursy : Pilotez votre PEA, vos Actions US & vos Dividendes</div>
         <div style="font-size: 0.94em; opacity: 0.92; line-height: 1.6;">
             • 🎯 <b>Radar Algorithmique (/100) :</b> RSI, Stochastique, Bandes de Bollinger, ATR, MACD & Canal de Régression 3 ans.<br>
-            • 🌍 <b>Suivi Multidevises (EUR / USD), Fiscalité Nette & Export Excel :</b> Conversion automatique en Euros (€) de vos valeurs.<br>
-            • 🤖 <b>Coach IA 2.0 & Alertes Email :</b> Audits patrimoniaux, signaux de prix cible et calendrier de rente sur 12 mois.<br>
+            • 🌍 <b>Suivi Multidevises (EUR / USD), Camembert Sectoriel & Export Excel :</b> Conversion automatique en Euros (€).<br>
+            • 🤖 <b>Coach IA 2.0 & Calendrier 12 Mois :</b> Audits patrimoniaux, simulateur Boule de Neige interactif et alertes email.<br>
             👉 <i>Connectez-vous ou créez votre compte gratuit dans le menu de gauche (<b>👤 Espace Membre</b>) !</i>
         </div>
     </div>
@@ -992,8 +999,8 @@ montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item
 # ==============================================================================
 onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
     "🔍 1. Radar, DCA & Alertes",
-    "💼 2. Portefeuille, Fiscalité & Export CSV",
-    "📅 3. Calendrier des Dividendes & Projection",
+    "💼 2. Portefeuille, Camembert & Fiscalité",
+    "📅 3. Calendrier 12 Mois & Boule de Neige",
     "🤖 4. Coach & Audit IA 2.0 (Gemini)",
 ])
 
@@ -1163,10 +1170,10 @@ with onglet_radar:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : PORTEFEUILLE, BILAN FISCAL NET (PEA/CTO) & EXPORT CSV
+# ONGLET 2 : PORTEFEUILLE (TRIÉ PAR POIDS DÉCROISSANT), CAMEMBERT & FISCALITÉ
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
-    st.subheader("💼 Gestionnaire de Portefeuille Multidevises, Fiscalité & Export")
+    st.subheader("💼 Gestionnaire de Portefeuille Multidevises, Camembert & Fiscalité")
 
     with st.expander("✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)", expanded=False):
         st.markdown("#### 💶 Poche Liquidités (Espèces disponibles)")
@@ -1215,7 +1222,7 @@ with onglet_portefeuille:
             horizontal=True,
         )
         taux_net_eur = 1.0 if "Réinvestissement" in mode_fiscal_pea else (1.0 - 0.172)
-        taux_net_usd = 0.70  # Flat tax 30% (incluant crédit d'impôt retenue US 15%)
+        taux_net_usd = 0.70
 
         valeur_totale_portefeuille = 0.0
         cout_total_achat = 0.0
@@ -1224,7 +1231,7 @@ with onglet_portefeuille:
         repartition_secteurs = {}
         exposition_eur = 0.0
         exposition_usd = 0.0
-        lignes_export_csv = []
+        lignes_detaillees = []
 
         for nom_act, data_pos in portefeuille_utilisateur.items():
             if nom_act == "Espèces":
@@ -1233,11 +1240,21 @@ with onglet_portefeuille:
                 cout_total_achat += val_especes
                 exposition_eur += val_especes
                 repartition_secteurs["Liquidités (€)"] = val_especes
-                lignes_export_csv.append({
-                    "Actif": "Espèces", "Enveloppe": "Liquidités", "Devise": "EUR", "Quantite": 1,
-                    "PRU_Devise": val_especes, "Cours_Actuel_Devise": val_especes,
-                    "Valorisation_EUR": round(val_especes, 2), "Plus_Value_EUR": 0.0,
-                    "Dividende_Brut_EUR": 0.0, "Dividende_Net_EUR": 0.0
+                lignes_detaillees.append({
+                    "est_especes": True,
+                    "nom_act": "Espèces",
+                    "env_label": "Liquidités",
+                    "devise": "EUR",
+                    "sym": "€",
+                    "qte": 1,
+                    "pru": val_especes,
+                    "prix_jour": val_especes,
+                    "val_eur": val_especes,
+                    "cout_eur": val_especes,
+                    "pv_eur": 0.0,
+                    "pv_pct": 0.0,
+                    "div_brut_l": 0.0,
+                    "div_net_l": 0.0,
                 })
                 continue
 
@@ -1248,11 +1265,15 @@ with onglet_portefeuille:
             pru = float(data_pos["pru"])
             info_act = WATCHLIST[nom_act]
             devise = info_act.get("devise", "EUR")
+            sym = "$" if devise == "USD" else "€"
+            env_label = "CTO US" if devise == "USD" else "PEA"
             facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
             prix_jour = float(prix_temps_reel.get(nom_act, info_act["prix_cible"]))
 
             val_ligne_eur = qte * prix_jour * facteur
             cout_ligne_eur = qte * pru * facteur
+            pv_eur = val_ligne_eur - cout_ligne_eur
+            pv_pct = (pv_eur / cout_ligne_eur * 100) if cout_ligne_eur > 0 else 0.0
             div_brut_eur = qte * float(info_act["div_eur"]) * facteur
             div_net_eur = div_brut_eur * (taux_net_usd if devise == "USD" else taux_net_eur)
 
@@ -1269,17 +1290,41 @@ with onglet_portefeuille:
             secteur = info_act["secteur"]
             repartition_secteurs[secteur] = repartition_secteurs.get(secteur, 0.0) + val_ligne_eur
 
+            lignes_detaillees.append({
+                "est_especes": False,
+                "nom_act": nom_act,
+                "env_label": env_label,
+                "devise": devise,
+                "sym": sym,
+                "qte": int(qte),
+                "pru": pru,
+                "prix_jour": prix_jour,
+                "val_eur": val_ligne_eur,
+                "cout_eur": cout_ligne_eur,
+                "pv_eur": pv_eur,
+                "pv_pct": pv_pct,
+                "div_brut_l": div_brut_eur,
+                "div_net_l": div_net_eur,
+            })
+
+        # TRI DÉCROISSANT DU POIDS LE PLUS GROS VERS LE PLUS BAS
+        lignes_triees = sorted(lignes_detaillees, key=lambda x: x["val_eur"], reverse=True)
+
+        lignes_export_csv = []
+        for l_item in lignes_triees:
+            poids_item = (l_item["val_eur"] / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0.0
             lignes_export_csv.append({
-                "Actif": nom_act,
-                "Enveloppe": "CTO (US)" if devise == "USD" else "PEA (EUR)",
-                "Devise": devise,
-                "Quantite": int(qte),
-                "PRU_Devise": round(pru, 2),
-                "Cours_Actuel_Devise": round(prix_jour, 2),
-                "Valorisation_EUR": round(val_ligne_eur, 2),
-                "Plus_Value_EUR": round(val_ligne_eur - cout_ligne_eur, 2),
-                "Dividende_Brut_EUR": round(div_brut_eur, 2),
-                "Dividende_Net_EUR": round(div_net_eur, 2),
+                "Actif": l_item["nom_act"],
+                "Enveloppe": l_item["env_label"],
+                "Devise": l_item["devise"],
+                "Quantite": l_item["qte"],
+                "PRU_Devise": round(l_item["pru"], 2),
+                "Cours_Actuel_Devise": round(l_item["prix_jour"], 2),
+                "Valorisation_EUR": round(l_item["val_eur"], 2),
+                "Poids_Portefeuille_Pct": round(poids_item, 2),
+                "Plus_Value_EUR": round(l_item["pv_eur"], 2),
+                "Dividende_Brut_EUR": round(l_item["div_brut_l"], 2),
+                "Dividende_Net_EUR": round(l_item["div_net_l"], 2),
             })
 
         plus_value_globale = valeur_totale_portefeuille - cout_total_achat
@@ -1317,7 +1362,7 @@ with onglet_portefeuille:
 
         col_titre_p, col_btn_csv = st.columns([3, 1])
         with col_titre_p:
-            st.subheader("📋 Détail de mes lignes & Fiscalité Nette (€)")
+            st.subheader("📋 Détail de mes lignes (Classées du poids le plus gros au plus bas)")
         with col_btn_csv:
             df_export = pd.DataFrame(lignes_export_csv)
             csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
@@ -1329,61 +1374,90 @@ with onglet_portefeuille:
                 use_container_width=True,
             )
 
-        html_port = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif (Enveloppe)</th><th>Qté</th><th>PRU ➔ Cours</th><th>Valorisation (€)</th><th>+/- Value (€ & %)</th><th>Div. Brut / Net (€)</th><th>Poids</th></tr></thead><tbody>"
+        html_port = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif (Enveloppe)</th><th>Qté</th><th>PRU ➔ Cours</th><th>Valorisation (€)</th><th>+/- Value (€ & %)</th><th>Div. Brut / Net (€)</th><th style='width:140px;'>Poids (%)</th></tr></thead><tbody>"
 
-        for nom_act, data_pos in portefeuille_utilisateur.items():
-            if nom_act == "Espèces":
-                v_esp = float(data_pos["pru"])
-                poids_esp = (v_esp / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0
-                html_port += f"<tr><td class='r-name'>💶 Espèces (Liquidités)</td><td>-</td><td>-</td><td><b>{v_esp:,.2f} €</b></td><td><span class='b-neutral'>0.00 €</span></td><td>-</td><td><b>{poids_esp:.1f}%</b></td></tr>"
-                continue
-            if nom_act not in WATCHLIST:
-                continue
-            qte = float(data_pos["qte"])
-            pru = float(data_pos["pru"])
-            info_act = WATCHLIST[nom_act]
-            devise = info_act.get("devise", "EUR")
-            sym = "$" if devise == "USD" else "€"
-            env_label = "CTO US" if devise == "USD" else "PEA"
-            facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
-            prix_jour = float(prix_temps_reel.get(nom_act, info_act["prix_cible"]))
-
-            val_eur = qte * prix_jour * facteur
-            cout_eur = qte * pru * facteur
-            pv_eur = val_eur - cout_eur
-            pv_pct = (pv_eur / cout_eur * 100) if cout_eur > 0 else 0.0
-            div_brut_l = qte * float(info_act["div_eur"]) * facteur
-            div_net_l = div_brut_l * (taux_net_usd if devise == "USD" else taux_net_eur)
-            poids = (val_eur / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0.0
-            b_pv = "b-green" if pv_eur >= 0 else "b-red"
-
-            html_port += f"""
-            <tr>
-                <td class="r-name">{nom_act} <span class="b-neutral" style="font-size:0.75em;">{env_label}</span></td>
-                <td><b>{int(qte)}</b></td>
-                <td>{pru:.2f} {sym} ➔ <b>{prix_jour:.2f} {sym}</b></td>
-                <td><b>{val_eur:,.2f} €</b></td>
-                <td><span class="{b_pv}">{pv_eur:+,.2f} € ({pv_pct:+.1f}%)</span></td>
-                <td><span style="opacity:0.75;">{div_brut_l:.1f} €</span> ➔ <b style="color:#2ecc71;">{div_net_l:.2f} € net</b></td>
-                <td><b>{poids:.1f}%</b></td>
-            </tr>
-            """
+        for l_item in lignes_triees:
+            poids = (l_item["val_eur"] / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0.0
+            if l_item["est_especes"]:
+                html_port += f"""
+                <tr>
+                    <td class='r-name'>💶 Espèces (Liquidités)</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td><b>{l_item['val_eur']:,.2f} €</b></td>
+                    <td><span class='b-neutral'>0.00 €</span></td>
+                    <td>-</td>
+                    <td>
+                        <div style="font-weight:800;">{poids:.1f}%</div>
+                        <div class="score-bg"><div style="width:{min(100, poids)}%; background:#95a5a6; height:100%;"></div></div>
+                    </td>
+                </tr>
+                """
+            else:
+                b_pv = "b-green" if l_item["pv_eur"] >= 0 else "b-red"
+                html_port += f"""
+                <tr>
+                    <td class="r-name">{l_item['nom_act']} <span class="b-neutral" style="font-size:0.75em;">{l_item['env_label']}</span></td>
+                    <td><b>{l_item['qte']}</b></td>
+                    <td>{l_item['pru']:.2f} {l_item['sym']} ➔ <b>{l_item['prix_jour']:.2f} {l_item['sym']}</b></td>
+                    <td><b>{l_item['val_eur']:,.2f} €</b></td>
+                    <td><span class="{b_pv}">{l_item['pv_eur']:+,.2f} € ({l_item['pv_pct']:+.1f}%)</span></td>
+                    <td><span style="opacity:0.75;">{l_item['div_brut_l']:.1f} €</span> ➔ <b style="color:#2ecc71;">{l_item['div_net_l']:.2f} € net</b></td>
+                    <td>
+                        <div style="font-weight:800;">{poids:.1f}%</div>
+                        <div class="score-bg"><div style="width:{min(100, poids)}%; background:#3498db; height:100%;"></div></div>
+                    </td>
+                </tr>
+                """
         html_port += "</tbody></table>"
         afficher_html(html_port)
 
         col_sec, col_hist = st.columns(2)
 
         with col_sec:
-            st.subheader("🍩 Répartition Sectorielle")
-            html_sec = "<div style='background:rgba(128,128,128,0.04); padding:16px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);'>"
-            for sec, montant_s in sorted(repartition_secteurs.items(), key=lambda x: x[1], reverse=True):
-                pct_s = (montant_s / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0
-                c_sec = "#e74c3c" if pct_s > 35 else ("#f39c12" if pct_s > 25 else "#3498db")
+            st.subheader("🍩 Répartition Sectorielle en Camembert")
+            secteurs_tries = sorted(repartition_secteurs.items(), key=lambda x: x[1], reverse=True)
+            df_camembert = pd.DataFrame([
+                {
+                    "Secteur": sec,
+                    "Montant (€)": round(montant_s, 2),
+                    "Poids (%)": round((montant_s / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0.0, 1),
+                }
+                for sec, montant_s in secteurs_tries
+            ])
+
+            # Camembert / Donut interactif Vega-Lite natif Streamlit
+            spec_camembert = {
+                "height": 310,
+                "mark": {"type": "arc", "innerRadius": 55, "outerRadius": 125, "stroke": "#ffffff", "strokeWidth": 2},
+                "encoding": {
+                    "theta": {"field": "Montant (€)", "type": "quantitative", "stack": True},
+                    "color": {
+                        "field": "Secteur",
+                        "type": "nominal",
+                        "scale": {"range": ["#2ecc71", "#3498db", "#9b59b6", "#f1c40f", "#e67e22", "#e74c3c", "#1abc9c", "#34495e", "#fd79a8"]},
+                        "legend": {"title": "Secteurs", "orient": "right"},
+                    },
+                    "tooltip": [
+                        {"field": "Secteur", "type": "nominal"},
+                        {"field": "Montant (€)", "type": "quantitative", "format": ",.2f"},
+                        {"field": "Poids (%)", "type": "quantitative", "format": ".1f"},
+                    ],
+                },
+                "view": {"stroke": None},
+            }
+            st.vega_lite_chart(df_camembert, spec_camembert, use_container_width=True)
+
+            # Légende détaillée sous le camembert
+            html_sec = "<div style='background:rgba(128,128,128,0.04); padding:14px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);'>"
+            for row_s in df_camembert.to_dict("records"):
+                pct_s = row_s["Poids (%)"]
+                c_sec = "#e74c3c" if pct_s > 35 else ("#f39c12" if pct_s > 25 else "#2ecc71")
                 html_sec += f"""
-                <div style="margin-bottom: 12px;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.9em; font-weight:700; margin-bottom:4px;">
-                        <span>{sec}</span>
-                        <span>{montant_s:,.0f} € ({pct_s:.1f}%)</span>
+                <div style="margin-bottom: 9px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.88em; font-weight:700; margin-bottom:3px;">
+                        <span>{row_s['Secteur']}</span>
+                        <span>{row_s['Montant (€)']:,.0f} € ({pct_s:.1f}%)</span>
                     </div>
                     <div class="score-bg"><div style="width:{min(100, pct_s)}%; background:{c_sec}; height:100%;"></div></div>
                 </div>
@@ -1401,7 +1475,7 @@ with onglet_portefeuille:
                         df_h_chart = df_h.set_index("date")[["valorisation_pea", "capital_investi"]].rename(
                             columns={"valorisation_pea": "Valorisation Totale (€)", "capital_investi": "Capital Investi (€)"}
                         )
-                        st.line_chart(df_h_chart)
+                        st.line_chart(df_h_chart, height=340)
                     else:
                         st.info("Cliquez sur « 💾 Sauver » dans la barre latérale pour enregistrer votre premier point d'historique Cloud.")
                 except Exception:
@@ -1411,15 +1485,20 @@ with onglet_portefeuille:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 3 : CALENDRIER DES DIVIDENDES SUR 12 MOIS & PROJECTION
+# ONGLET 3 : VRAI CALENDRIER 12 MOIS, DIAGRAMME BÂTONS & BOULE DE NEIGE (CURSEURS)
 # ------------------------------------------------------------------------------
 with onglet_dividendes:
-    st.subheader("📅 Calendrier Annuel des Dividendes & Effet Boule de Neige")
+    st.subheader("📅 Calendrier Annuel des Dividendes & Simulateur Effet Boule de Neige")
 
     if not portefeuille_utilisateur:
         st.warning("Ajoutez des actions dans votre portefeuille pour générer votre calendrier de revenus passifs.")
     else:
         mois_ordre = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+        noms_mois_complets = {
+            "Jan": "Janvier", "Fév": "Février", "Mar": "Mars", "Avr": "Avril",
+            "Mai": "Mai", "Juin": "Juin", "Juil": "Juillet", "Août": "Août",
+            "Sep": "Septembre", "Oct": "Octobre", "Nov": "Novembre", "Déc": "Décembre"
+        }
         revenus_par_mois = {m: 0.0 for m in mois_ordre}
         details_par_mois = {m: [] for m in mois_ordre}
         total_annuel_div = 0.0
@@ -1440,10 +1519,11 @@ with onglet_dividendes:
                 for m in mois_versement:
                     if m in revenus_par_mois:
                         revenus_par_mois[m] += montant_par_versement
-                        details_par_mois[m].append(f"{nom_act} ({montant_par_versement:.1f} €)")
+                        details_par_mois[m].append((nom_act, montant_par_versement))
 
         rente_mensuelle_moy = total_annuel_div / 12.0
         meilleur_mois = max(revenus_par_mois.items(), key=lambda x: x[1]) if total_annuel_div > 0 else ("Mai", 0.0)
+        nb_mois_actifs = sum(1 for v in revenus_par_mois.values() if v > 0)
 
         html_div_kpi = f"""
         <div class="argon-grid">
@@ -1455,11 +1535,11 @@ with onglet_dividendes:
             <div class="argon-card">
                 <div class="argon-title">🗓️ Revenu Mensuel Moyen</div>
                 <div class="argon-val" style="color:#3498db;">{rente_mensuelle_moy:,.2f} € / mois</div>
-                <div class="argon-sub">Lissé sur 12 mois</div>
+                <div class="argon-sub">{nb_mois_actifs} / 12 mois avec versement</div>
             </div>
             <div class="argon-card">
                 <div class="argon-title">🏆 Mois Record</div>
-                <div class="argon-val">{meilleur_mois[0]} ({meilleur_mois[1]:.1f} €)</div>
+                <div class="argon-val">{noms_mois_complets[meilleur_mois[0]]} ({meilleur_mois[1]:.1f} €)</div>
                 <div class="argon-sub">Pic de détachement annuel</div>
             </div>
             <div class="argon-card">
@@ -1471,69 +1551,197 @@ with onglet_dividendes:
         """
         afficher_html(html_div_kpi)
 
-        st.markdown("#### 🗓️ Répartition Mensuelle des Versements (Janvier à Décembre)")
-        html_cal = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois</th><th>Montant Estimé (€)</th><th style='text-align:left;'>Détail des Entreprises Payeuses</th><th style='width:220px;'>Poids Mensuel</th></tr></thead><tbody>"
-        max_m = max(revenus_par_mois.values()) if max(revenus_par_mois.values()) > 0 else 1.0
-        for m in mois_ordre:
-            val_m = revenus_par_mois[m]
-            det_str = ", ".join(details_par_mois[m]) if details_par_mois[m] else "<span style='opacity:0.5;'>Aucun détachement</span>"
-            pct_bar = (val_m / max_m * 100) if max_m > 0 else 0
-            badge_m = f"<span class='b-green'>{val_m:.2f} €</span>" if val_m > 0 else "<span class='b-neutral'>0.00 €</span>"
-            html_cal += f"""
-            <tr>
-                <td class="r-name">{m}</td>
-                <td>{badge_m}</td>
-                <td style="text-align:left; font-size:0.9em;">{det_str}</td>
-                <td><div class="score-bg"><div style="width:{pct_bar}%; background:#2ecc71; height:100%;"></div></div></td>
-            </tr>
+        # 1. VRAI CALENDRIER VISUEL MOIS PAR MOIS (12 CARTES DE JANVIER À DÉCEMBRE)
+        st.markdown("#### 🗓️ Calendrier Mois par Mois des Dividendes Versés sur l'Année")
+        html_grille_12mois = "<div class='cal-grid'>"
+        for idx_m, m_code in enumerate(mois_ordre, start=1):
+            montant_m = revenus_par_mois[m_code]
+            liste_ent = details_par_mois[m_code]
+            classe_carte = "cal-card-active" if montant_m > 0 else "cal-card"
+            couleur_montant = "#2ecc71" if montant_m > 0 else "rgba(128,128,128,0.5)"
+
+            if liste_ent:
+                pills_html = "".join(f"<span class='cal-pill'><b>{nom_e}</b> : {val_e:.1f} €</span>" for nom_e, val_e in liste_ent)
+            else:
+                pills_html = "<span style='font-size:0.82em; opacity:0.45; font-style:italic;'>Aucun détachement prévu</span>"
+
+            html_grille_12mois += f"""
+            <div class="{classe_carte}">
+                <div>
+                    <div class="cal-month">
+                        <span>{idx_m:02d}. {noms_mois_complets[m_code]}</span>
+                        <span style="font-size:0.85em;">{'💰' if montant_m > 0 else '⚪'}</span>
+                    </div>
+                    <div style="margin-bottom:10px;">{pills_html}</div>
+                </div>
+                <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px;">
+                    <span style="font-size:0.78em; opacity:0.75; margin-right:6px;">Total :</span>
+                    <span class="cal-total" style="color:{couleur_montant};">{montant_m:,.2f} €</span>
+                </div>
+            </div>
             """
-        html_cal += "</tbody></table>"
-        afficher_html(html_cal)
+        html_grille_12mois += "</div>"
+        afficher_html(html_grille_12mois)
 
-        st.markdown("#### ❄️ Simulateur d'Effet Boule de Neige sur 10 Ans (DCA + Dividendes Réinvestis)")
-        rendement_moy_proj = (total_annuel_div / valeur_totale_portefeuille) if valeur_totale_portefeuille > 0 else 0.045
-        rendement_moy_proj = max(0.03, min(0.09, rendement_moy_proj))
+        # 2. DIAGRAMME EN BÂTONS DES DIVIDENDES MENSUELS (ORDRE CHRONOLOGIQUE)
+        st.markdown("#### 📊 Diagramme en Bâtons des Dividendes par Mois (€)")
+        df_bar_div = pd.DataFrame([
+            {"Ordre": i, "Mois": noms_mois_complets[m], "Dividendes (€)": round(revenus_par_mois[m], 2)}
+            for i, m in enumerate(mois_ordre)
+        ])
+        spec_bar_div = {
+            "height": 300,
+            "mark": {"type": "bar", "cornerRadiusTopLeft": 6, "cornerRadiusTopRight": 6, "color": "#2ecc71"},
+            "encoding": {
+                "x": {"field": "Mois", "type": "nominal", "sort": list(noms_mois_complets.values()), "axis": {"labelAngle": 0, "title": "Mois de l'année"}},
+                "y": {"field": "Dividendes (€)", "type": "quantitative", "axis": {"title": "Montant versé (€)"}},
+                "tooltip": [
+                    {"field": "Mois", "type": "nominal"},
+                    {"field": "Dividendes (€)", "type": "quantitative", "format": ",.2f"},
+                ],
+            },
+        }
+        st.vega_lite_chart(df_bar_div, spec_bar_div, use_container_width=True)
 
-        cap_proj = valeur_totale_portefeuille
+        # 3. SIMULATEUR D'EFFET BOULE DE NEIGE INTERACTIF AVEC CURSEURS & GRAPHIQUES
+        st.markdown("---")
+        st.markdown("#### ❄️ Simulateur Interactif d'Effet Boule de Neige (DCA + Dividendes Réinvestis)")
+
+        rendement_actuel_pf = (total_annuel_div / valeur_totale_portefeuille * 100.0) if valeur_totale_portefeuille > 0 else 4.8
+        rendement_defaut_slider = float(max(1.5, min(10.0, round(rendement_actuel_pf, 1))))
+
+        col_sl1, col_sl2, col_sl3, col_sl4 = st.columns(4)
+        with col_sl1:
+            horizon_annees = st.slider("⏳ Horizon (Années)", min_value=5, max_value=30, value=15, step=1)
+        with col_sl2:
+            dca_simule = st.slider("💶 Apport DCA Mensuel (€)", min_value=0, max_value=3000, value=int(BUDGET_MENSUEL), step=50)
+        with col_sl3:
+            rendement_simule_pct = st.slider("🌱 Rendement Dividende (%)", min_value=1.0, max_value=12.0, value=rendement_defaut_slider, step=0.2)
+        with col_sl4:
+            croissance_annuelle_pct = st.slider("📈 Croissance Annuelle Cours/Div (%)", min_value=0.0, max_value=10.0, value=3.0, step=0.5)
+
+        cap_courant = valeur_totale_portefeuille
+        cap_investi_cumule = cout_total_achat if cout_total_achat > 0 else valeur_totale_portefeuille
+        div_cumules = 0.0
         lignes_proj = []
-        for annee in range(1, 11):
-            apport_an = BUDGET_MENSUEL * 12
-            div_an = (cap_proj + apport_an / 2) * rendement_moy_proj
-            cap_proj = cap_proj + apport_an + div_an
+        donnees_graph_boule = []
+
+        for annee in range(1, horizon_annees + 1):
+            apport_annuel = float(dca_simule * 12)
+            cap_investi_cumule += apport_annuel
+            plus_value_croissance = cap_courant * (croissance_annuelle_pct / 100.0)
+            div_annee = (cap_courant + apport_annuel / 2.0) * (rendement_simule_pct / 100.0)
+            div_cumules += div_annee
+            cap_courant = cap_courant + apport_annuel + plus_value_croissance + div_annee
+            rente_mensuelle_an = div_annee / 12.0
+
+            annee_cal = datetime.now().year + annee
+            donnees_graph_boule.append({
+                "Année": f"{annee_cal}",
+                "Capital Total Boule de Neige (€)": round(cap_courant, 0),
+                "Total Apports Personnels (€)": round(cap_investi_cumule, 0),
+                "Rente Annuelle (€/an)": round(div_annee, 0),
+            })
             lignes_proj.append({
-                "Horizon": f"Année +{annee} ({datetime.now().year + annee})",
-                "Capital Cumulé Estimé": f"{cap_proj:,.0f} €",
-                "Rente Annuelle Estimée": f"{div_an:,.0f} € / an",
-                "Rente Mensuelle Moyenne": f"{div_an/12:,.1f} € / mois",
+                "Horizon": f"Année +{annee} ({annee_cal})",
+                "Apports Cumulés": f"{cap_investi_cumule:,.0f} €",
+                "Capital Projeté": f"{cap_courant:,.0f} €",
+                "Gains & Dividendes Réinvestis": f"+{cap_courant - cap_investi_cumule:,.0f} €",
+                "Rente Annuelle": f"{div_annee:,.0f} € / an",
+                "Rente Mensuelle": f"{rente_mensuelle_an:,.1f} € / mois",
             })
 
-        html_proj = "<table class='r-table'><thead><tr><th style='text-align:left;'>Horizon</th><th>Capital Projeté (€)</th><th>Rente Annuelle (€/an)</th><th>Rente Mensuelle (€/mois)</th></tr></thead><tbody>"
-        for lp in lignes_proj:
-            html_proj += f"<tr><td class='r-name'>{lp['Horizon']}</td><td><b>{lp['Capital Cumulé Estimé']}</b></td><td style='color:#2ecc71; font-weight:800;'>{lp['Rente Annuelle Estimée']}</td><td><span class='b-blue'>{lp['Rente Mensuelle Moyenne']}</span></td></tr>"
-        html_proj += "</tbody></table>"
-        afficher_html(html_proj)
+        dernier_pt = donnees_graph_boule[-1]
+        gain_pur_interets = dernier_pt["Capital Total Boule de Neige (€)"] - dernier_pt["Total Apports Personnels (€)"]
+
+        html_kpi_snow = f"""
+        <div class="argon-grid">
+            <div class="argon-card">
+                <div class="argon-title">🏔️ Capital Final à {horizon_annees} Ans</div>
+                <div class="argon-val" style="color:#2ecc71;">{dernier_pt['Capital Total Boule de Neige (€)']:,.0f} €</div>
+                <div class="argon-sub">Dont Apports : <b>{dernier_pt['Total Apports Personnels (€)']:,.0f} €</b></div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">✨ Intérêts Composés Gagnés</div>
+                <div class="argon-val" style="color:#9b59b6;">+{gain_pur_interets:,.0f} €</div>
+                <div class="argon-sub">Dividendes réinvestis + Croissance</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">💵 Future Rente Annuelle</div>
+                <div class="argon-val" style="color:#3498db;">{dernier_pt['Rente Annuelle (€/an)']:,.0f} € / an</div>
+                <div class="argon-sub">En {dernier_pt['Année']}</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">🏖️ Future Rente Mensuelle</div>
+                <div class="argon-val" style="color:#f39c12;">{dernier_pt['Rente Annuelle (€/an)']/12.0:,.0f} € / mois</div>
+                <div class="argon-sub">Revenu passif mensuel estimé</div>
+            </div>
+        </div>
+        """
+        afficher_html(html_kpi_snow)
+
+        col_g_snow1, col_g_snow2 = st.columns(2)
+        df_snow_chart = pd.DataFrame(donnees_graph_boule).set_index("Année")
+        with col_g_snow1:
+            st.markdown("**📈 Courbe d'Accélération : Capital Total vs Apports Personnels (€)**")
+            st.area_chart(df_snow_chart[["Capital Total Boule de Neige (€)", "Total Apports Personnels (€)"]], height=300)
+        with col_g_snow2:
+            st.markdown("**💵 Progression de votre Rente Annuelle de Dividendes (€/an)**")
+            st.bar_chart(df_snow_chart[["Rente Annuelle (€/an)"]], height=300)
+
+        with st.expander(f"📋 Voir le tableau détaillé année par année sur {horizon_annees} ans", expanded=True):
+            html_proj = "<table class='r-table'><thead><tr><th style='text-align:left;'>Horizon</th><th>Apports Cumulés</th><th>Capital Projeté (€)</th><th>Intérêts Composés</th><th>Rente Annuelle</th><th>Rente Mensuelle</th></tr></thead><tbody>"
+            for lp in lignes_proj:
+                html_proj += f"<tr><td class='r-name'>{lp['Horizon']}</td><td>{lp['Apports Cumulés']}</td><td><b>{lp['Capital Projeté']}</b></td><td style='color:#9b59b6; font-weight:700;'>{lp['Gains & Dividendes Réinvestis']}</td><td style='color:#2ecc71; font-weight:800;'>{lp['Rente Annuelle']}</td><td><span class='b-blue'>{lp['Rente Mensuelle']}</span></td></tr>"
+            html_proj += "</tbody></table>"
+            afficher_html(html_proj)
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 4 : COACH & AUDIT IA 2.0 (CONNECTÉ À L'API GEMINI PRO)
+# ONGLET 4 : COACH & AUDIT IA 2.0 (INTERFACE COMPLÈTE + MOTEUR GEMINI AVANCÉ)
 # ------------------------------------------------------------------------------
 with onglet_ia:
-    st.subheader("🤖 Coach & Audit IA 2.0 (Propulsé par Google Gemini)")
+    st.subheader("🤖 Coach & Audit IA 2.0 (Diagnostic Instantané & Intelligence Gemini)")
 
     quota_utilise = st.session_state.get("quota_ia_utilise", 0)
     quota_restant = max(0, quota_ia_max - quota_utilise)
 
+    # Calcul du Diagnostic Local Instantané du Portefeuille
+    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST)
+    poids_max_ligne = 0.0
+    nom_max_ligne = "Aucune"
+    if valeur_totale_portefeuille > 0 and lignes_triees:
+        for l_it in lignes_triees:
+            if not l_it["est_especes"]:
+                p_it = (l_it["val_eur"] / valeur_totale_portefeuille) * 100.0
+                if p_it > poids_max_ligne:
+                    poids_max_ligne = p_it
+                    nom_max_ligne = l_it["nom_act"]
+
+    note_sante_pf = min(100, max(20, int(40 + min(30, nb_lignes_actions * 5) + (20 if poids_max_ligne <= 30 else 5) + (10 if len(repartition_secteurs) >= 3 else 0))))
+    taux_couverture_dca = (dividendes_bruts_totaux_eur / (BUDGET_MENSUEL * 12) * 100.0) if BUDGET_MENSUEL > 0 else 0.0
+
     html_ia_header = f"""
     <div class="argon-grid">
         <div class="argon-card">
-            <div class="argon-title">⚡ Crédits d'Audit IA du Jour</div>
-            <div class="argon-val" style="color:#9b59b6;">{quota_restant} / {quota_ia_max} disponibles</div>
-            <div class="argon-sub">{'Offre Découverte (2/j)' if mode_gratuit else 'Abonné Boursy Pro (15/j)'}</div>
+            <div class="argon-title">🩺 Score de Santé Portefeuille</div>
+            <div class="argon-val" style="color:#2ecc71;">{note_sante_pf} / 100</div>
+            <div class="argon-sub">{nb_lignes_actions} ligne(s) | {len(repartition_secteurs)} secteur(s)</div>
         </div>
         <div class="argon-card">
-            <div class="argon-title">🧠 Contexte Transmis au Coach</div>
-            <div class="argon-val">{len(portefeuille_utilisateur)} lignes & {len(donnees_t1)} signaux</div>
-            <div class="argon-sub">Météo VIX ({vix_val:.1f}), EUR/USD ({TAUX_USD_EUR:.3f}) & Indicateurs inclus</div>
+            <div class="argon-title">⚖️ Ligne Principale (Concentration)</div>
+            <div class="argon-val" style="color:{'#2ecc71' if poids_max_ligne <= 30 else '#f39c12'};">{poids_max_ligne:.1f}%</div>
+            <div class="argon-sub">Plus forte position : <b>{nom_max_ligne}</b></div>
+        </div>
+        <div class="argon-card">
+            <div class="argon-title">🔄 Autonomie Financière DCA</div>
+            <div class="argon-val" style="color:#3498db;">{taux_couverture_dca:.1f}%</div>
+            <div class="argon-sub">Part du DCA annuel financée par vos dividendes</div>
+        </div>
+        <div class="argon-card">
+            <div class="argon-title">⚡ Crédits d'Audit IA du Jour</div>
+            <div class="argon-val" style="color:#9b59b6;">{quota_restant} / {quota_ia_max}</div>
+            <div class="argon-sub">Météo VIX ({vix_val:.1f}) & EUR/USD ({TAUX_USD_EUR:.3f}) actifs</div>
         </div>
     </div>
     """
@@ -1545,29 +1753,37 @@ with onglet_ia:
             return "⚠️ Clé `GEMINI_API_KEY` absente des Secrets Streamlit Cloud. Veuillez vérifier vos paramètres."
 
         resume_pf = []
-        for nom_a, d_pos in portefeuille_utilisateur.items():
-            if nom_a == "Espèces":
-                resume_pf.append(f"- Espèces : {d_pos['pru']} €")
-            elif nom_a in WATCHLIST:
-                dev_a = WATCHLIST[nom_a].get("devise", "EUR")
-                cours_a = prix_temps_reel.get(nom_a, WATCHLIST[nom_a]["prix_cible"])
-                resume_pf.append(f"- {nom_a} ({dev_a}) : Qté={d_pos['qte']}, PRU={d_pos['pru']} {dev_a}, Cours={cours_a:.2f} {dev_a}, Div={WATCHLIST[nom_a]['div_eur']} {dev_a}")
+        for l_it in lignes_triees:
+            if l_it["est_especes"]:
+                resume_pf.append(f"- Espèces : {l_it['val_eur']:.2f} €")
+            else:
+                p_l = (l_it["val_eur"] / valeur_totale_portefeuille * 100) if valeur_totale_portefeuille > 0 else 0
+                resume_pf.append(
+                    f"- {l_it['nom_act']} ({l_it['env_label']}) : Qté={l_it['qte']}, PRU={l_it['pru']} {l_it['sym']}, "
+                    f"Cours={l_it['prix_jour']:.2f} {l_it['sym']}, Val={l_it['val_eur']:.1f} € (Poids {poids:.1f}%), "
+                    f"PV={l_it['pv_eur']:+.1f} € ({l_it['pv_pct']:+.1f}%), Div Net={l_it['div_net_l']:.2f} €/an"
+                )
 
-        resume_radar = [f"- {d['Actif']} : Prix={d['Prix']}, Cible={d['Prix Cible']}, RSI={d['RSI']}, Stoch={d['Stoch']}%, EMA={d['EMA 2/12']}, Score={d['Score']}/100 ({d['Décision']})" for d in donnees_t1[:12]]
+        resume_radar = [
+            f"- {d['Actif']} : Prix={d['Prix']}, Cible={d['Prix Cible']}, RSI={d['RSI']}, Stoch={d['Stoch']}%, EMA={d['EMA 2/12']}, Score={d['Score']}/100 ({d['Décision']})"
+            for d in donnees_t1[:15]
+        ]
 
-        prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert pédagogique en gestion de portefeuille PEA, actions internationales (US) et stratégie DCA à dividendes.
-Voici les données en direct de l'utilisateur :
+        prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
+Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
-- Budget DCA mensuel : {BUDGET_MENSUEL} €
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
-- Portefeuille actuel :
+- Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_globale:+.2f} €)
+- Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
+- Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois
+- Détail des lignes du portefeuille (triées par poids décroissant) :
 {chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
-- Radar technique et fondamental du jour :
+- Signaux techniques et fondamentaux du Radar Boursy aujourd'hui :
 {chr(10).join(resume_radar)}
 
-Demande de l'utilisateur : {question_utilisateur}
+Mission demandée par l'utilisateur : {question_utilisateur}
 
-Réponds en français de manière structurée, concrète, chiffrée et bienveillante (rappelle brièvement qu'il s'agit d'une analyse pédagogique et non d'un conseil en investissement financier réglementé).
+Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
         modeles_test = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         for mod in modeles_test:
@@ -1575,7 +1791,7 @@ Réponds en français de manière structurée, concrète, chiffrée et bienveill
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={cle_gemini}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
                 req_ia = urllib.request.Request(url_api, data=payload_ia, headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
+                with urllib.request.urlopen(req_ia, timeout=28) as resp_ia:
                     res_json = json.loads(resp_ia.read().decode("utf-8"))
                     texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     return texte_rep
@@ -1583,36 +1799,74 @@ Réponds en français de manière structurée, concrète, chiffrée et bienveill
                 continue
         return "❌ Impossible de joindre l'API Gemini pour le moment. Vérifiez que votre clé API Gemini est valide dans les Secrets Streamlit."
 
-    st.markdown("#### 🚀 Lancer un Audit Intelligent en 1 Clic")
+    st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
+
     col_ia1, col_ia2, col_ia3 = st.columns(3)
-
     prompt_choisi = None
-    if col_ia1.button("🔍 1. Audit Complet & Fiscalité", use_container_width=True):
-        prompt_choisi = "Réalise un audit complet de mon portefeuille actuel : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), lignes en plus ou moins-value, et optimisation de ma rente."
-    if col_ia2.button("🛒 2. Optimiser mon DCA selon le VIX", use_container_width=True):
-        prompt_choisi = f"Compte tenu du niveau actuel du VIX ({vix_val:.1f}) et des scores techniques (RSI, Stochastique, EMA 2/12), comment répartir au mieux mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci ?"
-    if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", use_container_width=True):
-        prompt_choisi = "Analyse l'intérêt d'arbitrer ou de renforcer mes valeurs européennes de rendement face aux valeurs de croissance américaines compte tenu du taux EUR/USD actuel."
+    titre_audit = ""
 
-    question_libre = st.text_input("💬 Ou posez votre propre question boursière au Coach IA :", placeholder="Ex: Que penses-tu de mon PRU sur Rubis et TotalEnergies ? Dois-je renforcer Microsoft ?")
-    if st.button("✨ Analyser ma question avec Gemini", type="primary"):
-        if question_libre.strip():
-            prompt_choisi = question_libre.strip()
+    if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", use_container_width=True):
+        titre_audit = "Audit Complet 360° & Fiscalité"
+        prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
+    if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
+        titre_audit = "Plan d'Action DCA du Mois"
+        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci ?"
+    if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", use_container_width=True):
+        titre_audit = "Arbitrage PEA (EUR) vs Actions US ($)"
+        prompt_choisi = "Analyse la pertinence d'arbitrer ou de renforcer mes valeurs européennes de rendement en PEA face aux géants américains en CTO compte tenu de la parité EUR/USD actuelle et de mes lignes."
+
+    col_ia4, col_ia5 = st.columns(2)
+    if col_ia4.button("🛡️ 4. Stress-Test, Risques & Diversification", use_container_width=True):
+        titre_audit = "Stress-Test, Risques & Diversification"
+        prompt_choisi = "Analyse les risques de concentration de mon portefeuille (poids de mes plus grosses lignes et secteurs dominants), fais un stress-test en cas de baisse de marché de 20% et donne-moi des pistes concrètes de diversification."
+    if col_ia5.button("💵 5. Optimisation de la Rente & Boule de Neige", use_container_width=True):
+        titre_audit = "Optimisation de la Rente & Calendrier"
+        prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et propose une stratégie pour accélérer mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
+
+    st.markdown("---")
+    col_q_input, col_q_btn, col_q_clear = st.columns([4, 1.3, 0.8])
+    with col_q_input:
+        question_libre = st.text_input(
+            "💬 Posez une question personnalisée à votre Coach IA 2.0 :",
+            placeholder="Ex: Que penses-tu de mon PRU sur Rubis et TotalEnergies ? À quel prix racheter Pernod Ricard ?",
+            label_visibility="collapsed",
+        )
+    with col_q_btn:
+        if st.button("✨ Lancer l'Analyse IA", type="primary", use_container_width=True):
+            if question_libre.strip():
+                titre_audit = f"Question libre : {question_libre.strip()}"
+                prompt_choisi = question_libre.strip()
+    with col_q_clear:
+        if st.button("🗑️ Effacer", use_container_width=True):
+            st.session_state["reponse_ia_coach"] = ""
+            st.session_state["historique_chat_ia"] = []
+            st.rerun()
 
     if prompt_choisi:
         if quota_restant <= 0:
             st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez à l'offre Boursy Pro pour disposer de 15 audits par jour !")
         else:
-            with st.spinner("🧠 Le Coach IA 2.0 analyse la météo des marchés, votre portefeuille et les indicateurs techniques..."):
+            with st.spinner("🧠 Le Coach IA 2.0 analyse la météo des marchés, votre portefeuille et les indicateurs techniques en direct..."):
                 reponse_texte = appeler_gemini_coach(prompt_choisi)
                 st.session_state["quota_ia_utilise"] = quota_utilise + 1
                 st.session_state["reponse_ia_coach"] = reponse_texte
+                st.session_state["historique_chat_ia"].insert(0, {
+                    "heure": datetime.now().strftime("%H:%M"),
+                    "titre": titre_audit,
+                    "reponse": reponse_texte,
+                })
                 st.rerun()
 
     if st.session_state.get("reponse_ia_coach"):
-        st.markdown("---")
-        st.markdown("### 📋 Rapport d'Analyse de votre Coach IA 2.0")
+        afficher_html("<div class='ia-box'><b>📋 Dernier Rapport d'Audit de votre Coach IA 2.0 :</b></div>")
         st.markdown(st.session_state["reponse_ia_coach"])
+
+    if len(st.session_state.get("historique_chat_ia", [])) > 1:
+        with st.expander(f"🕒 Consulter l'historique de vos {len(st.session_state['historique_chat_ia'])} analyses IA de la session", expanded=False):
+            for idx_h, item_h in enumerate(st.session_state["historique_chat_ia"]):
+                st.markdown(f"#### {idx_h + 1}. {item_h['titre']} *(à {item_h['heure']})*")
+                st.markdown(item_h["reponse"])
+                st.markdown("---")
 
 # Footer & Mentions Légales
 st.markdown("---")
@@ -1623,5 +1877,5 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
-afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime</div>")
+afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
  
