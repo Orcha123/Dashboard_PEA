@@ -14,6 +14,9 @@ st.set_page_config(
     layout="wide",
 )
 
+# Adresse email Administrateur Fondateur
+ADMIN_EMAIL = "orcha12345@gmail.com"
+
 # --- FONCTION ANTI-BUG D'AFFICHAGE HTML STREAMLIT ---
 def afficher_html(html_brut):
     """Supprime les indentations et lignes vides pour empêcher Streamlit d'afficher le HTML en bloc de code."""
@@ -31,6 +34,40 @@ def init_supabase():
         return None
 
 supabase = init_supabase()
+
+# --- VÉRIFICATION AUTOMATIQUE D'ABONNEMENT STRIPE (SANS SERVEUR EXTERNE) ---
+def verifier_abonnement_stripe(email_client):
+    """Vérifie via l'API REST Stripe si l'email possède un abonnement actif et débloque le compte dans Supabase."""
+    if not email_client or not hasattr(st, "secrets"):
+        return False
+    cle_stripe = str(st.secrets.get("STRIPE_SECRET_KEY", "")).strip().strip('"').strip("'")
+    if not cle_stripe:
+        return False
+
+    try:
+        url_cust = f"https://api.stripe.com/v1/customers?email={urllib.parse.quote(email_client.strip())}&limit=5"
+        req_cust = urllib.request.Request(
+            url_cust,
+            headers={"Authorization": f"Bearer {cle_stripe}"},
+        )
+        with urllib.request.urlopen(req_cust, timeout=8) as resp:
+            data_cust = json.loads(resp.read().decode("utf-8"))
+
+        for client in data_cust.get("data", []):
+            cid = client.get("id")
+            url_sub = f"https://api.stripe.com/v1/subscriptions?customer={cid}&status=all&limit=5"
+            req_sub = urllib.request.Request(
+                url_sub,
+                headers={"Authorization": f"Bearer {cle_stripe}"},
+            )
+            with urllib.request.urlopen(req_sub, timeout=8) as resp_s:
+                data_sub = json.loads(resp_s.read().decode("utf-8"))
+                for sub in data_sub.get("data", []):
+                    if sub.get("status") in ("active", "trialing"):
+                        return True
+        return False
+    except Exception:
+        return False
 
 # --- VALEURS PAR DÉFAUT (NOUVEAUX COMPTES & VISITEURS) ---
 WATCHLIST_DEFAUT = {
@@ -66,7 +103,7 @@ if "portefeuille" not in st.session_state:
 if "budget_dca" not in st.session_state:
     st.session_state["budget_dca"] = 450.0
 if "est_abonne_pro" not in st.session_state:
-    st.session_state["est_abonne_pro"] = True
+    st.session_state["est_abonne_pro"] = False
 
 date_jour_str = datetime.now().strftime("%Y-%m-%d")
 if st.session_state.get("quota_ia_date") != date_jour_str:
@@ -100,15 +137,20 @@ def sauvegarder_dans_cloud():
     if supabase and st.session_state["user"]:
         try:
             user_id_str = str(st.session_state["user"].id)
+            email_str = str(st.session_state["user"].email)
             watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+
+            est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
+            st.session_state["est_abonne_pro"] = est_pro_val
 
             # 1. Sauvegarde du profil principal
             payload = {
                 "user_id": user_id_str,
-                "email": str(st.session_state["user"].email),
+                "email": email_str,
                 "budget_dca": float(st.session_state["budget_dca"]),
                 "watchlist": dict(watchlist_actuelle),
                 "portefeuille": dict(st.session_state["portefeuille"]),
+                "est_abonne_pro": est_pro_val,
                 "updated_at": datetime.utcnow().isoformat()
             }
             supabase.table("user_data").upsert(payload).execute()
@@ -174,6 +216,7 @@ else:
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email_input, "password": password_input})
                     st.session_state["user"] = res.user
+                    email_connecte = str(res.user.email).lower()
 
                     data = supabase.table("user_data").select("*").eq("user_id", res.user.id).execute()
                     if data.data:
@@ -186,10 +229,17 @@ else:
                         st.session_state["portefeuille"] = portefeuille_cloud
 
                         st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
-                        st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", True))
+                        est_pro_bdd = bool(profil.get("est_abonne_pro", False))
+                        if email_connecte == ADMIN_EMAIL.lower():
+                            est_pro_bdd = True
+                        elif not est_pro_bdd and verifier_abonnement_stripe(email_connecte):
+                            est_pro_bdd = True
+                            supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(res.user.id)).execute()
 
+                        st.session_state["est_abonne_pro"] = est_pro_bdd
                         synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
                     else:
+                        st.session_state["est_abonne_pro"] = (email_connecte == ADMIN_EMAIL.lower())
                         sauvegarder_dans_cloud()
                     st.rerun()
                 except Exception:
@@ -204,6 +254,7 @@ else:
                         st.session_state["user"] = res.user
                         st.session_state["watchlist"] = WATCHLIST_DEFAUT.copy()
                         st.session_state["portefeuille"] = PORTEFEUILLE_DEFAUT.copy()
+                        st.session_state["est_abonne_pro"] = (str(res.user.email).lower() == ADMIN_EMAIL.lower())
                         sauvegarder_dans_cloud()
                         st.sidebar.success("Compte créé avec succès !")
                         st.rerun()
@@ -222,7 +273,20 @@ else:
                     except Exception as e:
                         st.sidebar.error(f"Erreur lors de l'envoi : {e}")
     else:
-        st.sidebar.success(f"Connecté : **{st.session_state['user'].email}**")
+        email_courant = str(st.session_state["user"].email)
+        est_admin_connecte = (email_courant.lower() == ADMIN_EMAIL.lower())
+        if est_admin_connecte:
+            st.session_state["est_abonne_pro"] = True
+
+        # Détection automatique d'un retour de paiement Stripe (?paiement=succes)
+        if st.query_params.get("paiement") == "succes" and not st.session_state.get("est_abonne_pro", False):
+            if verifier_abonnement_stripe(email_courant):
+                st.session_state["est_abonne_pro"] = True
+                supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(st.session_state["user"].id)).execute()
+                st.balloons()
+                st.sidebar.success("🎉 Paiement validé ! Votre abonnement Boursy Pro est actif.")
+
+        st.sidebar.success(f"Connecté : **{email_courant}**")
 
         if st.sidebar.button("🔄 Charger mes données", type="primary", use_container_width=True):
             try:
@@ -237,7 +301,7 @@ else:
                     st.session_state["portefeuille"] = portefeuille_cloud
 
                     st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
-                    st.session_state["est_abonne_pro"] = bool(profil.get("est_abonne_pro", True))
+                    st.session_state["est_abonne_pro"] = True if est_admin_connecte else bool(profil.get("est_abonne_pro", False))
 
                     synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
 
@@ -255,6 +319,7 @@ else:
         if col_btn2.button("🚪 Sortir", use_container_width=True):
             supabase.auth.sign_out()
             st.session_state["user"] = None
+            st.session_state["est_abonne_pro"] = False
             st.rerun()
 
 WATCHLIST = st.session_state["watchlist"]
@@ -381,27 +446,83 @@ with st.sidebar.expander("Modifier un Prix Cible"):
             st.sidebar.success(f"✅ Prix cible mis à jour localement ({nouveau_prix_cible_saisi:.2f} €) !")
         st.rerun()
 
-# --- GESTION SAAS : ABONNEMENT PRO, BOUTON STRIPE & MODE ADMIN ---
+# --- GESTION SAAS : ABONNEMENT PRO, PAIEMENT STRIPE & CONSOLE ADMIN ---
 st.sidebar.markdown("---")
 st.sidebar.header("💎 Offre Boursy & Accès")
 
-with st.sidebar.expander("🛠️ Outils Administrateur (Test SaaS)", expanded=False):
-    simuler_visiteur_gratuit = st.checkbox(
-        "Simuler la vue Visiteur Gratuit (Freemium)", value=False
-    )
+est_admin = (
+    st.session_state.get("user") is not None
+    and str(st.session_state["user"].email).lower() == ADMIN_EMAIL.lower()
+)
 
-mode_gratuit = simuler_visiteur_gratuit or (not st.session_state.get("est_abonne_pro", True))
+simuler_visiteur_gratuit = False
+if est_admin:
+    with st.sidebar.expander("👑 Console Administrateur SaaS", expanded=False):
+        simuler_visiteur_gratuit = st.checkbox(
+            "Simuler la vue Visiteur Gratuit (Freemium)", value=False
+        )
+        if supabase:
+            try:
+                res_users = supabase.table("user_data").select("user_id, email, est_abonne_pro").execute()
+                liste_u = res_users.data if res_users.data else []
+                nb_pro = sum(1 for u in liste_u if u.get("est_abonne_pro"))
+                st.caption(f"👥 **{len(liste_u)} inscrit(s)** | 💎 **{nb_pro} Abonné(s) Pro**")
+
+                emails_u = [u.get("email") or u.get("user_id") for u in liste_u]
+                if emails_u:
+                    cible_u = st.selectbox("Gérer un membre :", emails_u, key="admin_sel_user")
+                    infos_cible = next((u for u in liste_u if (u.get("email") or u.get("user_id")) == cible_u), None)
+                    if infos_cible:
+                        statut_actuel_u = bool(infos_cible.get("est_abonne_pro", False))
+                        st.write(f"Statut actuel : **{'💎 Pro' if statut_actuel_u else '🔒 Gratuit'}**")
+                        col_ad1, col_ad2 = st.columns(2)
+                        if col_ad1.button("✅ Activer Pro", use_container_width=True):
+                            supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", infos_cible["user_id"]).execute()
+                            st.success("Membre passé en Pro !")
+                            st.rerun()
+                        if col_ad2.button("🔒 Gratuit", use_container_width=True):
+                            supabase.table("user_data").update({"est_abonne_pro": False}).eq("user_id", infos_cible["user_id"]).execute()
+                            st.warning("Membre repassé en Gratuit.")
+                            st.rerun()
+            except Exception as e:
+                st.caption(f"Info Admin : {e}")
+
+if est_admin and not simuler_visiteur_gratuit:
+    mode_gratuit = False
+elif simuler_visiteur_gratuit:
+    mode_gratuit = True
+else:
+    mode_gratuit = not bool(st.session_state.get("est_abonne_pro", False))
+
 quota_ia_max = 2 if mode_gratuit else 15
 
 if mode_gratuit:
     actions_autorisees = list(WATCHLIST.keys())[:2]
     st.sidebar.info("🔒 **Offre Découverte (Freemium)** : 2 valeurs débloquées & 2 questions IA/jour.")
-    lien_stripe = str(st.secrets.get("STRIPE_CHECKOUT_URL", "")).strip() if hasattr(st, "secrets") else ""
-    if lien_stripe:
-        st.sidebar.link_button("💎 Passer à Boursy Pro (Illimité)", lien_stripe, type="primary", use_container_width=True)
+
+    lien_stripe_base = str(st.secrets.get("STRIPE_CHECKOUT_URL", "")).strip() if hasattr(st, "secrets") else ""
+    if lien_stripe_base:
+        if st.session_state.get("user") is not None:
+            email_client_url = urllib.parse.quote(str(st.session_state["user"].email))
+            sep = "&" if "?" in lien_stripe_base else "?"
+            lien_stripe_final = f"{lien_stripe_base}{sep}prefilled_email={email_client_url}"
+        else:
+            lien_stripe_final = lien_stripe_base
+        st.sidebar.link_button("💎 S'abonner à Boursy Pro (Stripe)", lien_stripe_final, type="primary", use_container_width=True)
     else:
         if st.sidebar.button("💎 Passer à Boursy Pro", type="primary", use_container_width=True):
-            st.sidebar.success("✨ Les abonnements Boursy Pro (paiement sécurisé Stripe) seront ouverts très prochainement !")
+            st.sidebar.info("💡 Ajoutez `STRIPE_CHECKOUT_URL` dans vos Secrets Streamlit pour activer le paiement en 1 clic.")
+
+    if st.session_state.get("user") is not None:
+        if st.sidebar.button("🔄 Vérifier mon abonnement Pro", use_container_width=True):
+            email_verif = str(st.session_state["user"].email)
+            if verifier_abonnement_stripe(email_verif):
+                st.session_state["est_abonne_pro"] = True
+                supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(st.session_state["user"].id)).execute()
+                st.sidebar.success("🎉 Abonnement Stripe confirmé ! Boursy Pro est débloqué.")
+                st.rerun()
+            else:
+                st.sidebar.warning("Aucun abonnement Stripe actif trouvé pour cet email.")
 else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"💎 **Abonné Boursy Pro actif** : {len(WATCHLIST)} valeurs débloquées & 15 analyses IA/jour.")
