@@ -56,7 +56,7 @@ PORTEFEUILLE_DEFAUT = {
     "BNP Paribas": {"qte": 15, "pru": 58.0},
 }
 
-# --- INITIALISATION DE LA SESSION ---
+# --- INITIALISATION DE LA SESSION & QUOTAS IA ---
 if "user" not in st.session_state:
     st.session_state["user"] = None
 if "watchlist" not in st.session_state:
@@ -67,6 +67,11 @@ if "budget_dca" not in st.session_state:
     st.session_state["budget_dca"] = 450.0
 if "est_abonne_pro" not in st.session_state:
     st.session_state["est_abonne_pro"] = True
+
+date_jour_str = datetime.now().strftime("%Y-%m-%d")
+if st.session_state.get("quota_ia_date") != date_jour_str:
+    st.session_state["quota_ia_date"] = date_jour_str
+    st.session_state["quota_ia_utilise"] = 0
 
 # --- FONCTION DE SYNCHRONISATION DES CASES ---
 def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
@@ -150,19 +155,22 @@ def sauvegarder_dans_cloud():
         return False
 
 
-# --- ESPACE MEMBRE (BARRE LATÉRALE) ---
+# --- ESPACE MEMBRE (BARRE LATÉRALE AVEC MOT DE PASSE OUBLIÉ) ---
 st.sidebar.header("👤 Espace Membre")
 
 if supabase is None:
     st.sidebar.warning("⚠️ Base de données non connectée (Vérifiez vos Secrets Streamlit). Mode local actif.")
 else:
     if st.session_state["user"] is None:
-        choix_auth = st.sidebar.radio("Accès :", ["Se connecter", "Créer un compte"], horizontal=True)
-        email_input = st.sidebar.text_input("Email")
-        password_input = st.sidebar.text_input("Mot de passe", type="password")
+        choix_auth = st.sidebar.radio(
+            "Navigation compte :",
+            ["Se connecter", "Créer un compte", "Mot de passe oublié"],
+        )
+        email_input = st.sidebar.text_input("Adresse Email").strip()
 
         if choix_auth == "Se connecter":
-            if st.sidebar.button("🔓 Connexion", use_container_width=True):
+            password_input = st.sidebar.text_input("Mot de passe", type="password")
+            if st.sidebar.button("🔓 Connexion", type="primary", use_container_width=True):
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email_input, "password": password_input})
                     st.session_state["user"] = res.user
@@ -186,8 +194,10 @@ else:
                     st.rerun()
                 except Exception:
                     st.sidebar.error("Identifiants incorrects ou compte inexistant.")
-        else:
-            if st.sidebar.button("✨ S'inscrire gratuitement", use_container_width=True):
+
+        elif choix_auth == "Créer un compte":
+            password_input = st.sidebar.text_input("Choisir un mot de passe (6 car. min.)", type="password")
+            if st.sidebar.button("✨ S'inscrire gratuitement", type="primary", use_container_width=True):
                 try:
                     res = supabase.auth.sign_up({"email": email_input, "password": password_input})
                     if res.user:
@@ -198,7 +208,19 @@ else:
                         st.sidebar.success("Compte créé avec succès !")
                         st.rerun()
                 except Exception as e:
-                    st.sidebar.error(f"Erreur d'inscription (mot de passe de 6 caractères min.) : {e}")
+                    st.sidebar.error(f"Erreur d'inscription : {e}")
+
+        else:
+            st.sidebar.caption("Saisissez votre email pour recevoir un lien sécurisé de réinitialisation :")
+            if st.sidebar.button("📧 Envoyer le lien de réinitialisation", use_container_width=True):
+                if not email_input or "@" not in email_input:
+                    st.sidebar.warning("⚠️ Veuillez saisir une adresse email valide.")
+                else:
+                    try:
+                        supabase.auth.reset_password_for_email(email_input)
+                        st.sidebar.success("✅ Email envoyé ! Vérifiez votre boîte de réception (et vos spams).")
+                    except Exception as e:
+                        st.sidebar.error(f"Erreur lors de l'envoi : {e}")
     else:
         st.sidebar.success(f"Connecté : **{st.session_state['user'].email}**")
 
@@ -245,6 +267,21 @@ if st.sidebar.button("🔄 Actualiser les cours Bourse", use_container_width=Tru
 
 st.title("📈 Boursy - Plateforme Boursière PEA & Dividendes")
 st.caption(f"Dernière mise à jour des marchés : {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}")
+
+# --- BANNIÈRE D'ACCUEIL COMMERCIALE (VISITEURS NON CONNECTÉS) ---
+if st.session_state["user"] is None:
+    html_landing_banner = """
+    <div style="background: linear-gradient(135deg, rgba(46,204,113,0.14) 0%, rgba(52,152,219,0.14) 100%); border: 1px solid rgba(46,204,113,0.35); border-radius: 12px; padding: 18px 24px; margin-bottom: 22px; font-family: sans-serif;">
+        <div style="font-size: 1.15em; font-weight: 900; margin-bottom: 8px;">🚀 Bienvenue sur Boursy : Pilotez votre PEA & vos Dividendes comme un Pro</div>
+        <div style="font-size: 0.94em; opacity: 0.92; line-height: 1.55;">
+            • 🎯 <b>Radar & Scoring (/100) :</b> Identifiez en un coup d'œil les actions décotées et optimisez votre DCA mensuel.<br>
+            • 📸 <b>Suivi Patrimonial & Snapshots Cloud :</b> Visualisez l'évolution réelle de votre capital, votre répartition sectorielle et votre calendrier de dividendes.<br>
+            • 🤖 <b>Coach IA 2.0 :</b> Simulez vos arbitrages (« What-If »), auditez vos risques et générez votre bilan mensuel personnalisé.<br>
+            👉 <i>Créez votre compte gratuit en 10 secondes dans le menu de gauche (<b>👤 Espace Membre</b>) pour sauvegarder votre portefeuille !</i>
+        </div>
+    </div>
+    """
+    afficher_html(html_landing_banner)
 
 
 # --- PARAMÈTRES DCA ---
@@ -344,21 +381,30 @@ with st.sidebar.expander("Modifier un Prix Cible"):
             st.sidebar.success(f"✅ Prix cible mis à jour localement ({nouveau_prix_cible_saisi:.2f} €) !")
         st.rerun()
 
-# --- GESTION SAAS : STATUT ABONNÉ PRO & MODE DÉCOUVERTE ---
+# --- GESTION SAAS : ABONNEMENT PRO, BOUTON STRIPE & MODE ADMIN ---
 st.sidebar.markdown("---")
-st.sidebar.header("🔐 Statut Abonnement SaaS")
-simuler_visiteur_gratuit = st.sidebar.checkbox(
-    "Simuler la vue Visiteur Gratuit (Freemium)", value=False
-)
+st.sidebar.header("💎 Offre Boursy & Accès")
+
+with st.sidebar.expander("🛠️ Outils Administrateur (Test SaaS)", expanded=False):
+    simuler_visiteur_gratuit = st.checkbox(
+        "Simuler la vue Visiteur Gratuit (Freemium)", value=False
+    )
 
 mode_gratuit = simuler_visiteur_gratuit or (not st.session_state.get("est_abonne_pro", True))
+quota_ia_max = 2 if mode_gratuit else 15
 
 if mode_gratuit:
     actions_autorisees = list(WATCHLIST.keys())[:2]
-    st.sidebar.info("🔒 **Offre Découverte (Freemium)** : 2 valeurs débloquées.")
+    st.sidebar.info("🔒 **Offre Découverte (Freemium)** : 2 valeurs débloquées & 2 questions IA/jour.")
+    lien_stripe = str(st.secrets.get("STRIPE_CHECKOUT_URL", "")).strip() if hasattr(st, "secrets") else ""
+    if lien_stripe:
+        st.sidebar.link_button("💎 Passer à Boursy Pro (Illimité)", lien_stripe, type="primary", use_container_width=True)
+    else:
+        if st.sidebar.button("💎 Passer à Boursy Pro", type="primary", use_container_width=True):
+            st.sidebar.success("✨ Les abonnements Boursy Pro (paiement sécurisé Stripe) seront ouverts très prochainement !")
 else:
     actions_autorisees = list(WATCHLIST.keys())
-    st.sidebar.success(f"💎 **Abonné Boursy Pro** : {len(WATCHLIST)} valeurs débloquées.")
+    st.sidebar.success(f"💎 **Abonné Boursy Pro actif** : {len(WATCHLIST)} valeurs débloquées & 15 analyses IA/jour.")
 
 # --- CALCULS TECHNIQUES ---
 def calculer_rsi(clotures, periode=14):
@@ -706,8 +752,8 @@ with onglet_radar:
     if mode_gratuit:
         st.warning(
             "🔒 **Aperçu Gratuit (Freemium)** : Vous visualisez actuellement 2"
-            " actions de démonstration. Passez à l'abonnement Boursy Pro pour"
-            " débloquer toutes les valeurs du PEA !"
+            " actions de démonstration. Passez à l'abonnement Boursy Pro dans"
+            " la barre latérale pour débloquer toutes les valeurs du PEA !"
         )
 
     nb_opportunites = sum(
@@ -1973,7 +2019,7 @@ with onglet_dividendes:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 4 : COACH QUANTITATIF & AGENT IA 2.0 (SCÉNARIOS WHAT-IF & SNAPSHOTS)
+# ONGLET 4 : COACH QUANTITATIF & AGENT IA 2.0 (AVEC QUOTAS QUOTIDIENS)
 # ------------------------------------------------------------------------------
 with onglet_ia:
     st.subheader("🤖 Audit Patrimonial Pointu & Agent IA Interactif 2.0")
@@ -2191,10 +2237,21 @@ with onglet_ia:
         else:
             resume_snapshots_ia = "Aucun snapshot Cloud enregistré pour le moment."
 
-        st.subheader("💬 Discuter avec votre Conseiller IA Privé 2.0")
-        st.caption(
-            "Posez n'importe quelle question ou lancez une simulation « What-If » : l'Agent IA connaît vos lignes, vos PRU, vos snapshots Cloud, votre courbe d'historique et tous les indicateurs techniques du jour."
-        )
+        # Affichage du compteur de crédits IA quotidiens
+        credits_restants = max(0, quota_ia_max - st.session_state.get("quota_ia_utilise", 0))
+        col_titre_ia, col_quota_ia = st.columns([3, 1.2])
+        with col_titre_ia:
+            st.subheader("💬 Discuter avec votre Conseiller IA Privé 2.0")
+            st.caption(
+                "Posez n'importe quelle question ou lancez une simulation « What-If » : l'Agent IA connaît vos lignes, vos PRU, vos snapshots Cloud et tous les indicateurs techniques du jour."
+            )
+        with col_quota_ia:
+            st.metric(
+                "⚡ Crédits IA du jour",
+                f"{credits_restants} / {quota_ia_max}",
+                "Offre Découverte" if mode_gratuit else "Abonné Pro",
+                delta_color="off",
+            )
 
         opportunites_radar = [
             f"{d['Actif']} (Prix: {d['Prix (€)']}€, Cible: {d['Prix Cible (€)']}€, RSI: {d['RSI']}, EMA 2/12: {d['EMA 2/12']}, Score: {d['Score']}/100, Décision: {d['Décision']})"
@@ -2271,80 +2328,91 @@ Règles d'analyse :
         question_finale = question_rapide or (user_prompt if submit_chat and user_prompt else None)
 
         if question_finale:
-            st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
-            with st.chat_message("user"):
-                st.markdown(question_finale)
-
-            with st.chat_message("assistant"):
-                with st.spinner("Analyse des marchés et simulation patrimoniale en cours..."):
-                    api_key = (
-                        str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
-                        if hasattr(st, "secrets")
-                        else ""
+            if st.session_state.get("quota_ia_utilise", 0) >= quota_ia_max:
+                st.warning(
+                    f"🔒 **Quota quotidien atteint ({quota_ia_max}/{quota_ia_max} analyses aujourd'hui).** "
+                    + (
+                        "Passez à l'abonnement **💎 Boursy Pro** dans la barre latérale pour débloquer jusqu'à 15 analyses patrimoniales par jour !"
+                        if mode_gratuit
+                        else "Vos crédits IA Pro seront automatiquement rechargés demain matin."
                     )
+                )
+            else:
+                st.session_state["quota_ia_utilise"] = st.session_state.get("quota_ia_utilise", 0) + 1
+                st.session_state["messages_ia"].append({"role": "user", "content": question_finale})
+                with st.chat_message("user"):
+                    st.markdown(question_finale)
 
-                    if not api_key:
-                        reponse_ia = (
-                            "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
-                            "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
+                with st.chat_message("assistant"):
+                    with st.spinner("Analyse des marchés et simulation patrimoniale en cours..."):
+                        api_key = (
+                            str(st.secrets.get("GEMINI_API_KEY", "")).strip().strip('"').strip("'")
+                            if hasattr(st, "secrets")
+                            else ""
                         )
-                    else:
-                        payload_ia = {
-                            "system_instruction": {"parts": [{"text": contexte_systeme}]},
-                            "contents": [
-                                {
-                                    "role": "user" if m["role"] == "user" else "model",
-                                    "parts": [{"text": m["content"]}],
-                                }
-                                for m in st.session_state["messages_ia"]
-                            ],
-                        }
 
-                        modeles_candidats = [
-                            "gemini-2.5-flash",
-                            "gemini-2.0-flash",
-                            "gemini-flash-latest",
-                            "gemini-2.5-pro",
-                            "gemini-pro-latest",
-                        ]
+                        if not api_key:
+                            reponse_ia = (
+                                "⚠️ **Clé API Gemini non détectée.** Pour activer mes réponses en direct, "
+                                "ajoutez `GEMINI_API_KEY = \"votre_cle\"` dans les **Secrets** de Streamlit Cloud (gratuit sur aistudio.google.com)."
+                            )
+                        else:
+                            payload_ia = {
+                                "system_instruction": {"parts": [{"text": contexte_systeme}]},
+                                "contents": [
+                                    {
+                                        "role": "user" if m["role"] == "user" else "model",
+                                        "parts": [{"text": m["content"]}],
+                                    }
+                                    for m in st.session_state["messages_ia"]
+                                ],
+                            }
 
-                        try:
-                            url_liste = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-                            with urllib.request.urlopen(url_liste, timeout=10) as resp_liste:
-                                data_liste = json.loads(resp_liste.read().decode("utf-8"))
-                                for mod in data_liste.get("models", []):
-                                    nom_mod = mod.get("name", "").replace("models/", "")
-                                    methodes = mod.get("supportedGenerationMethods", [])
-                                    if "generateContent" in methodes and "gemini" in nom_mod:
-                                        if nom_mod not in modeles_candidats:
-                                            modeles_candidats.append(nom_mod)
-                        except Exception:
-                            pass
+                            modeles_candidats = [
+                                "gemini-2.5-flash",
+                                "gemini-2.0-flash",
+                                "gemini-flash-latest",
+                                "gemini-2.5-pro",
+                                "gemini-pro-latest",
+                            ]
 
-                        reponse_ia = None
-                        derniere_erreur = ""
-
-                        for modele in modeles_candidats:
                             try:
-                                url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modele}:generateContent?key={api_key}"
-                                req_ia = urllib.request.Request(
-                                    url_gemini,
-                                    data=json.dumps(payload_ia).encode("utf-8"),
-                                    headers={"Content-Type": "application/json"},
-                                )
-                                with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
-                                    res_json = json.loads(resp_ia.read().decode("utf-8"))
-                                    reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
-                                    break
-                            except Exception as e:
-                                derniere_erreur = str(e)
-                                continue
+                                url_liste = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                                with urllib.request.urlopen(url_liste, timeout=10) as resp_liste:
+                                    data_liste = json.loads(resp_liste.read().decode("utf-8"))
+                                    for mod in data_liste.get("models", []):
+                                        nom_mod = mod.get("name", "").replace("models/", "")
+                                        methodes = mod.get("supportedGenerationMethods", [])
+                                        if "generateContent" in methodes and "gemini" in nom_mod:
+                                            if nom_mod not in modeles_candidats:
+                                                modeles_candidats.append(nom_mod)
+                            except Exception:
+                                pass
 
-                        if not reponse_ia:
-                            reponse_ia = f"❌ Erreur de communication avec le moteur IA : {derniere_erreur}"
+                            reponse_ia = None
+                            derniere_erreur = ""
 
-                    st.markdown(reponse_ia)
-                    st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
+                            for modele in modeles_candidats:
+                                try:
+                                    url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/{modele}:generateContent?key={api_key}"
+                                    req_ia = urllib.request.Request(
+                                        url_gemini,
+                                        data=json.dumps(payload_ia).encode("utf-8"),
+                                        headers={"Content-Type": "application/json"},
+                                    )
+                                    with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
+                                        res_json = json.loads(resp_ia.read().decode("utf-8"))
+                                        reponse_ia = res_json["candidates"][0]["content"]["parts"][0]["text"]
+                                        break
+                                except Exception as e:
+                                    derniere_erreur = str(e)
+                                    continue
+
+                            if not reponse_ia:
+                                reponse_ia = f"❌ Erreur de communication avec le moteur IA : {derniere_erreur}"
+
+                        st.markdown(reponse_ia)
+                        st.session_state["messages_ia"].append({"role": "assistant", "content": reponse_ia})
 
 # ==============================================================================
 # PIED DE PAGE LÉGAL SAAS & AVERTISSEMENT RÉGLEMENTAIRE (NON-CIF)
