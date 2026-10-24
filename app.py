@@ -801,7 +801,7 @@ if st.session_state["user"] is None:
         <div style="font-size: 1.15em; font-weight: 900; margin-bottom: 8px;">🚀 Bienvenue sur Boursy : Pilotez votre PEA, vos Actions US & vos Dividendes</div>
         <div style="font-size: 0.94em; opacity: 0.92; line-height: 1.6;">
             • 🎯 <b>Radar Algorithmique (/100) :</b> RSI, Stochastique, Bandes de Bollinger, ATR, MACD & Canal de Régression 3 ans.<br>
-            • 🌍 <b>Suivi Multidevises (EUR / USD), Camembert Sectoriel & Export Excel :</b> Conversion automatique en Euros (€).<br>
+            • 🌍 <b>Suivi Multidevises (EUR / USD), Allocation Sectorielle & Export Excel :</b> Conversion automatique en Euros (€).<br>
             • 🤖 <b>Coach IA 2.0 & Calendrier 12 Mois :</b> Audits patrimoniaux, simulateur Boule de Neige interactif et alertes email.<br>
             👉 <i>Connectez-vous ou créez votre compte gratuit dans le menu de gauche (<b>👤 Espace Membre</b>) !</i>
         </div>
@@ -999,7 +999,7 @@ montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item
 # ==============================================================================
 onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
     "🔍 1. Radar, DCA & Alertes",
-    "💼 2. Portefeuille, Camembert & Fiscalité",
+    "💼 2. Portefeuille & Fiscalité",
     "📅 3. Calendrier 12 Mois & Boule de Neige",
     "🤖 4. Coach & Audit IA 2.0 (Gemini)",
 ])
@@ -1170,10 +1170,10 @@ with onglet_radar:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : PORTEFEUILLE (TRIÉ PAR POIDS DÉCROISSANT), CAMEMBERT & FISCALITÉ
+# ONGLET 2 : PORTEFEUILLE, ALLOCATION SECTORIELLE & ÉVOLUTION DU PATRIMOINE
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
-    st.subheader("💼 Gestionnaire de Portefeuille Multidevises, Camembert & Fiscalité")
+    st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
 
     with st.expander("✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)", expanded=False):
         st.markdown("#### 💶 Poche Liquidités (Espèces disponibles)")
@@ -1363,7 +1363,7 @@ with onglet_portefeuille:
 
         col_titre_p, col_btn_csv = st.columns([3, 1])
         with col_titre_p:
-            st.subheader("📋 Détail de mes lignes (Classées du poids le plus gros au plus bas)")
+            st.subheader("📋 Détail de mes Positions")
         with col_btn_csv:
             df_export = pd.DataFrame(lignes_export_csv)
             csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
@@ -1416,7 +1416,7 @@ with onglet_portefeuille:
         col_sec, col_hist = st.columns(2)
 
         with col_sec:
-            st.subheader("🍩 Répartition Sectorielle en Camembert")
+            st.subheader("🍩 Allocation Sectorielle")
             secteurs_tries = sorted(repartition_secteurs.items(), key=lambda x: x[1], reverse=True)
             df_camembert = pd.DataFrame([
                 {
@@ -1465,22 +1465,108 @@ with onglet_portefeuille:
             afficher_html(html_sec)
 
         with col_hist:
-            st.subheader("📸 Évolution Patrimoniale (Snapshots Cloud)")
+            st.subheader("📈 Évolution du Patrimoine")
+            points_hist_bruts = []
             if supabase and st.session_state["user"]:
                 try:
                     res_h = supabase.table("portfolio_history").select("*").eq("user_id", str(st.session_state["user"].id)).order("date", desc=False).execute()
-                    if res_h.data and len(res_h.data) >= 1:
-                        df_h = pd.DataFrame(res_h.data)
-                        df_h_chart = df_h.set_index("date")[["valorisation_pea", "capital_investi"]].rename(
-                            columns={"valorisation_pea": "Valorisation Totale (€)", "capital_investi": "Capital Investi (€)"}
-                        )
-                        st.line_chart(df_h_chart, height=340)
-                    else:
-                        st.info("Cliquez sur « 💾 Sauver » dans la barre latérale pour enregistrer votre premier point d'historique Cloud.")
+                    if res_h.data:
+                        points_hist_bruts = res_h.data
                 except Exception:
-                    st.info("Historique Cloud en attente de synchronisation.")
+                    points_hist_bruts = []
+
+            # Si moins de 2 snapshots en base, on construit une trajectoire visuelle propre entre la Base PRU et Aujourd'hui
+            if len(points_hist_bruts) >= 2:
+                liste_pts_graph = [
+                    {
+                        "Ordre": idx_p,
+                        "Date": datetime.strptime(str(pt["date"])[:10], "%Y-%m-%d").strftime("%d/%m/%Y") if "-" in str(pt.get("date", "")) else str(pt.get("date", "")),
+                        "Valorisation": round(float(pt.get("valorisation_pea", 0.0)), 2),
+                        "Capital": round(float(pt.get("capital_investi", 0.0)), 2),
+                    }
+                    for idx_p, pt in enumerate(points_hist_bruts)
+                ]
             else:
-                st.info("Connectez-vous à votre compte pour visualiser la courbe d'évolution de votre patrimoine dans le temps.")
+                date_j_fmt = datetime.now().strftime("%d/%m/%Y")
+                liste_pts_graph = [
+                    {"Ordre": 0, "Date": "Base Investie (PRU)", "Valorisation": round(cout_total_achat, 2), "Capital": round(cout_total_achat, 2)},
+                    {"Ordre": 1, "Date": f"Aujourd'hui ({date_j_fmt})", "Valorisation": round(valeur_totale_portefeuille, 2), "Capital": round(cout_total_achat, 2)},
+                ]
+
+            donnees_vega_patrimoine = []
+            for p_g in liste_pts_graph:
+                ecart_net = round(p_g["Valorisation"] - p_g["Capital"], 2)
+                donnees_vega_patrimoine.append({
+                    "Ordre": p_g["Ordre"],
+                    "Étape": p_g["Date"],
+                    "Courbe": "Valorisation Totale (€)",
+                    "Montant (€)": p_g["Valorisation"],
+                    "Plus-Value (€)": ecart_net,
+                })
+                donnees_vega_patrimoine.append({
+                    "Ordre": p_g["Ordre"],
+                    "Étape": p_g["Date"],
+                    "Courbe": "Capital Investi (€)",
+                    "Montant (€)": p_g["Capital"],
+                    "Plus-Value (€)": ecart_net,
+                })
+
+            df_vega_pat = pd.DataFrame(donnees_vega_patrimoine)
+            ordre_etapes = [p["Date"] for p in liste_pts_graph]
+
+            spec_patrimoine_pro = {
+                "height": 310,
+                "layer": [
+                    {
+                        "mark": {"type": "area", "opacity": 0.16, "interpolate": "monotone"},
+                        "encoding": {
+                            "x": {"field": "Étape", "type": "nominal", "sort": ordre_etapes, "axis": {"labelAngle": 0, "title": None, "grid": False}},
+                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 24}, "axis": {"title": "Patrimoine (€)", "format": ",.0f"}},
+                            "color": {
+                                "field": "Courbe",
+                                "type": "nominal",
+                                "scale": {"domain": ["Valorisation Totale (€)", "Capital Investi (€)"], "range": ["#2ecc71", "#3498db"]},
+                                "legend": {"orient": "top", "title": None},
+                            },
+                        },
+                    },
+                    {
+                        "mark": {"type": "line", "strokeWidth": 3, "interpolate": "monotone", "point": {"filled": True, "size": 85}},
+                        "encoding": {
+                            "x": {"field": "Étape", "type": "nominal", "sort": ordre_etapes},
+                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 24}},
+                            "color": {
+                                "field": "Courbe",
+                                "type": "nominal",
+                                "scale": {"domain": ["Valorisation Totale (€)", "Capital Investi (€)"], "range": ["#2ecc71", "#3498db"]},
+                            },
+                            "tooltip": [
+                                {"field": "Étape", "type": "nominal", "title": "Période"},
+                                {"field": "Courbe", "type": "nominal", "title": "Indicateur"},
+                                {"field": "Montant (€)", "type": "quantitative", "format": ",.2f", "title": "Montant (€)"},
+                                {"field": "Plus-Value (€)", "type": "quantitative", "format": "+,.2f", "title": "Écart / Plus-Value (€)"},
+                            ],
+                        },
+                    },
+                ],
+                "view": {"stroke": None},
+            }
+            st.vega_lite_chart(df_vega_pat, spec_patrimoine_pro, use_container_width=True)
+
+            # Synthèse des relevés sous le graphique pour équilibrer visuellement avec la colonne de gauche
+            html_synth_pat = "<div style='background:rgba(128,128,128,0.04); padding:14px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);'>"
+            html_synth_pat += "<div style='font-size:0.84em; font-weight:800; text-transform:uppercase; opacity:0.75; margin-bottom:10px;'>📊 Synthèse des Relevés Patrimoniaux</div>"
+            for p_g in reversed(liste_pts_graph[-4:]):
+                pv_pt = p_g["Valorisation"] - p_g["Capital"]
+                c_pt = "#2ecc71" if pv_pt >= 0 else "#e74c3c"
+                html_synth_pat += f"""
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
+                    <span style="font-weight:700;">🗓️ {p_g['Date']}</span>
+                    <span>Val : <b>{p_g['Valorisation']:,.0f} €</b> <span style="color:{c_pt}; font-weight:700; margin-left:6px;">({pv_pt:+,.0f} €)</span></span>
+                </div>
+                """
+            html_synth_pat += "<div style='font-size:0.78em; opacity:0.68; margin-top:8px;'>💡 Cliquez sur « 💾 Sauver » dans le menu à gauche pour ajouter un nouveau point daté.</div></div>"
+            afficher_html(html_synth_pat)
 
 
 # ------------------------------------------------------------------------------
@@ -1920,7 +2006,6 @@ Mission demandée par l'utilisateur : {question_utilisateur}
 
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
-        # 1. Découverte dynamique des modèles actifs sur la clé API de l'utilisateur
         modeles_candidats = []
         try:
             url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={cle_gemini}"
@@ -1947,7 +2032,6 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             if pm not in modeles_candidats:
                 modeles_candidats.append(pm)
 
-        # Tri pour tester les modèles Flash les plus rapides en premier
         modeles_ordonnes = sorted(
             modeles_candidats,
             key=lambda x: (0 if "2.5-flash" in x else (1 if "2.0-flash" in x else (2 if "flash" in x else 3)))
@@ -1970,7 +2054,6 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             except Exception:
                 continue
 
-        # 2. Bascule automatique vers le Moteur Expert Hybride en cas de quota API dépassé
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
     st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
