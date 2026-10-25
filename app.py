@@ -801,7 +801,7 @@ if st.session_state["user"] is None:
         <div style="font-size: 1.15em; font-weight: 900; margin-bottom: 8px;">🚀 Bienvenue sur Boursy : Pilotez votre PEA, vos Actions US & vos Dividendes</div>
         <div style="font-size: 0.94em; opacity: 0.92; line-height: 1.6;">
             • 🎯 <b>Radar Algorithmique (/100) :</b> RSI, Stochastique, Bandes de Bollinger, ATR, MACD & Canal de Régression 3 ans.<br>
-            • 🌍 <b>Suivi Multidevises (EUR / USD), Allocation Sectorielle & Export Excel :</b> Conversion automatique en Euros (€).<br>
+            • 🌍 <b>Suivi Multidevises (EUR / USD), ADN Sectoriel & Courbe Boursière :</b> Conversion automatique en Euros (€).<br>
             • 🤖 <b>Coach IA 2.0 & Calendrier 12 Mois :</b> Audits patrimoniaux, simulateur Boule de Neige interactif et alertes email.<br>
             👉 <i>Connectez-vous ou créez votre compte gratuit dans le menu de gauche (<b>👤 Espace Membre</b>) !</i>
         </div>
@@ -999,7 +999,7 @@ montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item
 # ==============================================================================
 onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
     "🔍 1. Radar, DCA & Alertes",
-    "💼 2. Portefeuille & Fiscalité",
+    "💼 2. Portefeuille & Trajectoire Boursière",
     "📅 3. Calendrier 12 Mois & Boule de Neige",
     "🤖 4. Coach & Audit IA 2.0 (Gemini)",
 ])
@@ -1170,10 +1170,10 @@ with onglet_radar:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : PORTEFEUILLE, ALLOCATION SECTORIELLE & ÉVOLUTION DU PATRIMOINE
+# ONGLET 2 : PORTEFEUILLE, ADN SECTORIEL & VRAIE COURBE BOURSIÈRE AU FIL DU TEMPS
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
-    st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
+    st.subheader("💼 Cockpit Patrimonial Multidevises & Fiscalité")
 
     with st.expander("✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)", expanded=False):
         st.markdown("#### 💶 Poche Liquidités (Espèces disponibles)")
@@ -1363,7 +1363,7 @@ with onglet_portefeuille:
 
         col_titre_p, col_btn_csv = st.columns([3, 1])
         with col_titre_p:
-            st.subheader("📋 Détail de mes Positions")
+            st.subheader("🏆 Piliers du Portefeuille & Performance")
         with col_btn_csv:
             df_export = pd.DataFrame(lignes_export_csv)
             csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
@@ -1416,7 +1416,7 @@ with onglet_portefeuille:
         col_sec, col_hist = st.columns(2)
 
         with col_sec:
-            st.subheader("🍩 Allocation Sectorielle")
+            st.subheader("🎯 ADN Sectoriel du Portefeuille")
             secteurs_tries = sorted(repartition_secteurs.items(), key=lambda x: x[1], reverse=True)
             df_camembert = pd.DataFrame([
                 {
@@ -1465,108 +1465,157 @@ with onglet_portefeuille:
             afficher_html(html_sec)
 
         with col_hist:
-            st.subheader("📈 Évolution du Patrimoine")
-            points_hist_bruts = []
-            if supabase and st.session_state["user"]:
-                try:
-                    res_h = supabase.table("portfolio_history").select("*").eq("user_id", str(st.session_state["user"].id)).order("date", desc=False).execute()
-                    if res_h.data:
-                        points_hist_bruts = res_h.data
-                except Exception:
-                    points_hist_bruts = []
+            st.subheader("🚀 Trajectoire Boursière au Fil du Temps")
+            choix_horizon_courbe = st.radio(
+                "Horizon boursier :",
+                ["1 Mois", "6 Mois", "1 An", "3 Ans"],
+                index=2,
+                horizontal=True,
+                label_visibility="collapsed",
+            )
+            map_jours = {"1 Mois": 22, "6 Mois": 126, "1 An": 252, "3 Ans": 750}
+            nb_j_cible = map_jours[choix_horizon_courbe]
 
-            # Si moins de 2 snapshots en base, on construit une trajectoire visuelle propre entre la Base PRU et Aujourd'hui
-            if len(points_hist_bruts) >= 2:
-                liste_pts_graph = [
-                    {
-                        "Ordre": idx_p,
-                        "Date": datetime.strptime(str(pt["date"])[:10], "%Y-%m-%d").strftime("%d/%m/%Y") if "-" in str(pt.get("date", "")) else str(pt.get("date", "")),
-                        "Valorisation": round(float(pt.get("valorisation_pea", 0.0)), 2),
-                        "Capital": round(float(pt.get("capital_investi", 0.0)), 2),
-                    }
-                    for idx_p, pt in enumerate(points_hist_bruts)
-                ]
-            else:
-                date_j_fmt = datetime.now().strftime("%d/%m/%Y")
-                liste_pts_graph = [
-                    {"Ordre": 0, "Date": "Base Investie (PRU)", "Valorisation": round(cout_total_achat, 2), "Capital": round(cout_total_achat, 2)},
-                    {"Ordre": 1, "Date": f"Aujourd'hui ({date_j_fmt})", "Valorisation": round(valeur_totale_portefeuille, 2), "Capital": round(cout_total_achat, 2)},
-                ]
+            # Reconstitution jour par jour de la vraie courbe boursière du portefeuille à partir des clôtures Yahoo Finance
+            longueurs_dispo = [
+                len(historiques_prix[nom_a])
+                for nom_a in portefeuille_utilisateur
+                if nom_a != "Espèces" and nom_a in historiques_prix and len(historiques_prix[nom_a]) > 1
+            ]
+            nb_jours_reels = min(nb_j_cible, min(longueurs_dispo)) if longueurs_dispo else 30
+            dates_bourse = pd.bdate_range(end=datetime.now(), periods=nb_jours_reels)
+            pas_echantillon = 3 if nb_jours_reels > 300 else 1
 
-            donnees_vega_patrimoine = []
-            for p_g in liste_pts_graph:
-                ecart_net = round(p_g["Valorisation"] - p_g["Capital"], 2)
-                donnees_vega_patrimoine.append({
-                    "Ordre": p_g["Ordre"],
-                    "Étape": p_g["Date"],
-                    "Courbe": "Valorisation Totale (€)",
-                    "Montant (€)": p_g["Valorisation"],
-                    "Plus-Value (€)": ecart_net,
+            val_esp_fixe = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if "Espèces" in portefeuille_utilisateur else 0.0
+            donnees_courbe_reelle = []
+            valeurs_quotidiennes = []
+
+            for idx_j in range(0, nb_jours_reels, pas_echantillon):
+                offset_fin = idx_j - nb_jours_reels  # de -nb_jours_reels à -1
+                val_jour_eur = val_esp_fixe
+
+                for nom_a, d_pos in portefeuille_utilisateur.items():
+                    if nom_a == "Espèces" or nom_a not in WATCHLIST:
+                        continue
+                    q_a = float(d_pos["qte"])
+                    dev_a = WATCHLIST[nom_a].get("devise", "EUR")
+                    fact_a = (1.0 / TAUX_USD_EUR) if dev_a == "USD" else 1.0
+                    serie_c = historiques_prix.get(nom_a, [])
+                    if serie_c:
+                        p_hist = serie_c[offset_fin] if abs(offset_fin) <= len(serie_c) else serie_c[0]
+                    else:
+                        p_hist = float(prix_temps_reel.get(nom_a, WATCHLIST[nom_a]["prix_cible"]))
+                    val_jour_eur += q_a * p_hist * fact_a
+
+                # On cale exactement le tout dernier point sur la valorisation temps réel
+                if idx_j >= nb_jours_reels - pas_echantillon:
+                    val_jour_eur = valeur_totale_portefeuille
+
+                date_iso = dates_bourse[idx_j].strftime("%Y-%m-%d")
+                date_fr = dates_bourse[idx_j].strftime("%d/%m/%Y")
+                ecart_pru_jour = round(val_jour_eur - cout_total_achat, 2)
+                valeurs_quotidiennes.append((date_fr, round(val_jour_eur, 2)))
+
+                donnees_courbe_reelle.append({
+                    "Date": date_iso,
+                    "DateFR": date_fr,
+                    "Série": "Valorisation Boursière (€)",
+                    "Montant (€)": round(val_jour_eur, 2),
+                    "Écart vs PRU (€)": ecart_pru_jour,
                 })
-                donnees_vega_patrimoine.append({
-                    "Ordre": p_g["Ordre"],
-                    "Étape": p_g["Date"],
-                    "Courbe": "Capital Investi (€)",
-                    "Montant (€)": p_g["Capital"],
-                    "Plus-Value (€)": ecart_net,
+                donnees_courbe_reelle.append({
+                    "Date": date_iso,
+                    "DateFR": date_fr,
+                    "Série": "Capital Investi / PRU (€)",
+                    "Montant (€)": round(cout_total_achat, 2),
+                    "Écart vs PRU (€)": ecart_pru_jour,
                 })
 
-            df_vega_pat = pd.DataFrame(donnees_vega_patrimoine)
-            ordre_etapes = [p["Date"] for p in liste_pts_graph]
+            df_courbe_reelle = pd.DataFrame(donnees_courbe_reelle)
 
-            spec_patrimoine_pro = {
-                "height": 310,
+            spec_courbe_bourse = {
+                "height": 275,
                 "layer": [
                     {
-                        "mark": {"type": "area", "opacity": 0.16, "interpolate": "monotone"},
+                        "mark": {"type": "area", "opacity": 0.18, "interpolate": "monotone"},
                         "encoding": {
-                            "x": {"field": "Étape", "type": "nominal", "sort": ordre_etapes, "axis": {"labelAngle": 0, "title": None, "grid": False}},
-                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 24}, "axis": {"title": "Patrimoine (€)", "format": ",.0f"}},
+                            "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%b %Y", "grid": False}},
+                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 18}, "axis": {"title": "Valeur (€)", "format": ",.0f"}},
                             "color": {
-                                "field": "Courbe",
+                                "field": "Série",
                                 "type": "nominal",
-                                "scale": {"domain": ["Valorisation Totale (€)", "Capital Investi (€)"], "range": ["#2ecc71", "#3498db"]},
+                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": ["#2ecc71", "#3498db"]},
                                 "legend": {"orient": "top", "title": None},
                             },
                         },
                     },
                     {
-                        "mark": {"type": "line", "strokeWidth": 3, "interpolate": "monotone", "point": {"filled": True, "size": 85}},
+                        "mark": {"type": "line", "interpolate": "monotone"},
                         "encoding": {
-                            "x": {"field": "Étape", "type": "nominal", "sort": ordre_etapes},
-                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 24}},
+                            "x": {"field": "Date", "type": "temporal"},
+                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 18}},
                             "color": {
-                                "field": "Courbe",
+                                "field": "Série",
                                 "type": "nominal",
-                                "scale": {"domain": ["Valorisation Totale (€)", "Capital Investi (€)"], "range": ["#2ecc71", "#3498db"]},
+                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": ["#2ecc71", "#3498db"]},
+                            },
+                            "strokeDash": {
+                                "field": "Série",
+                                "type": "nominal",
+                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": [[1, 0], [6, 4]]},
+                                "legend": None,
+                            },
+                            "strokeWidth": {
+                                "field": "Série",
+                                "type": "nominal",
+                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": [2.8, 2.0]},
+                                "legend": None,
                             },
                             "tooltip": [
-                                {"field": "Étape", "type": "nominal", "title": "Période"},
-                                {"field": "Courbe", "type": "nominal", "title": "Indicateur"},
+                                {"field": "DateFR", "type": "nominal", "title": "Séance du"},
+                                {"field": "Série", "type": "nominal", "title": "Courbe"},
                                 {"field": "Montant (€)", "type": "quantitative", "format": ",.2f", "title": "Montant (€)"},
-                                {"field": "Plus-Value (€)", "type": "quantitative", "format": "+,.2f", "title": "Écart / Plus-Value (€)"},
+                                {"field": "Écart vs PRU (€)", "type": "quantitative", "format": "+,.2f", "title": "+/- Value vs PRU (€)"},
                             ],
                         },
                     },
                 ],
                 "view": {"stroke": None},
             }
-            st.vega_lite_chart(df_vega_pat, spec_patrimoine_pro, use_container_width=True)
+            st.vega_lite_chart(df_courbe_reelle, spec_courbe_bourse, use_container_width=True)
 
-            # Synthèse des relevés sous le graphique pour équilibrer visuellement avec la colonne de gauche
-            html_synth_pat = "<div style='background:rgba(128,128,128,0.04); padding:14px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);'>"
-            html_synth_pat += "<div style='font-size:0.84em; font-weight:800; text-transform:uppercase; opacity:0.75; margin-bottom:10px;'>📊 Synthèse des Relevés Patrimoniaux</div>"
-            for p_g in reversed(liste_pts_graph[-4:]):
-                pv_pt = p_g["Valorisation"] - p_g["Capital"]
-                c_pt = "#2ecc71" if pv_pt >= 0 else "#e74c3c"
-                html_synth_pat += f"""
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
-                    <span style="font-weight:700;">🗓️ {p_g['Date']}</span>
-                    <span>Val : <b>{p_g['Valorisation']:,.0f} €</b> <span style="color:{c_pt}; font-weight:700; margin-left:6px;">({pv_pt:+,.0f} €)</span></span>
+            # Bilan chiffré de la trajectoire sous la courbe pour un impact visuel immédiat
+            if valeurs_quotidiennes:
+                pt_debut = valeurs_quotidiennes[0]
+                pt_fin = valeurs_quotidiennes[-1]
+                pt_haut = max(valeurs_quotidiennes, key=lambda x: x[1])
+                pt_bas = min(valeurs_quotidiennes, key=lambda x: x[1])
+                var_periode_eur = pt_fin[1] - pt_debut[1]
+                var_periode_pct = (var_periode_eur / pt_debut[1] * 100.0) if pt_debut[1] > 0 else 0.0
+                c_var_p = "#2ecc71" if var_periode_eur >= 0 else "#e74c3c"
+
+                html_bilan_traj = f"""
+                <div style="background:rgba(128,128,128,0.04); padding:14px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);">
+                    <div style="font-size:0.82em; font-weight:800; text-transform:uppercase; opacity:0.75; margin-bottom:9px;">⚡ Dynamique Boursière sur {choix_horizon_courbe}</div>
+                    <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
+                        <span>📈 <b>Variation sur {choix_horizon_courbe}</b></span>
+                        <span style="color:{c_var_p}; font-weight:800;">{var_periode_eur:+,.0f} € ({var_periode_pct:+.1f}%)</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
+                        <span>🏔️ <b>Pic le plus haut</b> ({pt_haut[0]})</span>
+                        <span style="color:#2ecc71; font-weight:800;">{pt_haut[1]:,.0f} €</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
+                        <span>🛡️ <b>Point le plus bas</b> ({pt_bas[0]})</span>
+                        <span style="color:#3498db; font-weight:800;">{pt_bas[1]:,.0f} €</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; padding:5px 0; font-size:0.88em;">
+                        <span>🎯 <b>Écart actuel vs PRU ({cout_total_achat:,.0f} €)</b></span>
+                        <span style="color:{c_pv}; font-weight:800;">{plus_value_globale:+,.0f} € ({plus_value_pct:+.1f}%)</span>
+                    </div>
                 </div>
                 """
-            html_synth_pat += "<div style='font-size:0.78em; opacity:0.68; margin-top:8px;'>💡 Cliquez sur « 💾 Sauver » dans le menu à gauche pour ajouter un nouveau point daté.</div></div>"
-            afficher_html(html_synth_pat)
+                afficher_html(html_bilan_traj)
 
 
 # ------------------------------------------------------------------------------
@@ -2142,4 +2191,3 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
- 
