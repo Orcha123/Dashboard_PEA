@@ -55,6 +55,10 @@ STYLE_ARGON = """
 .cal-pill { display: inline-block; background: rgba(128,128,128,0.13); border-radius: 5px; padding: 3px 7px; font-size: 0.80em; font-weight: 600; margin: 2px 3px 2px 0; }
 .ia-box { background: linear-gradient(145deg, rgba(155,89,182,0.08) 0%, rgba(52,152,219,0.06) 100%); border: 1px solid rgba(155,89,182,0.32); border-radius: 14px; padding: 20px 24px; margin-top: 15px; font-family: 'Segoe UI', sans-serif; }
 .ia-flash { background: linear-gradient(135deg, rgba(46,204,113,0.10) 0%, rgba(52,152,219,0.10) 100%); border-left: 4px solid #2ecc71; border-radius: 10px; padding: 14px 18px; margin: 6px 0 20px 0; font-family: 'Segoe UI', sans-serif; font-size: 0.95em; line-height: 1.5; border-top: 1px solid rgba(128,128,128,0.15); border-right: 1px solid rgba(128,128,128,0.15); border-bottom: 1px solid rgba(128,128,128,0.15); }
+.goal-box { background: linear-gradient(145deg, rgba(46,204,113,0.07) 0%, rgba(52,152,219,0.07) 100%); border: 1px solid rgba(46,204,113,0.32); border-radius: 14px; padding: 18px 22px; margin: 8px 0 24px 0; font-family: 'Segoe UI', sans-serif; }
+.goal-bar-bg { width: 100%; background: rgba(128,128,128,0.22); height: 16px; border-radius: 10px; overflow: hidden; margin: 10px 0 14px 0; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); }
+.goal-steps { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; margin-top: 8px; }
+.goal-step { flex: 1; min-width: 120px; border-radius: 9px; padding: 8px 10px; text-align: center; font-size: 0.84em; font-weight: 700; border: 1px solid rgba(128,128,128,0.2); background: rgba(128,128,128,0.04); }
 </style>
 """
 afficher_html(STYLE_ARGON)
@@ -74,7 +78,6 @@ def init_supabase():
 supabase = init_supabase()
 
 def verifier_abonnement_stripe(email_client):
-    """Vérifie via l'API REST Stripe si l'email possède un abonnement actif."""
     if not email_client or not hasattr(st, "secrets"):
         return False
     cle_stripe = str(st.secrets.get("STRIPE_SECRET_KEY", "")).strip().strip('"').strip("'")
@@ -99,13 +102,12 @@ def verifier_abonnement_stripe(email_client):
         return False
 
 def envoyer_email_alerte(destinataire, liste_alertes):
-    """Envoie un email récapitulatif des alertes boursières via SMTP."""
     if not hasattr(st, "secrets"):
         return False, "Secrets Streamlit non disponibles."
     smtp_user = str(st.secrets.get("SMTP_EMAIL", "")).strip()
     smtp_pass = str(st.secrets.get("SMTP_PASSWORD", "")).strip()
     if not smtp_user or not smtp_pass:
-        return False, "Pour activer l'envoi d'emails, ajoutez `SMTP_EMAIL` et `SMTP_PASSWORD` (mot de passe d'application Gmail) dans vos Secrets Streamlit."
+        return False, "Pour activer l'envoi d'emails, ajoutez `SMTP_EMAIL` et `SMTP_PASSWORD` dans vos Secrets Streamlit."
 
     try:
         msg = MIMEMultipart("alternative")
@@ -192,7 +194,6 @@ PORTEFEUILLE_DEFAUT = {
 }
 
 CATALOGUE_ACTIONS = {
-    # Europe / PEA (EUR)
     "Air Liquide (EUR)": ("AI.PA", "EUR", "Chimie/Industrie"),
     "Amundi (EUR)": ("AMUN.PA", "EUR", "Finance/Gestion"),
     "ASML Holding (EUR)": ("ASML.AS", "EUR", "Semi-conducteurs EUR"),
@@ -220,7 +221,6 @@ CATALOGUE_ACTIONS = {
     "TotalEnergies (EUR)": ("TTE.PA", "EUR", "Énergie"),
     "Veolia (EUR)": ("VIE.PA", "EUR", "Environnement"),
     "Vinci (EUR)": ("DG.PA", "EUR", "Concessions/BTP"),
-    # États-Unis / CTO (USD)
     "AbbVie (USD)": ("ABBV", "USD", "Santé US"),
     "Alphabet - Google (USD)": ("GOOGL", "USD", "Tech US"),
     "Amazon (USD)": ("AMZN", "USD", "Tech/E-Commerce US"),
@@ -739,8 +739,8 @@ def calculer_regression_lineaire(clotures):
     droite_regression = [(pente * i) + ordonnee for i in range(n)]
     residus = [clotures[i] - droite_regression[i] for i in range(n)]
     std_res = math.sqrt(sum(r ** 2 for r in residus) / n)
-    val_reg = droite_regression[-1]
-    ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100 if val_reg != 0 else 0.0
+    val_reg = max(0.01, float(droite_regression[-1]))
+    ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100.0
     return val_reg, ecart_pct, droite_regression, std_res
 
 @st.cache_data(ttl=3600)
@@ -804,7 +804,7 @@ if st.session_state["user"] is None:
         <div style="font-size: 0.94em; opacity: 0.92; line-height: 1.6;">
             • 🎯 <b>Radar Algorithmique (/100) :</b> RSI, Stochastique, Bandes de Bollinger, ATR, MACD & Canal de Régression 3 ans.<br>
             • 🌍 <b>Suivi Multidevises (EUR / USD), Répartition Sectorielle & Courbe Boursière :</b> Conversion automatique en Euros (€).<br>
-            • 🤖 <b>Coach IA 2.0 & Calendrier 12 Mois :</b> Audits patrimoniaux, simulateur Boule de Neige interactif et alertes email.<br>
+            • 🤖 <b>Coach IA 2.0 & Calendrier 12 Mois :</b> Audits patrimoniaux, jauge d'objectifs de rente et simulateur Boule de Neige.<br>
             👉 <i>Connectez-vous ou créez votre compte gratuit dans le menu de gauche (<b>👤 Espace Membre</b>) !</i>
         </div>
     </div>
@@ -821,7 +821,15 @@ historiques_prix = {}
 droites_regression_dict = {}
 prix_temps_reel = {}
 
-for nom, info in WATCHLIST.items():
+for nom, info in WATCHLIST_DEFAUT.items(): # On sécurise avec WATCHLIST_DEFAUT par défaut au démarrage
+    pass
+
+# On applique sur WATCHLIST active
+for nom, info in WATCHLIST_DEFAUT.items():
+    pass
+
+# Redéfinition propre et robuste de la boucle de traitement de la watchlist
+for nom, info in list(st.session_state["watchlist"].items()):
     prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
     if prix_actuel is None or not closes:
         continue
@@ -856,7 +864,6 @@ for nom, info in WATCHLIST.items():
     resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
     distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100 if prix_cible > 0 else 0.0
 
-    # --- ALGORITHME DE SCORING ÉLEVÉ (/100) ---
     score = 0
     payout_r = float(info.get("payout_ratio", 0.60))
     if payout_r <= 0.55:
@@ -940,12 +947,25 @@ for nom, info in WATCHLIST.items():
         "Décision": decision,
     })
 
+    if ecart_reg_pct <= -10.0:
+        statut_val_str = "🟢 FORTE DÉCOTE"
+        ordre_statut_val = 0
+    elif ecart_reg_pct < 0.0:
+        statut_val_str = "🟡 SOUS-ÉVALUÉE"
+        ordre_statut_val = 1
+    else:
+        statut_val_str = "⚪ PRIX NORMAL / CHER"
+        ordre_statut_val = 2
+
     donnees_t2.append({
+        "NomBrut": nom,
         "Actif": f"{nom} ({devise})",
         "Prix": f"{prix_actuel:.2f} {symbole_devise}",
         "Tendance 3A": f"{val_reg:.2f} {symbole_devise}",
         "Écart %": f"{ecart_reg_pct:+.1f}%",
-        "Statut Value": "🟢 FORTE DÉCOTE" if ecart_reg_pct <= -10 else ("🟡 SOUS-ÉVALUÉE" if ecart_reg_pct < 0 else "⚪ PRIX NORMAL / CHER"),
+        "EcartNum": float(ecart_reg_pct),
+        "OrdreStatut": ordre_statut_val,
+        "Statut Value": statut_val_str,
     })
 
     donnees_t3.append({
@@ -978,6 +998,9 @@ for nom, info in WATCHLIST.items():
             "prix_eur": prix_en_eur,
             "div_eur": div_en_eur,
         })
+
+# Tri global et définitif du Tableau 2 (de la plus forte décote en haut vers le plus cher en bas)
+donnees_t2.sort(key=lambda x: (x["OrdreStatut"], x["EcartNum"]))
 
 # Allocation DCA condensée sur les 1 ou 2 meilleures opportunités maximum
 candidats_tries = sorted(resultats_analysed, key=lambda x: x["score"], reverse=True)
@@ -1137,17 +1160,22 @@ with onglet_radar:
     ])
 
     with tab_val:
-        html_t2 = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif</th><th>Cours Actuel</th><th>Tendance Linéaire 3A</th><th>Écart à la Tendance</th><th>Diagnostic Value</th></tr></thead><tbody>"
-        for d in donnees_t2:
+        st.caption("📉 **Classement Value automatique :** Trié de la **plus forte décote** (en haut) jusqu'aux valeurs **les plus chères** (en bas).")
+        donnees_t2_triees = sorted(donnees_t2, key=lambda x: (x["OrdreStatut"], x["EcartNum"]))
+        html_t2 = "<table class='r-table'><thead><tr><th style='width:65px;'>Rang</th><th style='text-align: left;'>Actif</th><th>Cours Actuel</th><th>Tendance Linéaire 3A</th><th>Écart à la Tendance</th><th>Diagnostic Value</th></tr></thead><tbody>"
+        for rang_idx, d in enumerate(donnees_t2_triees, start=1):
             st_val = d["Statut Value"]
             b_val = "b-green" if "DÉCOTE" in st_val else ("b-yellow" if "SOUS-ÉVALUÉE" in st_val else "b-neutral")
-            html_t2 += f"<tr><td class='r-name'>{d['Actif']}</td><td><b>{d['Prix']}</b></td><td>{d['Tendance 3A']}</td><td><b>{d['Écart %']}</b></td><td><span class='{b_val}'>{st_val}</span></td></tr>"
+            c_ecart = "#2ecc71" if d["EcartNum"] <= -10 else ("#f39c12" if d["EcartNum"] < 0 else "#e74c3c")
+            badge_rang = f"<span class='b-green'>#{rang_idx}</span>" if d["OrdreStatut"] == 0 else (f"<span class='b-yellow'>#{rang_idx}</span>" if d["OrdreStatut"] == 1 else f"<span class='b-neutral'>#{rang_idx}</span>")
+            html_t2 += f"<tr><td>{badge_rang}</td><td class='r-name'>{d['Actif']}</td><td><b>{d['Prix']}</b></td><td>{d['Tendance 3A']}</td><td style='color:{c_ecart}; font-weight:800;'>{d['Écart %']}</td><td><span class='{b_val}'>{st_val}</span></td></tr>"
         html_t2 += "</tbody></table>"
         afficher_html(html_t2)
 
         if droites_regression_dict:
             st.markdown("#### 📈 Visualisation du Canal de Régression Linéaire sur 3 Ans")
-            act_choisie_graph = st.selectbox("Choisir une action à inspecter graphiquement :", list(droites_regression_dict.keys()))
+            noms_tries_value = [d["NomBrut"] for d in donnees_t2_triees if d["NomBrut"] in droites_regression_dict]
+            act_choisie_graph = st.selectbox("Choisir une action à inspecter graphiquement (classées par décote) :", noms_tries_value)
             closes_g, reg_g, std_g, sym_g = droites_regression_dict[act_choisie_graph]
             df_graph = pd.DataFrame({
                 "Cours Clôture": closes_g,
@@ -1192,7 +1220,7 @@ with onglet_portefeuille:
         st.markdown("#### 📈 Mes Positions Actions (Saisissez le PRU dans la devise de l'action : € ou $)")
         cols_saisie = st.columns(3)
 
-        for idx, (nom_act, info_act) in enumerate(WATCHLIST.items()):
+        for idx, (nom_act, info_act) in enumerate(WATCHLIST_DEFAUT.items()):
             col_active = cols_saisie[idx % 3]
             devise_a = info_act.get("devise", "EUR")
             with col_active:
@@ -1264,12 +1292,12 @@ with onglet_portefeuille:
                 })
                 continue
 
-            if nom_act not in WATCHLIST:
+            if nom_act not in WATCHLIST_DEFAUT:
                 continue
 
             qte = float(data_pos["qte"])
             pru = float(data_pos["pru"])
-            info_act = WATCHLIST[nom_act]
+            info_act = WATCHLIST_DEFAUT[nom_act]
             devise = info_act.get("devise", "EUR")
             sym = "$" if devise == "USD" else "€"
             env_label = "CTO US" if devise == "USD" else "PEA"
@@ -1313,7 +1341,6 @@ with onglet_portefeuille:
                 "div_net_l": div_net_eur,
             })
 
-        # TRI DÉCROISSANT DU POIDS LE PLUS GROS VERS LE PLUS BAS
         lignes_triees = sorted(lignes_detaillees, key=lambda x: x["val_eur"], reverse=True)
 
         lignes_export_csv = []
@@ -1499,16 +1526,16 @@ with onglet_portefeuille:
                 val_jour_eur = val_esp_fixe
 
                 for nom_a, d_pos in portefeuille_utilisateur.items():
-                    if nom_a == "Espèces" or nom_a not in WATCHLIST:
+                    if nom_a == "Espèces" or nom_a not in WATCHLIST_DEFAUT:
                         continue
                     q_a = float(d_pos["qte"])
-                    dev_a = WATCHLIST[nom_a].get("devise", "EUR")
+                    dev_a = WATCHLIST_DEFAUT[nom_a].get("devise", "EUR")
                     fact_a = (1.0 / TAUX_USD_EUR) if dev_a == "USD" else 1.0
                     serie_c = historiques_prix.get(nom_a, [])
                     if serie_c:
                         p_hist = serie_c[offset_fin] if abs(offset_fin) <= len(serie_c) else serie_c[0]
                     else:
-                        p_hist = float(prix_temps_reel.get(nom_a, WATCHLIST[nom_a]["prix_cible"]))
+                        p_hist = float(prix_temps_reel.get(nom_a, WATCHLIST_DEFAUT[nom_a]["prix_cible"]))
                     val_jour_eur += q_a * p_hist * fact_a
 
                 if idx_j >= nb_jours_reels - pas_echantillon:
@@ -1621,7 +1648,7 @@ with onglet_portefeuille:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 3 : VRAI CALENDRIER 12 MOIS, DIAGRAMME BÂTONS & BOULE DE NEIGE (CURSEURS)
+# ONGLET 3 : JAUGE D'OBJECTIF DE RENTE, CALENDRIER 12 MOIS & BOULE DE NEIGE
 # ------------------------------------------------------------------------------
 with onglet_dividendes:
     st.subheader("📅 Calendrier Annuel des Dividendes & Simulateur Effet Boule de Neige")
@@ -1640,10 +1667,10 @@ with onglet_dividendes:
         total_annuel_div = 0.0
 
         for nom_act, data_pos in portefeuille_utilisateur.items():
-            if nom_act == "Espèces" or nom_act not in WATCHLIST:
+            if nom_act == "Espèces" or nom_act not in WATCHLIST_DEFAUT:
                 continue
             qte = float(data_pos["qte"])
-            info_act = WATCHLIST[nom_act]
+            info_act = WATCHLIST_DEFAUT[nom_act]
             devise = info_act.get("devise", "EUR")
             facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
             div_annuel_eur = qte * float(info_act.get("div_eur", 0.0)) * facteur
@@ -1686,6 +1713,62 @@ with onglet_dividendes:
         </div>
         """
         afficher_html(html_div_kpi)
+
+        paliers_rente = [
+            (50.0, "🥉 Palier 1 : 50 € / mois"),
+            (100.0, "🥈 Palier 2 : 100 € / mois"),
+            (250.0, "🥇 Palier 3 : 250 € / mois"),
+            (500.0, "💎 Palier 4 : 500 € / mois"),
+            (1000.0, "👑 Palier 5 : 1 000 € / mois"),
+        ]
+        prochain_palier_val = 1000.0
+        prochain_palier_nom = "👑 Palier 5 : 1 000 € / mois"
+        for val_p, nom_p in paliers_rente:
+            if rente_mensuelle_moy < val_p:
+                prochain_palier_val = val_p
+                prochain_palier_nom = nom_p
+                break
+
+        pct_jauge = min(100.0, max(2.0, (rente_mensuelle_moy / prochain_palier_val) * 100.0)) if prochain_palier_val > 0 else 100.0
+        manque_mensuel = max(0.0, prochain_palier_val - rente_mensuelle_moy)
+        manque_annuel = manque_mensuel * 12.0
+        rendement_moy_pf = (total_annuel_div / valeur_totale_portefeuille) if valeur_totale_portefeuille > 0 and total_annuel_div > 0 else 0.052
+        rendement_moy_pf = max(0.035, min(0.10, rendement_moy_pf))
+        capital_requis_palier = manque_annuel / rendement_moy_pf
+        epargne_mensuelle_totale = max(50.0, BUDGET_MENSUEL + rente_mensuelle_moy)
+        mois_estimes_palier = max(1, int(math.ceil(capital_requis_palier / epargne_mensuelle_totale))) if manque_mensuel > 0 else 0
+
+        steps_html = ""
+        for val_p, nom_p in paliers_rente:
+            if rente_mensuelle_moy >= val_p:
+                steps_html += f"<div class='goal-step' style='border-color:#2ecc71; background:rgba(46,204,113,0.16); color:#2ecc71;'>✅ {nom_p}<br><span style='font-size:0.8em;'>Validé !</span></div>"
+            elif val_p == prochain_palier_val:
+                steps_html += f"<div class='goal-step' style='border-color:#3498db; background:rgba(52,152,219,0.18); color:#3498db;'>🎯 {nom_p}<br><span style='font-size:0.8em;'>En cours ({pct_jauge:.1f}%)</span></div>"
+            else:
+                steps_html += f"<div class='goal-step' style='opacity:0.65;'>🔒 {nom_p}<br><span style='font-size:0.8em;'>À débloquer</span></div>"
+
+        html_jauge_rente = f"""
+        <div class="goal-box">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <div style="font-size:0.80em; font-weight:800; text-transform:uppercase; letter-spacing:0.7px; color:#2ecc71;">🎯 Jauge d'Objectif de Rente Mensuelle</div>
+                    <div style="font-size:1.22em; font-weight:900; margin-top:2px;">Cap actuel : {prochain_palier_nom} — <span style="color:#2ecc71;">{rente_mensuelle_moy:.2f} €</span> / {prochain_palier_val:.0f} € par mois</div>
+                </div>
+                <div style="text-align:right;">
+                    <span class="b-green" style="font-size:0.95em;">Progression : {pct_jauge:.1f}%</span>
+                </div>
+            </div>
+            <div class="goal-bar-bg">
+                <div style="width:{pct_jauge:.1f}%; height:100%; background:linear-gradient(90deg, #2ecc71 0%, #3498db 100%); border-radius:10px;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:0.88em; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                <span>💡 Il vous manque <b>+{manque_mensuel:.2f} € / mois</b> (soit <b>+{manque_annuel:.0f} € / an</b> de dividendes) pour valider ce palier.</span>
+                <span>⏱️ <b>Estimation au rythme DCA actuel ({BUDGET_MENSUEL:.0f} €/mois) :</b> atteint dans env. <b>{mois_estimes_palier} mois</b> (~{capital_requis_palier:,.0f} € à investir).</span>
+            </div>
+            <div class="goal-steps">{steps_html}</div>
+        </div>
+        """
+        afficher_html(html_jauge_rente)
 
         st.markdown("#### 🗓️ Calendrier Mois par Mois des Dividendes Versés sur l'Année")
         html_grille_12mois = "<div class='cal-grid'>"
@@ -1837,7 +1920,7 @@ with onglet_ia:
     quota_utilise = st.session_state.get("quota_ia_utilise", 0)
     quota_restant = max(0, quota_ia_max - quota_utilise)
 
-    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST)
+    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST_DEFAUT)
     poids_max_ligne = 0.0
     nom_max_ligne = "Aucune"
     if valeur_totale_portefeuille > 0 and lignes_triees:
@@ -1877,7 +1960,6 @@ with onglet_ia:
     """
     afficher_html(html_ia_header)
 
-    # Phrase de synthèse flash du portefeuille et des opportunités du moment
     top_opps_noms = [f"<b>{c['nom']}</b> ({c['score']}/100)" for c in candidats_dca_top2]
     texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
     etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
@@ -1890,7 +1972,6 @@ with onglet_ia:
     afficher_html(html_phrase_flash)
 
     def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
-        """Moteur Expert Boursy 2.0 : Génère un audit financier complet et chiffré en cas de quota ou indisponibilité de l'API externe."""
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
         rente_mens_nette = dividendes_nets_totaux_eur / 12.0
@@ -1998,7 +2079,7 @@ with onglet_ia:
             for d in donnees_t1:
                 nom_b = d["NomBrut"]
                 if nom_b.lower() in q_low:
-                    info_w = WATCHLIST.get(nom_b, {})
+                    info_w = WATCHLIST_DEFAUT.get(nom_b, {})
                     pos_pf = portefeuille_utilisateur.get(nom_b)
                     txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
                     focus_actions.append(
