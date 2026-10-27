@@ -28,6 +28,7 @@ def afficher_html(html_brut):
 
 STYLE_ARGON = """
 <style>
+[data-testid="stToolbarActions"], .stAppDeployButton { display: none !important; }
 .argon-grid { display: flex; gap: 15px; margin: 10px 0 22px 0; flex-wrap: wrap; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; }
 .argon-card { flex: 1; min-width: 200px; background: linear-gradient(145deg, rgba(128,128,128,0.06) 0%, rgba(128,128,128,0.02) 100%); border: 1px solid rgba(128,128,128,0.22); border-radius: 14px; padding: 16px 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.04); text-align: center; }
 .argon-title { font-size: 0.76em; text-transform: uppercase; letter-spacing: 0.8px; opacity: 0.75; margin-bottom: 6px; font-weight: 800; }
@@ -53,6 +54,7 @@ STYLE_ARGON = """
 .cal-total { font-size: 1.25em; font-weight: 900; color: #2ecc71; }
 .cal-pill { display: inline-block; background: rgba(128,128,128,0.13); border-radius: 5px; padding: 3px 7px; font-size: 0.80em; font-weight: 600; margin: 2px 3px 2px 0; }
 .ia-box { background: linear-gradient(145deg, rgba(155,89,182,0.08) 0%, rgba(52,152,219,0.06) 100%); border: 1px solid rgba(155,89,182,0.32); border-radius: 14px; padding: 20px 24px; margin-top: 15px; font-family: 'Segoe UI', sans-serif; }
+.ia-flash { background: linear-gradient(135deg, rgba(46,204,113,0.10) 0%, rgba(52,152,219,0.10) 100%); border-left: 4px solid #2ecc71; border-radius: 10px; padding: 14px 18px; margin: 6px 0 20px 0; font-family: 'Segoe UI', sans-serif; font-size: 0.95em; line-height: 1.5; border-top: 1px solid rgba(128,128,128,0.15); border-right: 1px solid rgba(128,128,128,0.15); border-bottom: 1px solid rgba(128,128,128,0.15); }
 </style>
 """
 afficher_html(STYLE_ARGON)
@@ -801,7 +803,7 @@ if st.session_state["user"] is None:
         <div style="font-size: 1.15em; font-weight: 900; margin-bottom: 8px;">🚀 Bienvenue sur Boursy : Pilotez votre PEA, vos Actions US & vos Dividendes</div>
         <div style="font-size: 0.94em; opacity: 0.92; line-height: 1.6;">
             • 🎯 <b>Radar Algorithmique (/100) :</b> RSI, Stochastique, Bandes de Bollinger, ATR, MACD & Canal de Régression 3 ans.<br>
-            • 🌍 <b>Suivi Multidevises (EUR / USD), ADN Sectoriel & Courbe Boursière :</b> Conversion automatique en Euros (€).<br>
+            • 🌍 <b>Suivi Multidevises (EUR / USD), Répartition Sectorielle & Courbe Boursière :</b> Conversion automatique en Euros (€).<br>
             • 🤖 <b>Coach IA 2.0 & Calendrier 12 Mois :</b> Audits patrimoniaux, simulateur Boule de Neige interactif et alertes email.<br>
             👉 <i>Connectez-vous ou créez votre compte gratuit dans le menu de gauche (<b>👤 Espace Membre</b>) !</i>
         </div>
@@ -977,22 +979,23 @@ for nom, info in WATCHLIST.items():
             "div_eur": div_en_eur,
         })
 
-# Allocation DCA intelligente en Euros
+# Allocation DCA condensée sur les 1 ou 2 meilleures opportunités maximum
 candidats_tries = sorted(resultats_analysed, key=lambda x: x["score"], reverse=True)
+candidats_dca_top2 = candidats_tries[:2]
 budget_courant = BUDGET_MENSUEL
 achats_simules = {item["nom"]: 0 for item in candidats_tries}
 
 continuer = True
 while continuer:
     continuer = False
-    for item in candidats_tries:
+    for item in candidats_dca_top2:
         if budget_courant >= item["prix_eur"] and item["prix_eur"] > 0:
             achats_simules[item["nom"]] += 1
             budget_courant -= item["prix_eur"]
             continuer = True
 
 montant_investi_dca = BUDGET_MENSUEL - budget_courant
-montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item in candidats_tries)
+montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item in candidats_dca_top2)
 
 # ==============================================================================
 # NAVIGATION PAR ONGLETS
@@ -1005,7 +1008,7 @@ onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
 ])
 
 # ------------------------------------------------------------------------------
-# ONGLET 1 : RADAR ALGORITHMIQUE, ALLOCATION DCA & CENTRE D'ALERTES EMAIL
+# ONGLET 1 : RADAR ALGORITHMIQUE, ALLOCATION DCA (MAX 2 LIGNES) & ALERTES EMAIL
 # ------------------------------------------------------------------------------
 with onglet_radar:
     if mode_gratuit:
@@ -1029,7 +1032,7 @@ with onglet_radar:
         <div class="argon-card">
             <div class="argon-title">🌱 Gain de Rente DCA</div>
             <div class="argon-val" style="color: #3498db;">+{montant_tot_div_dca:.2f} € / an</div>
-            <div class="argon-sub">Généré par vos achats du mois</div>
+            <div class="argon-sub">Concentré sur 1 à 2 lignes max</div>
         </div>
         <div class="argon-card">
             <div class="argon-title">🔔 Alertes Prix Cible / Achat</div>
@@ -1043,17 +1046,17 @@ with onglet_radar:
     col_dca_exp, col_al_exp = st.columns(2)
 
     with col_dca_exp:
-        with st.expander(f"🛒 Plan d'Achat DCA du mois ({BUDGET_MENSUEL:.0f} €)", expanded=True):
-            achats_retenus = [item for item in candidats_tries if achats_simules.get(item["nom"], 0) > 0]
+        with st.expander(f"🛒 Plan d'Achat DCA Condensé ({BUDGET_MENSUEL:.0f} € — Max 2 lignes)", expanded=True):
+            achats_retenus = [item for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0]
             if not achats_retenus:
                 st.info("Aucune action ne remplit actuellement les critères d'achat DCA.")
             else:
-                html_dca = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Score</th><th>Qté</th><th>Coût (€)</th><th>+Div/an</th></tr></thead><tbody>"
+                html_dca = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action Prioritaire</th><th>Score</th><th>Qté</th><th>Coût (€)</th><th>+Div/an</th></tr></thead><tbody>"
                 for item in achats_retenus:
                     q_sim = achats_simules[item["nom"]]
                     cout_tot = q_sim * item["prix_eur"]
                     div_gagne = q_sim * item["div_eur"]
-                    html_dca += f"<tr><td class='r-name'><b>{item['nom']}</b></td><td><span class='b-green'>{item['score']}</span></td><td><b>{q_sim}</b></td><td>{cout_tot:.1f} €</td><td style='color:#2ecc71; font-weight:700;'>+{div_gagne:.2f} €</td></tr>"
+                    html_dca += f"<tr><td class='r-name'><b>{item['nom']}</b></td><td><span class='b-green'>{item['score']} / 100</span></td><td><b>{q_sim}</b></td><td>{cout_tot:.1f} €</td><td style='color:#2ecc71; font-weight:700;'>+{div_gagne:.2f} €</td></tr>"
                 html_dca += "</tbody></table>"
                 afficher_html(html_dca)
 
@@ -1170,10 +1173,10 @@ with onglet_radar:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 2 : PORTEFEUILLE, ADN SECTORIEL & VRAIE COURBE BOURSIÈRE AU FIL DU TEMPS
+# ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
-    st.subheader("💼 Cockpit Patrimonial Multidevises & Fiscalité")
+    st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
 
     with st.expander("✏️ Saisir ou modifier mes actions détenues (Quantité & PRU)", expanded=False):
         st.markdown("#### 💶 Poche Liquidités (Espèces disponibles)")
@@ -1211,6 +1214,8 @@ with onglet_portefeuille:
     portefeuille_utilisateur = st.session_state["portefeuille"]
     valeur_totale_portefeuille = 0.0
     cout_total_achat = 0.0
+    plus_value_globale = 0.0
+    plus_value_pct = 0.0
     dividendes_bruts_totaux_eur = 0.0
     dividendes_nets_totaux_eur = 0.0
     repartition_secteurs = {}
@@ -1363,7 +1368,7 @@ with onglet_portefeuille:
 
         col_titre_p, col_btn_csv = st.columns([3, 1])
         with col_titre_p:
-            st.subheader("🏆 Piliers du Portefeuille & Performance")
+            st.subheader("💼 Portefeuille et Performance")
         with col_btn_csv:
             df_export = pd.DataFrame(lignes_export_csv)
             csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
@@ -1416,7 +1421,7 @@ with onglet_portefeuille:
         col_sec, col_hist = st.columns(2)
 
         with col_sec:
-            st.subheader("🎯 ADN Sectoriel du Portefeuille")
+            st.subheader("🍩 Répartition sectorielle du portefeuille")
             secteurs_tries = sorted(repartition_secteurs.items(), key=lambda x: x[1], reverse=True)
             df_camembert = pd.DataFrame([
                 {
@@ -1476,7 +1481,6 @@ with onglet_portefeuille:
             map_jours = {"1 Mois": 22, "6 Mois": 126, "1 An": 252, "3 Ans": 750}
             nb_j_cible = map_jours[choix_horizon_courbe]
 
-            # Reconstitution jour par jour de la vraie courbe boursière du portefeuille à partir des clôtures Yahoo Finance
             longueurs_dispo = [
                 len(historiques_prix[nom_a])
                 for nom_a in portefeuille_utilisateur
@@ -1491,7 +1495,7 @@ with onglet_portefeuille:
             valeurs_quotidiennes = []
 
             for idx_j in range(0, nb_jours_reels, pas_echantillon):
-                offset_fin = idx_j - nb_jours_reels  # de -nb_jours_reels à -1
+                offset_fin = idx_j - nb_jours_reels
                 val_jour_eur = val_esp_fixe
 
                 for nom_a, d_pos in portefeuille_utilisateur.items():
@@ -1507,7 +1511,6 @@ with onglet_portefeuille:
                         p_hist = float(prix_temps_reel.get(nom_a, WATCHLIST[nom_a]["prix_cible"]))
                     val_jour_eur += q_a * p_hist * fact_a
 
-                # On cale exactement le tout dernier point sur la valorisation temps réel
                 if idx_j >= nb_jours_reels - pas_echantillon:
                     val_jour_eur = valeur_totale_portefeuille
 
@@ -1584,7 +1587,6 @@ with onglet_portefeuille:
             }
             st.vega_lite_chart(df_courbe_reelle, spec_courbe_bourse, use_container_width=True)
 
-            # Bilan chiffré de la trajectoire sous la courbe pour un impact visuel immédiat
             if valeurs_quotidiennes:
                 pt_debut = valeurs_quotidiennes[0]
                 pt_fin = valeurs_quotidiennes[-1]
@@ -1827,7 +1829,7 @@ with onglet_dividendes:
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 4 : COACH & AUDIT IA 2.0 (AUTO-DISCOVERY GEMINI + MOTEUR HYBRIDE)
+# ONGLET 4 : COACH & AUDIT IA 2.0 (AVEC PHRASE FLASH + AUTO-DISCOVERY GEMINI)
 # ------------------------------------------------------------------------------
 with onglet_ia:
     st.subheader("🤖 Coach & Audit IA 2.0 (Diagnostic Instantané & Intelligence Gemini)")
@@ -1875,6 +1877,18 @@ with onglet_ia:
     """
     afficher_html(html_ia_header)
 
+    # Phrase de synthèse flash du portefeuille et des opportunités du moment
+    top_opps_noms = [f"<b>{c['nom']}</b> ({c['score']}/100)" for c in candidats_dca_top2]
+    texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
+    etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
+
+    html_phrase_flash = f"""
+    <div class="ia-flash">
+        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}%) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois), tandis que les meilleures opportunités DCA du moment sont {texte_opps_moment}.
+    </div>
+    """
+    afficher_html(html_phrase_flash)
+
     def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
         """Moteur Expert Boursy 2.0 : Génère un audit financier complet et chiffré en cas de quota ou indisponibilité de l'API externe."""
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
@@ -1911,7 +1925,7 @@ with onglet_ia:
         elif code_audit == "AUDIT_2":
             achats_txt = "\n".join(
                 f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
-                for item in candidats_tries if achats_simules.get(item["nom"], 0) > 0
+                for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0
             )
             if not achats_txt:
                 achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
@@ -1919,12 +1933,12 @@ with onglet_ia:
 
 #### 1. Lecture de la Météo des Marchés
 * **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
-* **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
+* **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les 1 ou 2 meilleures valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
 
 #### 2. Top 3 des Signaux Techniques du Jour
 * {chr(10).join('* ' + s for s in top_3_radar)}
 
-#### 3. Répartition Optimale de votre Enveloppe de {BUDGET_MENSUEL:.0f} €
+#### 3. Répartition Condensée de votre Enveloppe de {BUDGET_MENSUEL:.0f} € (Max 2 lignes)
 {achats_txt}
 * **Total investi ce mois-ci :** **{montant_investi_dca:.2f} €** (Liquidités restantes pour le mois suivant : **{budget_courant:.2f} €**)
 * **Nouveaux dividendes annuels acquis :** **+{montant_tot_div_dca:.2f} € / an**.
@@ -2045,7 +2059,7 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
 - Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_glob:+.2f} €)
 - Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
-- Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois
+- Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois (condensée sur 1 à 2 lignes max)
 - Détail des lignes du portefeuille (triées par poids décroissant) :
 {chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
 - Signaux techniques et fondamentaux du Radar Boursy aujourd'hui :
@@ -2119,7 +2133,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
         titre_audit = "Plan d'Action DCA du Mois"
         code_audit_choisi = "AUDIT_2"
-        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € ce mois-ci ?"
+        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € sur 1 ou 2 valeurs maximum ce mois-ci ?"
     if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", use_container_width=True):
         titre_audit = "Arbitrage PEA (EUR) vs Actions US ($)"
         code_audit_choisi = "AUDIT_3"
@@ -2191,3 +2205,4 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
+ 
