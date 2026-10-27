@@ -941,12 +941,10 @@ for nom, info in WATCHLIST.items():
     })
 
     donnees_t2.append({
-        "NomBrut": nom,
         "Actif": f"{nom} ({devise})",
         "Prix": f"{prix_actuel:.2f} {symbole_devise}",
         "Tendance 3A": f"{val_reg:.2f} {symbole_devise}",
         "Écart %": f"{ecart_reg_pct:+.1f}%",
-        "EcartNum": ecart_reg_pct,
         "Statut Value": "🟢 FORTE DÉCOTE" if ecart_reg_pct <= -10 else ("🟡 SOUS-ÉVALUÉE" if ecart_reg_pct < 0 else "⚪ PRIX NORMAL / CHER"),
     })
 
@@ -1139,21 +1137,17 @@ with onglet_radar:
     ])
 
     with tab_val:
-        # Tri de la plus forte décote (écart le plus négatif) en haut jusqu'au plus cher en bas
-        donnees_t2_triees = sorted(donnees_t2, key=lambda x: x["EcartNum"])
         html_t2 = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif</th><th>Cours Actuel</th><th>Tendance Linéaire 3A</th><th>Écart à la Tendance</th><th>Diagnostic Value</th></tr></thead><tbody>"
-        for d in donnees_t2_triees:
+        for d in donnees_t2:
             st_val = d["Statut Value"]
             b_val = "b-green" if "DÉCOTE" in st_val else ("b-yellow" if "SOUS-ÉVALUÉE" in st_val else "b-neutral")
-            c_ecart = "#2ecc71" if d["EcartNum"] <= -10 else ("#f39c12" if d["EcartNum"] < 0 else "inherit")
-            html_t2 += f"<tr><td class='r-name'>{d['Actif']}</td><td><b>{d['Prix']}</b></td><td>{d['Tendance 3A']}</td><td style='color:{c_ecart};'><b>{d['Écart %']}</b></td><td><span class='{b_val}'>{st_val}</span></td></tr>"
+            html_t2 += f"<tr><td class='r-name'>{d['Actif']}</td><td><b>{d['Prix']}</b></td><td>{d['Tendance 3A']}</td><td><b>{d['Écart %']}</b></td><td><span class='{b_val}'>{st_val}</span></td></tr>"
         html_t2 += "</tbody></table>"
         afficher_html(html_t2)
 
         if droites_regression_dict:
             st.markdown("#### 📈 Visualisation du Canal de Régression Linéaire sur 3 Ans")
-            noms_tries_value = [d["NomBrut"] for d in donnees_t2_triees if d["NomBrut"] in droites_regression_dict]
-            act_choisie_graph = st.selectbox("Choisir une action à inspecter graphiquement (classées par décote) :", noms_tries_value)
+            act_choisie_graph = st.selectbox("Choisir une action à inspecter graphiquement :", list(droites_regression_dict.keys()))
             closes_g, reg_g, std_g, sym_g = droites_regression_dict[act_choisie_graph]
             df_graph = pd.DataFrame({
                 "Cours Clôture": closes_g,
@@ -1883,6 +1877,7 @@ with onglet_ia:
     """
     afficher_html(html_ia_header)
 
+    # Phrase de synthèse flash du portefeuille et des opportunités du moment
     top_opps_noms = [f"<b>{c['nom']}</b> ({c['score']}/100)" for c in candidats_dca_top2]
     texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
     etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
@@ -2210,3 +2205,4 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
+ 
