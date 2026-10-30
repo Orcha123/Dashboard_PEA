@@ -180,6 +180,7 @@ WATCHLIST_DEFAUT = {
     "Pernod Ricard": {"symbole": "RI.PA", "prix_cible": 70.0, "secteur": "Spiritueux", "div_eur": 4.70, "payout_ratio": 0.55, "croissance_5a": "+6.0%", "mois_div": ["Juil", "Nov"], "devise": "EUR"},
     "Schneider Electric": {"symbole": "SU.PA", "prix_cible": 210.0, "secteur": "Industrie/Tech", "div_eur": 3.50, "payout_ratio": 0.48, "croissance_5a": "+8.8%", "mois_div": ["Mai"], "devise": "EUR"},
     "LVMH": {"symbole": "MC.PA", "prix_cible": 620.0, "secteur": "Luxe", "div_eur": 13.00, "payout_ratio": 0.45, "croissance_5a": "+12.0%", "mois_div": ["Avr", "Déc"], "devise": "EUR"},
+    "Engie": {"symbole": "ENGI.PA", "prix_cible": 16.0, "secteur": "Énergie/Utilities", "div_eur": 1.43, "payout_ratio": 0.65, "croissance_5a": "+5.0%", "mois_div": ["Mai"], "devise": "EUR"},
     "Microsoft": {"symbole": "MSFT", "prix_cible": 400.0, "secteur": "Tech US", "div_eur": 3.32, "payout_ratio": 0.25, "croissance_5a": "+10.2%", "mois_div": ["Mar", "Juin", "Sep", "Déc"], "devise": "USD"},
     "Apple": {"symbole": "AAPL", "prix_cible": 200.0, "secteur": "Tech US", "div_eur": 1.00, "payout_ratio": 0.16, "croissance_5a": "+5.5%", "mois_div": ["Fév", "Mai", "Août", "Nov"], "devise": "USD"},
     "Coca-Cola": {"symbole": "KO", "prix_cible": 62.0, "secteur": "Consommation US", "div_eur": 1.94, "payout_ratio": 0.70, "croissance_5a": "+4.5%", "mois_div": ["Avr", "Juil", "Oct", "Déc"], "devise": "USD"},
@@ -2225,7 +2226,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     with col_q_input:
         question_libre = st.text_input(
             "💬 Posez une question personnalisée à votre Coach IA 2.0 :",
-            placeholder="Ex: Que penses-tu de mon PRU sur Rubis et TotalEnergies ? À quel prix racheter Pernod Ricard ?",
+            placeholder="Ex: Compte tenu de mon PRU sur Rubis...",
             label_visibility="collapsed",
         )
     with col_q_btn:
