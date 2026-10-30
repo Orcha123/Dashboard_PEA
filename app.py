@@ -69,8 +69,8 @@ afficher_html(STYLE_ARGON)
 @st.cache_resource
 def init_supabase():
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
+        url = str(st.secrets["SUPABASE_URL"]).strip().rstrip("/")
+        key = str(st.secrets["SUPABASE_KEY"]).strip()
         return create_client(url, key)
     except Exception:
         return None
@@ -821,14 +821,6 @@ historiques_prix = {}
 droites_regression_dict = {}
 prix_temps_reel = {}
 
-for nom, info in WATCHLIST_DEFAUT.items(): # On sécurise avec WATCHLIST_DEFAUT par défaut au démarrage
-    pass
-
-# On applique sur WATCHLIST active
-for nom, info in WATCHLIST_DEFAUT.items():
-    pass
-
-# Redéfinition propre et robuste de la boucle de traitement de la watchlist
 for nom, info in list(st.session_state["watchlist"].items()):
     prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
     if prix_actuel is None or not closes:
@@ -999,10 +991,8 @@ for nom, info in list(st.session_state["watchlist"].items()):
             "div_eur": div_en_eur,
         })
 
-# Tri global et définitif du Tableau 2 (de la plus forte décote en haut vers le plus cher en bas)
 donnees_t2.sort(key=lambda x: (x["OrdreStatut"], x["EcartNum"]))
 
-# Allocation DCA condensée sur les 1 ou 2 meilleures opportunités maximum
 candidats_tries = sorted(resultats_analysed, key=lambda x: x["score"], reverse=True)
 candidats_dca_top2 = candidats_tries[:2]
 budget_courant = BUDGET_MENSUEL
