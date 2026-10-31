@@ -748,7 +748,7 @@ else:
     requete_yahoo = st.sidebar.text_input("🌐 Tapez un nom ou ticker (ex: Novo Nordisk, Ferrari, Dassault, O...)").strip()
     resultats_yahoo = rechercher_actions_yahoo_live(requete_yahoo) if len(requete_yahoo) >= 2 else []
 
-     nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = "", requete_yahoo.upper(), "EUR", "Action Internationale"
+    nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = "", requete_yahoo.upper(), "EUR", "Action Internationale"
     if resultats_yahoo:
         choix_res_y = st.sidebar.selectbox("Résultats Yahoo Finance :", [r["label"] for r in resultats_yahoo])
         item_y = next((r for r in resultats_yahoo if r["label"] == choix_res_y), resultats_yahoo[0])
