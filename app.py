@@ -1178,9 +1178,171 @@ with onglet_radar:
             st.line_chart(df_graph)
 
     with tab_tech:
-        html_t4 = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif</th><th>Support 30J</th><th>Cours Actuel</th><th>Résistance 30J</th><th>Bandes de Bollinger (20J)</th><th>Oscillateur Stochastique</th><th>Volatilité ATR (14J)</th></tr></thead><tbody>"
+        html_guide_tech = """
+        <div class="argon-grid" style="margin-bottom: 14px;">
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#2ecc71;">📏 1. Canal 30 Jours (Support / Résistance)</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Le <b>Support</b> est le plancher où les acheteurs défendent le titre. Plus la jauge est proche de <b>0% (Bas)</b>, meilleur est le point d'entrée.</div>
+            </div>
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#3498db;">🌊 2. Bandes de Bollinger (20 Jours)</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Contiennent 95% des variations normales. Un cours sur le <b>Bas de Bollinger</b> indique un titre statistiquement bradé à court terme.</div>
+            </div>
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#f39c12;">⚡ 3. Oscillateur Stochastique (14J)</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la vitesse d'essoufflement. <b>&lt; 20% (Survente)</b> = vendeurs épuisés, rebond proche. <b>&gt; 80% (Surachat)</b> = risque de repli.</div>
+            </div>
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#9b59b6;">🎯 4. ATR & Ordre Limite Conseillé</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée. Il permet de calculer le <b>Prix d'Ordre Limite idéal</b> à placer sur votre PEA/CTO.</div>
+            </div>
+        </div>
+        """
+        afficher_html(html_guide_tech)
+        st.caption("🎯 **Classement par Opportunité de Timing :** Trié de la **meilleure fenêtre d'entrée court terme (#1 en haut)** jusqu'aux valeurs **en surchauffe (en bas)**.")
+
+        donnees_t4_enrichies = []
         for d in donnees_t4:
-            html_t4 += f"<tr><td class='r-name'>{d['Actif']}</td><td style='color: #2ecc71; font-weight:700;'>{d['Support 30J']}</td><td><b>{d['Prix']}</b></td><td style='color: #e74c3c; font-weight:700;'>{d['Résistance 30J']}</td><td>{d['Bollinger (20J)']}</td><td><span class='b-neutral'>{d['Stochastique']}</span></td><td><span class='b-purple'>{d['Volatilité ATR']}</span></td></tr>"
+            try:
+                parts_prix = d["Prix"].split()
+                prix_f = float(parts_prix[0])
+                sym_dev = parts_prix[1] if len(parts_prix) > 1 else "€"
+                sup_f = float(d["Support 30J"].split()[0])
+                res_f = float(d["Résistance 30J"].split()[0])
+            except Exception:
+                prix_f, sym_dev, sup_f, res_f = 50.0, "€", 45.0, 55.0
+
+            try:
+                bloc_b = d["Bollinger (20J)"].split("]")[0].replace("[", "")
+                b_inf_s, b_sup_s = bloc_b.split(" - ")
+                borne_inf_f, borne_sup_f = float(b_inf_s), float(b_sup_s)
+            except Exception:
+                borne_inf_f, borne_sup_f = sup_f, res_f
+
+            try:
+                stoch_f = float(d["Stochastique"].split("%")[0])
+            except Exception:
+                stoch_f = 50.0
+
+            try:
+                atr_f = float(d["Volatilité ATR"].split("%")[0])
+            except Exception:
+                atr_f = 1.5
+
+            amp_30j = max(0.01, res_f - sup_f)
+            pos_canal_pct = max(0.0, min(100.0, ((prix_f - sup_f) / amp_30j) * 100.0))
+
+            amp_boll = max(0.01, borne_sup_f - borne_inf_f)
+            pos_boll_pct = max(0.0, min(100.0, ((prix_f - borne_inf_f) / amp_boll) * 100.0))
+
+            rebond_res_pct = ((res_f - prix_f) / prix_f * 100.0) if prix_f > 0 else 0.0
+
+            score_timing = int(round(100.0 - (0.40 * pos_canal_pct + 0.35 * stoch_f + 0.25 * pos_boll_pct)))
+            score_timing = max(5, min(98, score_timing))
+
+            plancher_tech = max(sup_f, min(prix_f, (sup_f + borne_inf_f) / 2.0))
+
+            if pos_boll_pct <= 22:
+                diag_boll = f"<span class='b-green'>🟢 Bas de canal ({borne_inf_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Prix comprimé (Rebond probable)</span>"
+            elif pos_boll_pct >= 82:
+                diag_boll = f"<span class='b-red'>🔴 Haut de canal ({borne_sup_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Extension haute (Prudence)</span>"
+            else:
+                diag_boll = f"<span class='b-neutral'>⚪ Zone neutre [{borne_inf_f:.1f} - {borne_sup_f:.1f}]</span><br><span style='font-size:0.78em; opacity:0.8;'>Position : {pos_boll_pct:.0f}% de l'élastique</span>"
+
+            if stoch_f <= 20:
+                diag_stoch = f"<span class='b-green'>🟢 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Vendeurs épuisés = Signal Achat</span>"
+            elif stoch_f <= 38:
+                diag_stoch = f"<span class='b-blue'>🔵 {stoch_f:.0f}% (Zone basse)</span><br><span style='font-size:0.78em; opacity:0.8;'>Point d'entrée favorable</span>"
+            elif stoch_f >= 80:
+                diag_stoch = f"<span class='b-red'>🔴 {stoch_f:.0f}% (Surachat)</span><br><span style='font-size:0.78em; opacity:0.8;'>Surchauffe court terme</span>"
+            else:
+                diag_stoch = f"<span class='b-neutral'>⚪ {stoch_f:.0f}% (Neutre)</span><br><span style='font-size:0.78em; opacity:0.8;'>Tendance en cours</span>"
+
+            if atr_f < 1.3:
+                profil_atr = "🛡️ Calme"
+            elif atr_f <= 2.2:
+                profil_atr = "⚖️ Modérée"
+            else:
+                profil_atr = "⚡ Nerveuse"
+
+            if score_timing >= 68:
+                ordre_statut = 0
+                action_tech = f"<span class='b-green'>🔥 FENÊTRE DE TIR IDÉALE</span><br><span style='font-size:0.80em;'>Achat possible au cours actuel (<b>{prix_f:.2f} {sym_dev}</b>)</span>"
+            elif score_timing >= 50:
+                ordre_statut = 1
+                action_tech = f"<span class='b-blue'>✅ ACCUMULATION DCA</span><br><span style='font-size:0.80em;'>Ou ordre limite vers <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+            elif score_timing >= 33:
+                ordre_statut = 2
+                action_tech = f"<span class='b-yellow'>⏳ ATTENDRE UN REPLI</span><br><span style='font-size:0.80em;'>Placer ordre limite à <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+            else:
+                ordre_statut = 3
+                cible_repli = (sup_f + res_f) / 2.0
+                action_tech = f"<span class='b-red'>⚠️ SURCHAUFFE (TROP HAUT)</span><br><span style='font-size:0.80em;'>Attendre retour vers <b>{cible_repli:.2f} {sym_dev}</b></span>"
+
+            donnees_t4_enrichies.append({
+                "Actif": d["Actif"],
+                "Prix": d["Prix"],
+                "Support": d["Support 30J"],
+                "Resistance": d["Résistance 30J"],
+                "PosCanal": pos_canal_pct,
+                "RebondPct": rebond_res_pct,
+                "DiagBoll": diag_boll,
+                "DiagStoch": diag_stoch,
+                "ATR": f"{atr_f:.2f}% / j ({profil_atr})",
+                "ScoreTiming": score_timing,
+                "OrdreStatut": ordre_statut,
+                "ActionTech": action_tech,
+            })
+
+        donnees_t4_enrichies.sort(key=lambda x: (x["OrdreStatut"], -x["ScoreTiming"]))
+
+        html_t4 = """
+        <table class='r-table'>
+        <thead>
+            <tr>
+                <th style='width:55px;'>Rang</th>
+                <th style='text-align: left;'>Actif</th>
+                <th style='width:230px;'>Position dans le Canal 30J<br><span style='font-size:0.82em; opacity:0.75;'>(Support ➔ Cours ➔ Résistance)</span></th>
+                <th>Marge avant Résistance</th>
+                <th>Diagnostic Bollinger (20J)</th>
+                <th>Momentum Stochastique</th>
+                <th>Volatilité (ATR)</th>
+                <th style='width:125px;'>Score Timing</th>
+                <th>Décision & Ordre Limite</th>
+            </tr>
+        </thead>
+        <tbody>
+        """
+        for idx_r, item_t in enumerate(donnees_t4_enrichies, start=1):
+            pos_c = item_t["PosCanal"]
+            c_jauge_c = "#2ecc71" if pos_c <= 35 else ("#3498db" if pos_c <= 65 else "#e74c3c")
+            sc_t = item_t["ScoreTiming"]
+            c_sc_t = "#2ecc71" if sc_t >= 68 else ("#3498db" if sc_t >= 50 else ("#f39c12" if sc_t >= 33 else "#e74c3c"))
+            b_rang = "b-green" if item_t["OrdreStatut"] == 0 else ("b-blue" if item_t["OrdreStatut"] == 1 else ("b-yellow" if item_t["OrdreStatut"] == 2 else "b-neutral"))
+
+            html_t4 += f"""
+            <tr>
+                <td><span class='{b_rang}'>#{idx_r}</span></td>
+                <td class='r-name'>{item_t['Actif']}<br><span style='font-size:0.84em; opacity:0.8;'>Cours : <b>{item_t['Prix']}</b></span></td>
+                <td>
+                    <div style='display:flex; justify-content:space-between; font-size:0.78em; font-weight:700;'>
+                        <span style='color:#2ecc71;'>Sup: {item_t['Support']}</span>
+                        <span>{pos_c:.0f}%</span>
+                        <span style='color:#e74c3c;'>Rés: {item_t['Resistance']}</span>
+                    </div>
+                    <div class='score-bg'><div style='width:{max(4, min(100, pos_c))}%; background:{c_jauge_c}; height:100%;'></div></div>
+                </td>
+                <td style='color:#2ecc71; font-weight:800;'>+{item_t['RebondPct']:.1f}%<br><span style='font-size:0.76em; opacity:0.75; font-weight:600;'>potentiel 30J</span></td>
+                <td>{item_t['DiagBoll']}</td>
+                <td>{item_t['DiagStoch']}</td>
+                <td><span class='b-purple'>{item_t['ATR']}</span></td>
+                <td>
+                    <div style='font-weight:800; font-size:0.9em;'>{sc_t} / 100</div>
+                    <div class='score-bg'><div style='width:{sc_t}%; background:{c_sc_t}; height:100%;'></div></div>
+                </td>
+                <td>{item_t['ActionTech']}</td>
+            </tr>
+            """
         html_t4 += "</tbody></table>"
         afficher_html(html_t4)
 
