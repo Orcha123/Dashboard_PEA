@@ -1,3 +1,6 @@
+# ==============================================================================
+# PARTIE 1 / 4 : IMPORTS, DESIGN ARGON UI, SUPABASE, STRIPE & CATALOGUE
+# ==============================================================================
 import urllib.request
 import urllib.parse
 import json
@@ -10,9 +13,6 @@ import pandas as pd
 import streamlit as st
 from supabase import create_client
 
-# ==============================================================================
-# CONFIGURATION DE LA PAGE & DESIGN ARGON UI
-# ==============================================================================
 st.set_page_config(
     page_title="Boursy - Suite Boursière PEA, US & Dividendes",
     page_icon="📈",
@@ -63,9 +63,6 @@ STYLE_ARGON = """
 """
 afficher_html(STYLE_ARGON)
 
-# ==============================================================================
-# CONNEXION SUPABASE, STRIPE & EMAILS D'ALERTE
-# ==============================================================================
 @st.cache_resource
 def init_supabase():
     try:
@@ -136,9 +133,6 @@ def envoyer_email_alerte(destinataire, liste_alertes):
     except Exception as e:
         return False, f"Erreur SMTP : {e}"
 
-# ==============================================================================
-# TAUX DE CHANGE & MÉTÉO DES MARCHÉS (CAC 40, S&P 500, VIX)
-# ==============================================================================
 @st.cache_data(ttl=1800)
 def recuperer_taux_change():
     try:
@@ -167,9 +161,6 @@ def recuperer_indice_meteo(symbole):
     except Exception:
         return None, 0.0
 
-# ==============================================================================
-# VALEURS PAR DÉFAUT & CATALOGUE INTERNATIONAL (PEA & US)
-# ==============================================================================
 WATCHLIST_DEFAUT = {
     "TotalEnergies": {"symbole": "TTE.PA", "prix_cible": 58.0, "secteur": "Énergie", "div_eur": 3.22, "payout_ratio": 0.42, "croissance_5a": "+6.1%", "mois_div": ["Jan", "Avr", "Juil", "Oct"], "devise": "EUR"},
     "Air Liquide": {"symbole": "AI.PA", "prix_cible": 165.0, "secteur": "Chimie/Industrie", "div_eur": 3.20, "payout_ratio": 0.55, "croissance_5a": "+8.5%", "mois_div": ["Mai"], "devise": "EUR"},
@@ -181,6 +172,7 @@ WATCHLIST_DEFAUT = {
     "Schneider Electric": {"symbole": "SU.PA", "prix_cible": 210.0, "secteur": "Industrie/Tech", "div_eur": 3.50, "payout_ratio": 0.48, "croissance_5a": "+8.8%", "mois_div": ["Mai"], "devise": "EUR"},
     "LVMH": {"symbole": "MC.PA", "prix_cible": 620.0, "secteur": "Luxe", "div_eur": 13.00, "payout_ratio": 0.45, "croissance_5a": "+12.0%", "mois_div": ["Avr", "Déc"], "devise": "EUR"},
     "Engie": {"symbole": "ENGI.PA", "prix_cible": 16.0, "secteur": "Énergie/Utilities", "div_eur": 1.43, "payout_ratio": 0.65, "croissance_5a": "+5.0%", "mois_div": ["Mai"], "devise": "EUR"},
+    "BNP Paribas": {"symbole": "BNP.PA", "prix_cible": 65.0, "secteur": "Banque", "div_eur": 4.60, "payout_ratio": 0.50, "croissance_5a": "+7.0%", "mois_div": ["Mai"], "devise": "EUR"},
     "Microsoft": {"symbole": "MSFT", "prix_cible": 400.0, "secteur": "Tech US", "div_eur": 3.32, "payout_ratio": 0.25, "croissance_5a": "+10.2%", "mois_div": ["Mar", "Juin", "Sep", "Déc"], "devise": "USD"},
     "Apple": {"symbole": "AAPL", "prix_cible": 200.0, "secteur": "Tech US", "div_eur": 1.00, "payout_ratio": 0.16, "croissance_5a": "+5.5%", "mois_div": ["Fév", "Mai", "Août", "Nov"], "devise": "USD"},
     "Coca-Cola": {"symbole": "KO", "prix_cible": 62.0, "secteur": "Consommation US", "div_eur": 1.94, "payout_ratio": 0.70, "croissance_5a": "+4.5%", "mois_div": ["Avr", "Juil", "Oct", "Déc"], "devise": "USD"},
@@ -246,9 +238,6 @@ CATALOGUE_ACTIONS = {
     "Walmart (USD)": ("WMT", "USD", "Distribution US"),
 }
 
-# ==============================================================================
-# INITIALISATION DE LA SESSION & SYNCHRONISATION CLOUD
-# ==============================================================================
 if "user" not in st.session_state:
     st.session_state["user"] = None
 if "watchlist" not in st.session_state:
@@ -269,15 +258,39 @@ if st.session_state.get("quota_ia_date") != date_jour_str:
     st.session_state["quota_ia_date"] = date_jour_str
     st.session_state["quota_ia_utilise"] = 0
 
+def construire_univers_actifs():
+    """Fusionne les valeurs par défaut, le catalogue et la watchlist personnalisée."""
+    univers = WATCHLIST_DEFAUT.copy()
+    for lib_cat, (sym_c, dev_c, sec_c) in CATALOGUE_ACTIONS.items():
+        nom_c = lib_cat.split(" (")[0]
+        if nom_c not in univers:
+            univers[nom_c] = {
+                "symbole": sym_c,
+                "prix_cible": 100.0,
+                "secteur": sec_c,
+                "div_eur": 2.0,
+                "payout_ratio": 0.50,
+                "croissance_5a": "+5.0%",
+                "mois_div": ["Mar", "Juin", "Sep", "Déc"] if dev_c == "USD" else ["Mai"],
+                "devise": dev_c,
+            }
+    for nom_w, info_w in st.session_state.get("watchlist", {}).items():
+        if isinstance(info_w, dict):
+            univers[nom_w] = info_w
+    return univers
+
 def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
-    toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()))
+    univers_sync = construire_univers_actifs()
+    toutes_les_actions = set(list(univers_sync.keys()) + list(watchlist_courante.keys()) + list(portefeuille_cloud.keys()))
     for nom_act in toutes_les_actions:
+        if nom_act == "Espèces":
+            continue
         if nom_act in portefeuille_cloud and isinstance(portefeuille_cloud[nom_act], dict):
             st.session_state[f"qte_{nom_act}"] = int(portefeuille_cloud[nom_act].get("qte", 0))
             st.session_state[f"pru_{nom_act}"] = float(portefeuille_cloud[nom_act].get("pru", 0.0))
         else:
             st.session_state[f"qte_{nom_act}"] = 0
-            cible_def = float(watchlist_courante.get(nom_act, {}).get("prix_cible", 50.0))
+            cible_def = float(watchlist_courante.get(nom_act, univers_sync.get(nom_act, {})).get("prix_cible", 50.0))
             st.session_state[f"pru_{nom_act}"] = cible_def
 
     if "Espèces" in portefeuille_cloud and isinstance(portefeuille_cloud["Espèces"], dict):
@@ -293,6 +306,7 @@ def sauvegarder_dans_cloud():
             user_id_str = str(st.session_state["user"].id)
             email_str = str(st.session_state["user"].email)
             watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+            univers_courant = construire_univers_actifs()
 
             est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
             st.session_state["est_abonne_pro"] = est_pro_val
@@ -321,16 +335,17 @@ def sauvegarder_dans_cloud():
                         val_esp = float(data.get("pru", 0.0))
                         val_totale += val_esp
                         cap_investi += val_esp
-                    elif nom in watchlist_actuelle:
+                    elif nom in univers_courant:
                         q = float(data.get("qte", 0.0))
                         pru = float(data.get("pru", 0.0))
-                        cours = float(dict_prix.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
-                        devise = watchlist_actuelle[nom].get("devise", "EUR")
+                        info_ref = univers_courant[nom]
+                        cours = float(dict_prix.get(nom, info_ref.get("prix_cible", 50.0)))
+                        devise = info_ref.get("devise", "EUR")
                         facteur = (1.0 / taux_usd_eur) if devise == "USD" else 1.0
 
                         val_totale += q * cours * facteur
                         cap_investi += q * pru * facteur
-                        rente_tot += q * float(watchlist_actuelle[nom].get("div_eur", 0.0)) * facteur
+                        rente_tot += q * float(info_ref.get("div_eur", 0.0)) * facteur
 
                 date_du_jour = datetime.now().strftime("%Y-%m-%d")
                 snapshot_payload = {
@@ -351,9 +366,8 @@ def sauvegarder_dans_cloud():
     else:
         st.sidebar.warning("⚠️ Connectez-vous dans l'Espace Membre pour sauvegarder dans le Cloud.")
         return False
-
-# ==============================================================================
-# BARRE LATÉRALE : ESPACE MEMBRE, DCA, GESTION D'ACTIFS & CONSOLE ADMIN
+        # ==============================================================================
+# PARTIE 2 / 4 : BARRE LATÉRALE, INDICATEURS TECHNIQUES & MOTEUR RADAR
 # ==============================================================================
 st.sidebar.header("👤 Espace Membre")
 
@@ -469,6 +483,7 @@ else:
             st.rerun()
 
 WATCHLIST = st.session_state["watchlist"]
+UNIVERS_ACTIFS = construire_univers_actifs()
 TAUX_USD_EUR = recuperer_taux_change()
 st.session_state["taux_change"] = TAUX_USD_EUR
 
@@ -477,7 +492,6 @@ if st.sidebar.button("🔄 Actualiser les cours Bourse", use_container_width=Tru
     st.toast("⚡ Cours boursiers, indices et taux EUR/USD actualisés !")
     st.rerun()
 
-# --- PARAMÈTRES DCA ---
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Paramètres DCA")
 nouveau_budget = st.sidebar.number_input(
@@ -493,7 +507,6 @@ if nouveau_budget != st.session_state["budget_dca"]:
 
 BUDGET_MENSUEL = st.session_state["budget_dca"]
 
-# --- AJOUT / GESTION DES ACTIONS (CATALOGUE + TICKER LIBRE) ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Ajouter / Gérer les actions")
 
@@ -504,16 +517,17 @@ if mode_ajout == "Catalogue (PEA & US)":
     if choix_menu_yf != "-- Choisir une action --":
         symbole_sel, devise_sel, secteur_def = CATALOGUE_ACTIONS[choix_menu_yf]
         nom_propre = choix_menu_yf.split(" (")[0]
+        info_pre = UNIVERS_ACTIFS.get(nom_propre, {})
         with st.sidebar.form("form_catalogue_yf"):
             st.markdown(f"**{nom_propre}** (`{symbole_sel}`) — **{devise_sel}**")
-            nouveau_secteur = st.text_input("Secteur", value=secteur_def)
-            nouveau_cible = st.number_input(f"Prix cible ({devise_sel})", min_value=0.0, value=float(WATCHLIST.get(nom_propre, {}).get("prix_cible", 100.0)), step=1.0)
-            nouveau_div = st.number_input(f"Dividende annuel ({devise_sel})", min_value=0.0, value=float(WATCHLIST.get(nom_propre, {}).get("div_eur", 2.5)), step=0.1)
-            nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=float(WATCHLIST.get(nom_propre, {}).get("payout_ratio", 0.50)), step=0.05)
-            nouveau_croiss = st.text_input("Croissance Div. 5A", value=WATCHLIST.get(nom_propre, {}).get("croissance_5a", "+6.0%"))
+            nouveau_secteur = st.text_input("Secteur", value=info_pre.get("secteur", secteur_def))
+            nouveau_cible = st.number_input(f"Prix cible ({devise_sel})", min_value=0.0, value=float(info_pre.get("prix_cible", 100.0)), step=1.0)
+            nouveau_div = st.number_input(f"Dividende annuel ({devise_sel})", min_value=0.0, value=float(info_pre.get("div_eur", 2.5)), step=0.1)
+            nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=float(info_pre.get("payout_ratio", 0.50)), step=0.05)
+            nouveau_croiss = st.text_input("Croissance Div. 5A", value=info_pre.get("croissance_5a", "+6.0%"))
             liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
             def_mois = ["Mar", "Juin", "Sep", "Déc"] if devise_sel == "USD" else ["Mai"]
-            nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles, default=WATCHLIST.get(nom_propre, {}).get("mois_div", def_mois))
+            nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles, default=info_pre.get("mois_div", def_mois))
 
             if st.form_submit_button("➕ Ajouter / Mettre à jour"):
                 st.session_state["watchlist"][nom_propre] = {
@@ -567,7 +581,6 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
             sauvegarder_dans_cloud()
             st.rerun()
 
-# --- GESTION SAAS & CONSOLE ADMIN ---
 st.sidebar.markdown("---")
 st.sidebar.header("💎 Offre Boursy & Accès")
 
@@ -614,9 +627,6 @@ else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"💎 **Abonné Boursy Pro actif** : {len(WATCHLIST)} valeurs débloquées & 15 audits IA/jour.")
 
-# ==============================================================================
-# MOTEUR ALGORITHMIQUE ÉLEVÉ & INDICATEURS TECHNIQUES AVANCÉS
-# ==============================================================================
 def calculer_rsi(clotures, periode=14):
     if len(clotures) < periode + 1:
         return 50.0
@@ -761,9 +771,6 @@ def recuperer_donnees(symbole):
     except Exception:
         return None, None, None, None
 
-# ==============================================================================
-# EN-TÊTE PRINCIPAL, MÉTÉO DES MARCHÉS & BANNIÈRE D'ACCUEIL
-# ==============================================================================
 st.title("📈 Boursy - Suite Boursière PEA, US & Dividendes")
 
 cac_pts, cac_var = recuperer_indice_meteo("^FCHI")
@@ -812,9 +819,6 @@ if st.session_state["user"] is None:
     """
     afficher_html(html_landing_banner)
 
-# ==============================================================================
-# TRAITEMENT DU MOTEUR BOURSIER SUR LA WATCHLIST
-# ==============================================================================
 resultats_analysed = []
 donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
 alertes_detectees = []
@@ -822,7 +826,12 @@ historiques_prix = {}
 droites_regression_dict = {}
 prix_temps_reel = {}
 
-for nom, info in list(st.session_state["watchlist"].items()):
+actifs_a_charger = dict(st.session_state["watchlist"])
+for nom_pf_k in st.session_state.get("portefeuille", {}):
+    if nom_pf_k != "Espèces" and nom_pf_k not in actifs_a_charger and nom_pf_k in UNIVERS_ACTIFS:
+        actifs_a_charger[nom_pf_k] = UNIVERS_ACTIFS[nom_pf_k]
+
+for nom, info in list(actifs_a_charger.items()):
     prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
     if prix_actuel is None or not closes:
         continue
@@ -1010,9 +1019,8 @@ while continuer:
 
 montant_investi_dca = BUDGET_MENSUEL - budget_courant
 montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item in candidats_dca_top2)
-
 # ==============================================================================
-# NAVIGATION PAR ONGLETS
+# PARTIE 3 / 4 : ONGLET 1 (RADAR) & ONGLET 2 (PORTEFEUILLE DYNAMIQUE COMPLET)
 # ==============================================================================
 onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
     "🔍 1. Radar, DCA & Alertes",
@@ -1021,9 +1029,6 @@ onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
     "🤖 4. Coach & Audit IA 2.0 (Gemini)",
 ])
 
-# ------------------------------------------------------------------------------
-# ONGLET 1 : RADAR ALGORITHMIQUE, ALLOCATION DCA (MAX 2 LIGNES) & ALERTES EMAIL
-# ------------------------------------------------------------------------------
 with onglet_radar:
     if mode_gratuit:
         st.warning("🔒 **Aperçu Découverte (Freemium)** : 2 valeurs affichées. Passez à Boursy Pro dans la barre latérale pour débloquer l'ensemble du catalogue PEA & US !")
@@ -1191,9 +1196,6 @@ with onglet_radar:
         afficher_html(html_t3)
 
 
-# ------------------------------------------------------------------------------
-# ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
-# ------------------------------------------------------------------------------
 with onglet_portefeuille:
     st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
 
@@ -1208,16 +1210,35 @@ with onglet_portefeuille:
             st.session_state["qte_Espèces"] = 1
 
         st.markdown("---")
-        st.markdown("#### 📈 Mes Positions Actions (Saisissez le PRU dans la devise de l'action : € ou $)")
+        st.markdown("#### 🎯 Sélectionner les actions à afficher / gérer dans mon portefeuille")
+
+        toutes_options_pf = sorted(UNIVERS_ACTIFS.keys())
+        actions_actives_defaut = sorted(set(
+            list(st.session_state["watchlist"].keys())
+            + [k for k in st.session_state["portefeuille"].keys() if k != "Espèces"]
+        ))
+
+        actions_selectionnees_pf = st.multiselect(
+            "Choisissez librement toutes les actions que vous souhaitez suivre ou détenir (ex: Engie, TotalEnergies, BNP Paribas, Air Liquide...) :",
+            options=toutes_options_pf,
+            default=[a for a in actions_actives_defaut if a in toutes_options_pf],
+        )
+
+        for nom_sel in actions_selectionnees_pf:
+            if nom_sel not in st.session_state["watchlist"] and nom_sel in UNIVERS_ACTIFS:
+                st.session_state["watchlist"][nom_sel] = UNIVERS_ACTIFS[nom_sel].copy()
+
+        st.markdown("#### 📈 Mes Positions Actions (Saisissez la Quantité et le PRU en € ou $)")
         cols_saisie = st.columns(3)
 
-        for idx, (nom_act, info_act) in enumerate(WATCHLIST_DEFAUT.items()):
+        for idx, nom_act in enumerate(actions_selectionnees_pf):
+            info_act = UNIVERS_ACTIFS.get(nom_act, {"devise": "EUR", "prix_cible": 50.0})
             col_active = cols_saisie[idx % 3]
             devise_a = info_act.get("devise", "EUR")
             with col_active:
                 st.markdown(f"**{nom_act}** *({devise_a})*")
                 qte_defaut = st.session_state["portefeuille"].get(nom_act, {}).get("qte", 0)
-                pru_defaut = st.session_state["portefeuille"].get(nom_act, {}).get("pru", float(info_act["prix_cible"]))
+                pru_defaut = st.session_state["portefeuille"].get(nom_act, {}).get("pru", float(info_act.get("prix_cible", 50.0)))
 
                 qte_saisie = st.number_input(f"Quantité ({nom_act})", min_value=0, value=int(st.session_state.get(f"qte_{nom_act}", qte_defaut)), key=f"qte_{nom_act}")
                 pru_saisi = st.number_input(f"PRU Unitaire ({devise_a})", min_value=0.0, value=float(st.session_state.get(f"pru_{nom_act}", pru_defaut)), step=0.5, key=f"pru_{nom_act}")
@@ -1229,7 +1250,9 @@ with onglet_portefeuille:
         st.session_state["portefeuille"] = nouveau_portefeuille_temp
         if st.button("💾 Enregistrer mon portefeuille & créer un Snapshot Cloud", type="primary", use_container_width=True):
             sauvegarder_dans_cloud()
+            st.rerun()
 
+    UNIVERS_ACTIFS = construire_univers_actifs()
     portefeuille_utilisateur = st.session_state["portefeuille"]
     valeur_totale_portefeuille = 0.0
     cout_total_achat = 0.0
@@ -1283,23 +1306,31 @@ with onglet_portefeuille:
                 })
                 continue
 
-            if nom_act not in WATCHLIST_DEFAUT:
+            if nom_act not in UNIVERS_ACTIFS:
                 continue
 
             qte = float(data_pos["qte"])
             pru = float(data_pos["pru"])
-            info_act = WATCHLIST_DEFAUT[nom_act]
+            info_act = UNIVERS_ACTIFS[nom_act]
             devise = info_act.get("devise", "EUR")
             sym = "$" if devise == "USD" else "€"
             env_label = "CTO US" if devise == "USD" else "PEA"
             facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
-            prix_jour = float(prix_temps_reel.get(nom_act, info_act["prix_cible"]))
+
+            if nom_act not in prix_temps_reel:
+                p_live, c_live, _, _ = recuperer_donnees(info_act["symbole"])
+                if p_live is not None:
+                    prix_temps_reel[nom_act] = p_live
+                    if c_live:
+                        historiques_prix[nom_act] = c_live
+
+            prix_jour = float(prix_temps_reel.get(nom_act, info_act.get("prix_cible", pru)))
 
             val_ligne_eur = qte * prix_jour * facteur
             cout_ligne_eur = qte * pru * facteur
             pv_eur = val_ligne_eur - cout_ligne_eur
             pv_pct = (pv_eur / cout_ligne_eur * 100) if cout_ligne_eur > 0 else 0.0
-            div_brut_eur = qte * float(info_act["div_eur"]) * facteur
+            div_brut_eur = qte * float(info_act.get("div_eur", 0.0)) * facteur
             div_net_eur = div_brut_eur * (taux_net_usd if devise == "USD" else taux_net_eur)
 
             valeur_totale_portefeuille += val_ligne_eur
@@ -1312,7 +1343,7 @@ with onglet_portefeuille:
             else:
                 exposition_eur += val_ligne_eur
 
-            secteur = info_act["secteur"]
+            secteur = info_act.get("secteur", "Autre")
             repartition_secteurs[secteur] = repartition_secteurs.get(secteur, 0.0) + val_ligne_eur
 
             lignes_detaillees.append({
@@ -1517,16 +1548,16 @@ with onglet_portefeuille:
                 val_jour_eur = val_esp_fixe
 
                 for nom_a, d_pos in portefeuille_utilisateur.items():
-                    if nom_a == "Espèces" or nom_a not in WATCHLIST_DEFAUT:
+                    if nom_a == "Espèces" or nom_a not in UNIVERS_ACTIFS:
                         continue
                     q_a = float(d_pos["qte"])
-                    dev_a = WATCHLIST_DEFAUT[nom_a].get("devise", "EUR")
+                    dev_a = UNIVERS_ACTIFS[nom_a].get("devise", "EUR")
                     fact_a = (1.0 / TAUX_USD_EUR) if dev_a == "USD" else 1.0
                     serie_c = historiques_prix.get(nom_a, [])
                     if serie_c:
                         p_hist = serie_c[offset_fin] if abs(offset_fin) <= len(serie_c) else serie_c[0]
                     else:
-                        p_hist = float(prix_temps_reel.get(nom_a, WATCHLIST_DEFAUT[nom_a]["prix_cible"]))
+                        p_hist = float(prix_temps_reel.get(nom_a, UNIVERS_ACTIFS[nom_a].get("prix_cible", 50.0)))
                     val_jour_eur += q_a * p_hist * fact_a
 
                 if idx_j >= nb_jours_reels - pas_echantillon:
@@ -1636,282 +1667,18 @@ with onglet_portefeuille:
                 </div>
                 """
                 afficher_html(html_bilan_traj)
-
-
-# ------------------------------------------------------------------------------
-# ONGLET 3 : JAUGE D'OBJECTIF DE RENTE, CALENDRIER 12 MOIS & BOULE DE NEIGE
-# ------------------------------------------------------------------------------
-with onglet_dividendes:
-    st.subheader("📅 Calendrier Annuel des Dividendes & Simulateur Effet Boule de Neige")
-
-    if not portefeuille_utilisateur:
-        st.warning("Ajoutez des actions dans votre portefeuille pour générer votre calendrier de revenus passifs.")
-    else:
-        mois_ordre = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-        noms_mois_complets = {
-            "Jan": "Janvier", "Fév": "Février", "Mar": "Mars", "Avr": "Avril",
-            "Mai": "Mai", "Juin": "Juin", "Juil": "Juillet", "Août": "Août",
-            "Sep": "Septembre", "Oct": "Octobre", "Nov": "Novembre", "Déc": "Décembre"
-        }
-        revenus_par_mois = {m: 0.0 for m in mois_ordre}
-        details_par_mois = {m: [] for m in mois_ordre}
-        total_annuel_div = 0.0
-
-        for nom_act, data_pos in portefeuille_utilisateur.items():
-            if nom_act == "Espèces" or nom_act not in WATCHLIST_DEFAUT:
-                continue
-            qte = float(data_pos["qte"])
-            info_act = WATCHLIST_DEFAUT[nom_act]
-            devise = info_act.get("devise", "EUR")
-            facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
-            div_annuel_eur = qte * float(info_act.get("div_eur", 0.0)) * facteur
-            total_annuel_div += div_annuel_eur
-
-            mois_versement = info_act.get("mois_div", ["Mai"])
-            if mois_versement:
-                montant_par_versement = div_annuel_eur / len(mois_versement)
-                for m in mois_versement:
-                    if m in revenus_par_mois:
-                        revenus_par_mois[m] += montant_par_versement
-                        details_par_mois[m].append((nom_act, montant_par_versement))
-
-        rente_mensuelle_moy = total_annuel_div / 12.0
-        meilleur_mois = max(revenus_par_mois.items(), key=lambda x: x[1]) if total_annuel_div > 0 else ("Mai", 0.0)
-        nb_mois_actifs = sum(1 for v in revenus_par_mois.values() if v > 0)
-
-        html_div_kpi = f"""
-        <div class="argon-grid">
-            <div class="argon-card">
-                <div class="argon-title">💵 Rente Annuelle Globale</div>
-                <div class="argon-val" style="color:#2ecc71;">{total_annuel_div:,.2f} € / an</div>
-                <div class="argon-sub">Dividendes convertis en Euros (€)</div>
-            </div>
-            <div class="argon-card">
-                <div class="argon-title">🗓️ Revenu Mensuel Moyen</div>
-                <div class="argon-val" style="color:#3498db;">{rente_mensuelle_moy:,.2f} € / mois</div>
-                <div class="argon-sub">{nb_mois_actifs} / 12 mois avec versement</div>
-            </div>
-            <div class="argon-card">
-                <div class="argon-title">🏆 Mois Record</div>
-                <div class="argon-val">{noms_mois_complets[meilleur_mois[0]]} ({meilleur_mois[1]:.1f} €)</div>
-                <div class="argon-sub">Pic de détachement annuel</div>
-            </div>
-            <div class="argon-card">
-                <div class="argon-title">🔄 Force de Frappe DCA + Div.</div>
-                <div class="argon-val">+{total_annuel_div + (BUDGET_MENSUEL*12):,.0f} € / an</div>
-                <div class="argon-sub">Capacité d'investissement annuelle</div>
-            </div>
-        </div>
-        """
-        afficher_html(html_div_kpi)
-
-        paliers_rente = [
-            (50.0, "🥉 Palier 1 : 50 € / mois"),
-            (100.0, "🥈 Palier 2 : 100 € / mois"),
-            (250.0, "🥇 Palier 3 : 250 € / mois"),
-            (500.0, "💎 Palier 4 : 500 € / mois"),
-            (1000.0, "👑 Palier 5 : 1 000 € / mois"),
-        ]
-        prochain_palier_val = 1000.0
-        prochain_palier_nom = "👑 Palier 5 : 1 000 € / mois"
-        for val_p, nom_p in paliers_rente:
-            if rente_mensuelle_moy < val_p:
-                prochain_palier_val = val_p
-                prochain_palier_nom = nom_p
-                break
-
-        pct_jauge = min(100.0, max(2.0, (rente_mensuelle_moy / prochain_palier_val) * 100.0)) if prochain_palier_val > 0 else 100.0
-        manque_mensuel = max(0.0, prochain_palier_val - rente_mensuelle_moy)
-        manque_annuel = manque_mensuel * 12.0
-        rendement_moy_pf = (total_annuel_div / valeur_totale_portefeuille) if valeur_totale_portefeuille > 0 and total_annuel_div > 0 else 0.052
-        rendement_moy_pf = max(0.035, min(0.10, rendement_moy_pf))
-        capital_requis_palier = manque_annuel / rendement_moy_pf
-        epargne_mensuelle_totale = max(50.0, BUDGET_MENSUEL + rente_mensuelle_moy)
-        mois_estimes_palier = max(1, int(math.ceil(capital_requis_palier / epargne_mensuelle_totale))) if manque_mensuel > 0 else 0
-
-        steps_html = ""
-        for val_p, nom_p in paliers_rente:
-            if rente_mensuelle_moy >= val_p:
-                steps_html += f"<div class='goal-step' style='border-color:#2ecc71; background:rgba(46,204,113,0.16); color:#2ecc71;'>✅ {nom_p}<br><span style='font-size:0.8em;'>Validé !</span></div>"
-            elif val_p == prochain_palier_val:
-                steps_html += f"<div class='goal-step' style='border-color:#3498db; background:rgba(52,152,219,0.18); color:#3498db;'>🎯 {nom_p}<br><span style='font-size:0.8em;'>En cours ({pct_jauge:.1f}%)</span></div>"
-            else:
-                steps_html += f"<div class='goal-step' style='opacity:0.65;'>🔒 {nom_p}<br><span style='font-size:0.8em;'>À débloquer</span></div>"
-
-        html_jauge_rente = f"""
-        <div class="goal-box">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                <div>
-                    <div style="font-size:0.80em; font-weight:800; text-transform:uppercase; letter-spacing:0.7px; color:#2ecc71;">🎯 Jauge d'Objectif de Rente Mensuelle</div>
-                    <div style="font-size:1.22em; font-weight:900; margin-top:2px;">Cap actuel : {prochain_palier_nom} — <span style="color:#2ecc71;">{rente_mensuelle_moy:.2f} €</span> / {prochain_palier_val:.0f} € par mois</div>
-                </div>
-                <div style="text-align:right;">
-                    <span class="b-green" style="font-size:0.95em;">Progression : {pct_jauge:.1f}%</span>
-                </div>
-            </div>
-            <div class="goal-bar-bg">
-                <div style="width:{pct_jauge:.1f}%; height:100%; background:linear-gradient(90deg, #2ecc71 0%, #3498db 100%); border-radius:10px;"></div>
-            </div>
-            <div style="display:flex; justify-content:space-between; font-size:0.88em; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
-                <span>💡 Il vous manque <b>+{manque_mensuel:.2f} € / mois</b> (soit <b>+{manque_annuel:.0f} € / an</b> de dividendes) pour valider ce palier.</span>
-                <span>⏱️ <b>Estimation au rythme DCA actuel ({BUDGET_MENSUEL:.0f} €/mois) :</b> atteint dans env. <b>{mois_estimes_palier} mois</b> (~{capital_requis_palier:,.0f} € à investir).</span>
-            </div>
-            <div class="goal-steps">{steps_html}</div>
-        </div>
-        """
-        afficher_html(html_jauge_rente)
-
-        st.markdown("#### 🗓️ Calendrier Mois par Mois des Dividendes Versés sur l'Année")
-        html_grille_12mois = "<div class='cal-grid'>"
-        for idx_m, m_code in enumerate(mois_ordre, start=1):
-            montant_m = revenus_par_mois[m_code]
-            liste_ent = details_par_mois[m_code]
-            classe_carte = "cal-card-active" if montant_m > 0 else "cal-card"
-            couleur_montant = "#2ecc71" if montant_m > 0 else "rgba(128,128,128,0.5)"
-
-            if liste_ent:
-                pills_html = "".join(f"<span class='cal-pill'><b>{nom_e}</b> : {val_e:.1f} €</span>" for nom_e, val_e in liste_ent)
-            else:
-                pills_html = "<span style='font-size:0.82em; opacity:0.45; font-style:italic;'>Aucun détachement prévu</span>"
-
-            html_grille_12mois += f"""
-            <div class="{classe_carte}">
-                <div>
-                    <div class="cal-month">
-                        <span>{idx_m:02d}. {noms_mois_complets[m_code]}</span>
-                        <span style="font-size:0.85em;">{'💰' if montant_m > 0 else '⚪'}</span>
-                    </div>
-                    <div style="margin-bottom:10px;">{pills_html}</div>
-                </div>
-                <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px;">
-                    <span style="font-size:0.78em; opacity:0.75; margin-right:6px;">Total :</span>
-                    <span class="cal-total" style="color:{couleur_montant};">{montant_m:,.2f} €</span>
-                </div>
-            </div>
-            """
-        html_grille_12mois += "</div>"
-        afficher_html(html_grille_12mois)
-
-        st.markdown("#### 📊 Diagramme en Bâtons des Dividendes par Mois (€)")
-        df_bar_div = pd.DataFrame([
-            {"Ordre": i, "Mois": noms_mois_complets[m], "Dividendes (€)": round(revenus_par_mois[m], 2)}
-            for i, m in enumerate(mois_ordre)
-        ])
-        spec_bar_div = {
-            "height": 300,
-            "mark": {"type": "bar", "cornerRadiusTopLeft": 6, "cornerRadiusTopRight": 6, "color": "#2ecc71"},
-            "encoding": {
-                "x": {"field": "Mois", "type": "nominal", "sort": list(noms_mois_complets.values()), "axis": {"labelAngle": 0, "title": "Mois de l'année"}},
-                "y": {"field": "Dividendes (€)", "type": "quantitative", "axis": {"title": "Montant versé (€)"}},
-                "tooltip": [
-                    {"field": "Mois", "type": "nominal"},
-                    {"field": "Dividendes (€)", "type": "quantitative", "format": ",.2f"},
-                ],
-            },
-        }
-        st.vega_lite_chart(df_bar_div, spec_bar_div, use_container_width=True)
-
-        st.markdown("---")
-        st.markdown("#### ❄️ Simulateur Interactif d'Effet Boule de Neige (DCA + Dividendes Réinvestis)")
-
-        rendement_actuel_pf = (total_annuel_div / valeur_totale_portefeuille * 100.0) if valeur_totale_portefeuille > 0 else 4.8
-        rendement_defaut_slider = float(max(1.5, min(10.0, round(rendement_actuel_pf, 1))))
-
-        col_sl1, col_sl2, col_sl3, col_sl4 = st.columns(4)
-        with col_sl1:
-            horizon_annees = st.slider("⏳ Horizon (Années)", min_value=5, max_value=30, value=15, step=1)
-        with col_sl2:
-            dca_simule = st.slider("💶 Apport DCA Mensuel (€)", min_value=0, max_value=3000, value=int(BUDGET_MENSUEL), step=50)
-        with col_sl3:
-            rendement_simule_pct = st.slider("🌱 Rendement Dividende (%)", min_value=1.0, max_value=12.0, value=rendement_defaut_slider, step=0.2)
-        with col_sl4:
-            croissance_annuelle_pct = st.slider("📈 Croissance Annuelle Cours/Div (%)", min_value=0.0, max_value=10.0, value=3.0, step=0.5)
-
-        cap_courant = valeur_totale_portefeuille
-        cap_investi_cumule = cout_total_achat if cout_total_achat > 0 else valeur_totale_portefeuille
-        lignes_proj = []
-        donnees_graph_boule = []
-
-        for annee in range(1, horizon_annees + 1):
-            apport_annuel = float(dca_simule * 12)
-            cap_investi_cumule += apport_annuel
-            plus_value_croissance = cap_courant * (croissance_annuelle_pct / 100.0)
-            div_annee = (cap_courant + apport_annuel / 2.0) * (rendement_simule_pct / 100.0)
-            cap_courant = cap_courant + apport_annuel + plus_value_croissance + div_annee
-            rente_mensuelle_an = div_annee / 12.0
-
-            annee_cal = datetime.now().year + annee
-            donnees_graph_boule.append({
-                "Année": f"{annee_cal}",
-                "Capital Total Boule de Neige (€)": round(cap_courant, 0),
-                "Total Apports Personnels (€)": round(cap_investi_cumule, 0),
-                "Rente Annuelle (€/an)": round(div_annee, 0),
-            })
-            lignes_proj.append({
-                "Horizon": f"Année +{annee} ({annee_cal})",
-                "Apports Cumulés": f"{cap_investi_cumule:,.0f} €",
-                "Capital Projeté": f"{cap_courant:,.0f} €",
-                "Gains & Dividendes Réinvestis": f"+{cap_courant - cap_investi_cumule:,.0f} €",
-                "Rente Annuelle": f"{div_annee:,.0f} € / an",
-                "Rente Mensuelle": f"{rente_mensuelle_an:,.1f} € / mois",
-            })
-
-        dernier_pt = donnees_graph_boule[-1]
-        gain_pur_interets = dernier_pt["Capital Total Boule de Neige (€)"] - dernier_pt["Total Apports Personnels (€)"]
-
-        html_kpi_snow = f"""
-        <div class="argon-grid">
-            <div class="argon-card">
-                <div class="argon-title">🏔️ Capital Final à {horizon_annees} Ans</div>
-                <div class="argon-val" style="color:#2ecc71;">{dernier_pt['Capital Total Boule de Neige (€)']:,.0f} €</div>
-                <div class="argon-sub">Dont Apports : <b>{dernier_pt['Total Apports Personnels (€)']:,.0f} €</b></div>
-            </div>
-            <div class="argon-card">
-                <div class="argon-title">✨ Intérêts Composés Gagnés</div>
-                <div class="argon-val" style="color:#9b59b6;">+{gain_pur_interets:,.0f} €</div>
-                <div class="argon-sub">Dividendes réinvestis + Croissance</div>
-            </div>
-            <div class="argon-card">
-                <div class="argon-title">💵 Future Rente Annuelle</div>
-                <div class="argon-val" style="color:#3498db;">{dernier_pt['Rente Annuelle (€/an)']:,.0f} € / an</div>
-                <div class="argon-sub">En {dernier_pt['Année']}</div>
-            </div>
-            <div class="argon-card">
-                <div class="argon-title">🏖️ Future Rente Mensuelle</div>
-                <div class="argon-val" style="color:#f39c12;">{dernier_pt['Rente Annuelle (€/an)']/12.0:,.0f} € / mois</div>
-                <div class="argon-sub">Revenu passif mensuel estimé</div>
-            </div>
-        </div>
-        """
-        afficher_html(html_kpi_snow)
-
-        col_g_snow1, col_g_snow2 = st.columns(2)
-        df_snow_chart = pd.DataFrame(donnees_graph_boule).set_index("Année")
-        with col_g_snow1:
-            st.markdown("**📈 Courbe d'Accélération : Capital Total vs Apports Personnels (€)**")
-            st.area_chart(df_snow_chart[["Capital Total Boule de Neige (€)", "Total Apports Personnels (€)"]], height=300)
-        with col_g_snow2:
-            st.markdown("**💵 Progression de votre Rente Annuelle de Dividendes (€/an)**")
-            st.bar_chart(df_snow_chart[["Rente Annuelle (€/an)"]], height=300)
-
-        with st.expander(f"📋 Voir le tableau détaillé année par année sur {horizon_annees} ans", expanded=True):
-            html_proj = "<table class='r-table'><thead><tr><th style='text-align:left;'>Horizon</th><th>Apports Cumulés</th><th>Capital Projeté (€)</th><th>Intérêts Composés</th><th>Rente Annuelle</th><th>Rente Mensuelle</th></tr></thead><tbody>"
-            for lp in lignes_proj:
-                html_proj += f"<tr><td class='r-name'>{lp['Horizon']}</td><td>{lp['Apports Cumulés']}</td><td><b>{lp['Capital Projeté']}</b></td><td style='color:#9b59b6; font-weight:700;'>{lp['Gains & Dividendes Réinvestis']}</td><td style='color:#2ecc71; font-weight:800;'>{lp['Rente Annuelle']}</td><td><span class='b-blue'>{lp['Rente Mensuelle']}</span></td></tr>"
-            html_proj += "</tbody></table>"
-            afficher_html(html_proj)
-
-
-# ------------------------------------------------------------------------------
+                # ------------------------------------------------------------------------------
 # ONGLET 4 : COACH & AUDIT IA 2.0 (AVEC PHRASE FLASH + AUTO-DISCOVERY GEMINI)
 # ------------------------------------------------------------------------------
 with onglet_ia:
     st.subheader("🤖 Coach & Audit IA 2.0 (Diagnostic Instantané & Intelligence Gemini)")
 
+    WATCHLIST_ACTIVE = {**WATCHLIST_DEFAUT, **st.session_state.get("watchlist", {})}
+
     quota_utilise = st.session_state.get("quota_ia_utilise", 0)
     quota_restant = max(0, quota_ia_max - quota_utilise)
 
-    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST_DEFAUT)
+    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST_ACTIVE)
     poids_max_ligne = 0.0
     nom_max_ligne = "Aucune"
     if valeur_totale_portefeuille > 0 and lignes_triees:
@@ -2025,7 +1792,7 @@ with onglet_ia:
 * **Impact Devises :** {'L Euro est actuellement solide face au Dollar (> 1.08 $), ce qui offre un point d entrée avantageux pour convertir des Euros vers des actifs américains en CTO.' if TAUX_USD_EUR >= 1.08 else 'Le Dollar est actuellement fort face à l Euro : privilégiez en priorité le renforcement de vos pépites européennes en PEA pour éviter d acheter du Dollar au plus haut.'}
 
 #### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
-* **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
+* **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Engie, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
 * **Poche Accélérateur US (Microsoft, Apple, Realty Income, Coca-Cola...) :** Apporte une **croissance séculaire à 2 chiffres** et des versements trimestriels ou mensuels qui lissent votre calendrier de rente.
 * **Recommandation d'équilibre :** Visez une répartition cible de **75 % à 85 % sur votre PEA** (jusqu'au plafond de 150 000 € de versements) et **15 % à 25 % sur les géants US** lors des replis de leur RSI sous 40.
 
@@ -2070,7 +1837,7 @@ with onglet_ia:
             for d in donnees_t1:
                 nom_b = d["NomBrut"]
                 if nom_b.lower() in q_low:
-                    info_w = WATCHLIST_DEFAUT.get(nom_b, {})
+                    info_w = WATCHLIST_ACTIVE.get(nom_b, {})
                     pos_pf = portefeuille_utilisateur.get(nom_b)
                     txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
                     focus_actions.append(
@@ -2226,7 +1993,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     with col_q_input:
         question_libre = st.text_input(
             "💬 Posez une question personnalisée à votre Coach IA 2.0 :",
-            placeholder="Ex: Compte tenu de mon PRU sur Rubis...",
+            placeholder="Ex: Que penses-tu de mon PRU sur Rubis et Engie ?",
             label_visibility="collapsed",
         )
     with col_q_btn:
@@ -2277,4 +2044,3 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
- 
