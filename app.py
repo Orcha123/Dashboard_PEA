@@ -1346,10 +1346,170 @@ with onglet_radar:
         html_t4 += "</tbody></table>"
         afficher_html(html_t4)
 
-    with tab_div:
-        html_t3 = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif</th><th>Dividende / Action (Origine & €)</th><th>Rendement Brut</th><th>Payout Ratio</th><th>Croissance 5A</th><th>Indice de Sûreté</th></tr></thead><tbody>"
+   with tab_div:
+        html_guide_div = """
+        <div class="argon-grid" style="margin-bottom: 14px;">
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#2ecc71;">💰 1. Rendement & Gain pour 1 000 €</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Indique le revenu annuel généré immédiatement pour <b>1 000 € investis</b>. Un rendement entre <b>3,5% et 7%</b> offre le meilleur équilibre en PEA.</div>
+            </div>
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#3498db;">🛡️ 2. Payout Ratio (Marge de Sécurité)</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Part des bénéfices versée en dividende. <b>&le; 55%</b> = Ultra sûr (l'entreprise garde du cash pour investir). <b>&gt; 75%</b> = Dividende sous tension.</div>
+            </div>
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#f39c12;">🚀 3. Croissance 5A & Effet YoC</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la hausse annuelle du coupon. Le <b>YoC 5 Ans</b> projette votre futur rendement annuel sur votre prix d'achat d'aujourd'hui.</div>
+            </div>
+            <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                <div class="argon-title" style="color:#9b59b6;">🏆 4. Score Rente (/100) & Profil</div>
+                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Combine <b>Sûreté du Payout (40%)</b>, <b>Rendement (35%)</b> et <b>Croissance (25%)</b> pour distinguer les Pépites Royales des Vaches à lait.</div>
+            </div>
+        </div>
+        """
+        afficher_html(html_guide_div)
+        st.caption("🏆 **Classement par Qualité de Rente :** Trié de la **meilleure combinaison Rendement + Sûreté + Croissance (#1 en haut)** jusqu'aux valeurs secondaires.")
+
+        donnees_t3_enrichies = []
         for d in donnees_t3:
-            html_t3 += f"<tr><td class='r-name'>{d['Actif']}</td><td><b>{d['Div/Act']}</b></td><td style='color: #2ecc71; font-weight:800;'>{d['Rendement']}</td><td>{d['Payout']}</td><td><b>{d['Croissance 5a']}</b></td><td><span class='b-green'>{d['Sûreté']}</span></td></tr>"
+            nom_pur = d["Actif"].rsplit(" (", 1)[0]
+            info_w = WATCHLIST.get(nom_pur, WATCHLIST_DEFAUT.get(nom_pur, {}))
+            mois_v = info_w.get("mois_div", ["Mai"])
+            if len(mois_v) == 12:
+                freq_str = "📅 Mensuel (12x/an)"
+            elif len(mois_v) == 4:
+                freq_str = f"📅 Trimestriel ({', '.join(mois_v)})"
+            elif len(mois_v) > 1:
+                freq_str = f"📅 {len(mois_v)}x/an ({', '.join(mois_v)})"
+            else:
+                freq_str = f"📅 Annuel ({mois_v[0] if mois_v else 'Mai'})"
+
+            try:
+                rend_pct = float(str(d["Rendement"]).replace("%", "").strip())
+            except Exception:
+                rend_pct = 3.0
+
+            try:
+                payout_pct = float(str(d["Payout"]).replace("%", "").strip())
+            except Exception:
+                payout_pct = 55.0
+
+            try:
+                croiss_clean = str(d["Croissance 5a"]).replace("+", "").replace("%", "").replace("/an", "").strip()
+                croiss_pct = float(croiss_clean)
+            except Exception:
+                croiss_pct = 5.0
+
+            rente_1000 = rend_pct * 10.0
+            taux_c_borne = max(0.0, min(20.0, croiss_pct))
+            yoc_5a = rend_pct * ((1.0 + taux_c_borne / 100.0) ** 5)
+
+            if payout_pct <= 50:
+                pts_payout = 40.0
+            elif payout_pct <= 60:
+                pts_payout = 35.0
+            elif payout_pct <= 72:
+                pts_payout = 27.0
+            elif payout_pct <= 85:
+                pts_payout = 18.0
+            else:
+                pts_payout = 8.0
+
+            pts_rend = min(35.0, max(5.0, rend_pct * 5.2))
+            pts_croiss = min(25.0, max(3.0, taux_c_borne * 2.5))
+            score_rente = int(round(min(99.0, max(15.0, pts_payout + pts_rend + pts_croiss))))
+
+            if payout_pct <= 55:
+                c_pay = "#2ecc71"
+                diag_payout = f"<span style='color:#2ecc71; font-weight:800;'>🛡️ Ultra Sûr ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>{100 - payout_pct:.0f}% des profits réinvestis</span>"
+            elif payout_pct <= 72:
+                c_pay = "#3498db"
+                diag_payout = f"<span style='color:#3498db; font-weight:800;'>✅ Solide ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Distribution bien couverte</span>"
+            else:
+                c_pay = "#f39c12" if payout_pct <= 85 else "#e74c3c"
+                diag_payout = f"<span style='color:{c_pay}; font-weight:800;'>🟡 Élevé ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Marge de manœuvre réduite</span>"
+
+            if croiss_pct >= 8.0:
+                diag_croiss = f"<span class='b-green'>🚀 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Accélérateur fort</span>"
+            elif croiss_pct >= 4.5:
+                diag_croiss = f"<span class='b-blue'>📈 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Hausse régulière &gt; inflation</span>"
+            else:
+                diag_croiss = f"<span class='b-neutral'>🐢 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Croissance modérée</span>"
+
+            if score_rente >= 76 and payout_pct <= 65:
+                ordre_div = 0
+                decision_div = "<span class='b-green'>👑 PÉPITE ROYALE</span><br><span style='font-size:0.80em;'>Pilier idéal Fond de Portefeuille</span>"
+            elif rend_pct >= 5.0 and payout_pct <= 75:
+                ordre_div = 1
+                decision_div = "<span class='b-blue'>💵 VACHE À LAIT SOLIDE</span><br><span style='font-size:0.80em;'>Booster de rente immédiate</span>"
+            elif croiss_pct >= 7.5 and payout_pct <= 60:
+                ordre_div = 2
+                decision_div = "<span class='b-purple'>🚀 COMPOSER CROISSANCE</span><br><span style='font-size:0.80em;'>Dividende appelé à doubler</span>"
+            else:
+                ordre_div = 3
+                decision_div = "<span class='b-yellow'>⚖️ COMPLÉMENT DE RENTE</span><br><span style='font-size:0.80em;'>À pondérer avec modération</span>"
+
+            donnees_t3_enrichies.append({
+                "Actif": d["Actif"],
+                "FreqStr": freq_str,
+                "DivAct": d["Div/Act"],
+                "RendPct": rend_pct,
+                "Rente1000": rente_1000,
+                "YoC5A": yoc_5a,
+                "PayoutPct": payout_pct,
+                "CouleurPay": c_pay,
+                "DiagPayout": diag_payout,
+                "DiagCroiss": diag_croiss,
+                "ScoreRente": score_rente,
+                "OrdreDiv": ordre_div,
+                "DecisionDiv": decision_div,
+            })
+
+        donnees_t3_enrichies.sort(key=lambda x: (x["OrdreDiv"], -x["ScoreRente"]))
+
+        html_t3 = """
+        <table class='r-table'>
+        <thead>
+            <tr>
+                <th style='width:55px;'>Rang</th>
+                <th style='text-align: left;'>Actif & Calendrier</th>
+                <th>Dividende / Action<br><span style='font-size:0.82em; opacity:0.75;'>(& Gain pour 1 000 €)</span></th>
+                <th>Rendement Actuel<br><span style='font-size:0.82em; opacity:0.75;'>(➔ Projeté à 5 Ans)</span></th>
+                <th style='width:210px;'>Jauge Payout Ratio<br><span style='font-size:0.82em; opacity:0.75;'>(Part des bénéfices versée)</span></th>
+                <th>Dynamique 5 Ans</th>
+                <th style='width:125px;'>Score Rente</th>
+                <th>Profil & Rôle DCA</th>
+            </tr>
+        </thead>
+        <tbody>
+        """
+        for idx_d, item_d in enumerate(donnees_t3_enrichies, start=1):
+            sc_r = item_d["ScoreRente"]
+            c_sc_r = "#2ecc71" if sc_r >= 75 else ("#3498db" if sc_r >= 60 else "#f39c12")
+            b_rang_d = "b-green" if item_d["OrdreDiv"] == 0 else ("b-blue" if item_d["OrdreDiv"] == 1 else ("b-purple" if item_d["OrdreDiv"] == 2 else "b-neutral"))
+            pay_w = max(5.0, min(100.0, item_d["PayoutPct"]))
+
+            html_t3 += f"""
+            <tr>
+                <td><span class='{b_rang_d}'>#{idx_d}</span></td>
+                <td class='r-name'>{item_d['Actif']}<br><span style='font-size:0.78em; opacity:0.75; font-weight:600;'>{item_d['FreqStr']}</span></td>
+                <td><b>{item_d['DivAct']}</b><br><span style='font-size:0.80em; color:#2ecc71; font-weight:700;'>+{item_d['Rente1000']:.1f} €/an pour 1 000 €</span></td>
+                <td>
+                    <span style='color:#2ecc71; font-weight:900; font-size:1.05em;'>{item_d['RendPct']:.2f}%</span><br>
+                    <span style='font-size:0.78em; opacity:0.85;'>➔ YoC 5A : <b>{item_d['YoC5A']:.2f}%</b></span>
+                </td>
+                <td>
+                    {item_d['DiagPayout']}
+                    <div class='score-bg'><div style='width:{pay_w}%; background:{item_d['CouleurPay']}; height:100%;'></div></div>
+                </td>
+                <td>{item_d['DiagCroiss']}</td>
+                <td>
+                    <div style='font-weight:800; font-size:0.9em;'>{sc_r} / 100</div>
+                    <div class='score-bg'><div style='width:{sc_r}%; background:{c_sc_r}; height:100%;'></div></div>
+                </td>
+                <td>{item_d['DecisionDiv']}</td>
+            </tr>
+            """
         html_t3 += "</tbody></table>"
         afficher_html(html_t3)
 
