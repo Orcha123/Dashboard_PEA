@@ -2322,7 +2322,7 @@ with onglet_ia:
     map_t3_ia = {d["Actif"]: d for d in donnees_t3}
     map_t4_ia = {d["Actif"]: d for d in donnees_t4}
 
-     synthese_opportunites = []
+    synthese_opportunites = []
     for d1 in donnees_t1:
          clef_actif = d1["Actif"]
          nom_b = d1["NomBrut"]
