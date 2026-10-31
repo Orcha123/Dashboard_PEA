@@ -3130,7 +3130,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             label_visibility="collapsed",
         )
     with col_q_btn:
-        if st.button("✨ Lancer l'Analyse IA", use_container_width=True):
+    if st.button("✨ Lancer l'Analyse IA", use_container_width=True):
     q_clean = question_ia.strip() if "question_ia" in locals() else ""
     q_low = q_clean.lower()
 
