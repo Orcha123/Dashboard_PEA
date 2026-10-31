@@ -813,16 +813,7 @@ else:
             st.session_state[f"qte_{action_a_suppr}"] = 0
             sauvegarder_dans_cloud()
             st.rerun()
-    if WATCHLIST:
-        action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()))
-        if st.button("Supprimer définitivement"):
-            if action_a_suppr in st.session_state["watchlist"]:
-                del st.session_state["watchlist"][action_a_suppr]
-            if action_a_suppr in st.session_state["portefeuille"]:
-                del st.session_state["portefeuille"][action_a_suppr]
-            st.session_state[f"qte_{action_a_suppr}"] = 0
-            sauvegarder_dans_cloud()
-            st.rerun()
+    
 
 # --- GESTION SAAS & CONSOLE ADMIN ---
 st.sidebar.markdown("---")
