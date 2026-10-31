@@ -1029,26 +1029,83 @@ c_cac = "#2ecc71" if cac_var >= 0 else "#e74c3c"
 c_sp = "#2ecc71" if sp_var >= 0 else "#e74c3c"
 c_vix = "#2ecc71" if vix_val < 16 else ("#e74c3c" if vix_val >= 24 else "#f39c12")
 
+# --- CALCUL DU SIGNAL EMA 2/12 POUR LES INDICES MÉTÉO ---
+@st.cache_data(ttl=1800)
+def calculer_ema_meteo_indice(symbole):
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=3mo&interval=1d"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            closes = [float(c) for c in data["chart"]["result"][0]["indicators"]["quote"][0]["close"] if c is not None]
+        if len(closes) < 15:
+            return "⚪ Neutre", "#95a5a6"
+       
+        def calc_ema(vals, periode):
+            k = 2.0 / (periode + 1.0)
+            ema = [vals[0]]
+            for p in vals[1:]:
+                ema.append(p * k + ema[-1] * (1.0 - k))
+            return ema
+
+        ema2 = calc_ema(closes, 2)
+        ema12 = calc_ema(closes, 12)
+
+        if ema2[-2] <= ema12[-2] and ema2[-1] > ema12[-1]:
+            return "🚀 Achat Croisement", "#2ecc71"
+        elif ema2[-1] > ema12[-1] and closes[-1] >= ema2[-1]:
+            return "🟢 Achat Haussier", "#2ecc71"
+        elif ema2[-1] > ema12[-1]:
+            return "🟡 Neutre (Pause)", "#f39c12"
+        else:
+            return "🔴 Vendeur", "#e74c3c"
+    except Exception:
+        return "⚪ Neutre", "#95a5a6"
+
+statut_ema_cac, col_ema_cac = calculer_ema_meteo_indice("^FCHI")
+statut_ema_sp, col_ema_sp = calculer_ema_meteo_indice("^GSPC")
+
+cac_str = f"{cac_pts:,.0f} pts ({cac_var:+.2f}%)" if cac_pts else "En attente"
+sp_str = f"{sp_pts:,.0f} pts ({sp_var:+.2f}%)" if sp_str else "En attente"
+vix_val = vix_pts if vix_pts else 18.0
+etat_vix = "🟢 Marché Calme" if vix_val < 16 else ("🔥 Peur / Opportunités DCA" if vix_val >= 24 else "🟡 Volatilité Normale")
+c_cac = "#2ecc71" if cac_var >= 0 else "#e74c3c"
+c_sp = "#2ecc71" if sp_var >= 0 else "#e74c3c"
+c_vix = "#2ecc71" if vix_val < 16 else ("#e74c3c" if vix_val >= 24 else "#f39c12")
+
 html_meteo = f"""
 <div class="meteo-bar">
     <div class="meteo-item" style="border-left-color: {c_cac};">
-        <div><div style="font-size:0.75em; font-weight:800; opacity:0.7;">🇫🇷 CAC 40 (PARIS)</div><div style="font-weight:900; font-size:1.05em;">{cac_str}</div></div>
-        <span style="color:{c_cac}; font-weight:800;">{'▲' if cac_var >= 0 else '▼'}</span>
+        <div>
+            <div style="font-size:0.75em; font-weight:800; opacity:0.7;">🇫🇷 CAC 40 (PARIS)</div>
+            <div style="font-weight:900; font-size:1.05em;">{cac_str}</div>
+            <div style="font-size:0.76em; margin-top:3px; font-weight:700; color:{col_ema_cac};">EMA 2/12 : {statut_ema_cac}</div>
+        </div>
+        <span style="color:{c_cac}; font-weight:800; font-size:1.2em;">{'▲' if cac_var >= 0 else '▼'}</span>
     </div>
     <div class="meteo-item" style="border-left-color: {c_sp};">
-        <div><div style="font-size:0.75em; font-weight:800; opacity:0.7;">🇺🇸 S&P 500 (NEW YORK)</div><div style="font-weight:900; font-size:1.05em;">{sp_str}</div></div>
-        <span style="color:{c_sp}; font-weight:800;">{'▲' if sp_var >= 0 else '▼'}</span>
+        <div>
+            <div style="font-size:0.75em; font-weight:800; opacity:0.7;">🇺🇸 S&P 500 (NEW YORK)</div>
+            <div style="font-weight:900; font-size:1.05em;">{sp_str}</div>
+            <div style="font-size:0.76em; margin-top:3px; font-weight:700; color:{col_ema_sp};">EMA 2/12 : {statut_ema_sp}</div>
+        </div>
+        <span style="color:{c_sp}; font-weight:800; font-size:1.2em;">{'▲' if sp_var >= 0 else '▼'}</span>
     </div>
     <div class="meteo-item" style="border-left-color: {c_vix};">
-        <div><div style="font-size:0.75em; font-weight:800; opacity:0.7;">🌡️ INDICE VIX (NERVOSITÉ)</div><div style="font-weight:900; font-size:1.05em;">{vix_val:.1f} — {etat_vix}</div></div>
+        <div>
+            <div style="font-size:0.75em; font-weight:800; opacity:0.7;">🌡️ INDICE VIX (NERVOSITÉ)</div>
+            <div style="font-weight:900; font-size:1.05em;">{vix_val:.1f} — {etat_vix}</div>
+        </div>
     </div>
     <div class="meteo-item" style="border-left-color: #9b59b6;">
-        <div><div style="font-size:0.75em; font-weight:800; opacity:0.7;">💱 PARITÉ EUR / USD</div><div style="font-weight:900; font-size:1.05em;">1 € = {TAUX_USD_EUR:.4f} $</div></div>
+        <div>
+            <div style="font-size:0.75em; font-weight:800; opacity:0.7;">💱 PARITÉ EUR / USD</div>
+            <div style="font-weight:900; font-size:1.05em;">1 € = {TAUX_USD_EUR:.4f} $</div>
+        </div>
     </div>
 </div>
 """
 afficher_html(html_meteo)
-
 if st.session_state["user"] is None:
     html_landing_banner = """
     <div style="background: linear-gradient(135deg, rgba(46,204,113,0.14) 0%, rgba(52,152,219,0.14) 100%); border: 1px solid rgba(46,204,113,0.35); border-radius: 14px; padding: 18px 24px; margin-bottom: 22px; font-family: sans-serif;">
