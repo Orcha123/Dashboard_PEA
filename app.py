@@ -270,7 +270,9 @@ if st.session_state.get("quota_ia_date") != date_jour_str:
     st.session_state["quota_ia_utilise"] = 0
 
 def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
-    toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()))
+    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k != "Espèces"]
+    toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()) + actions_pf_cloud)
+
     for nom_act in toutes_les_actions:
         if nom_act in portefeuille_cloud and isinstance(portefeuille_cloud[nom_act], dict):
             st.session_state[f"qte_{nom_act}"] = int(portefeuille_cloud[nom_act].get("qte", 0))
@@ -803,9 +805,10 @@ else:
                     sauvegarder_dans_cloud()
                     st.rerun()
 
+    with st.sidebar.expander("🗑️ Supprimer une action du radar"):
     if WATCHLIST:
-        action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()))
-        if st.button("Supprimer définitivement"):
+        action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()), key="sel_suppr_radar")
+        if st.button("Supprimer définitivement", key="btn_suppr_radar"):
             if action_a_suppr in st.session_state["watchlist"]:
                 del st.session_state["watchlist"][action_a_suppr]
             if action_a_suppr in st.session_state["portefeuille"]:
@@ -1769,7 +1772,7 @@ with onglet_portefeuille:
 
     # Intègre toutes les actions du catalogue pour pouvoir les sélectionner librement
     for lib_cat, (sym_c, dev_c, sec_c) in CATALOGUE_ACTIONS.items():
-        nom_c = lib_cat.split(" (")[0]
+        nom_c = lib_cat.rsplit(" (", 1)[0]
         if nom_c not in WATCHLIST_DEFAUT:
             WATCHLIST_DEFAUT[nom_c] = {
                 "symbole": sym_c,
