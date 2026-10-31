@@ -2315,6 +2315,222 @@ with onglet_ia:
     </div>
     """
     afficher_html(html_phrase_flash)
+    # ==========================================================================
+    # SYNTHÈSE CROISÉE 360° DES OPPORTUNITÉS DU MOMENT (RADAR + TECH + DIV + PF)
+    # ==========================================================================
+    map_t2_ia = {d["Actif"]: d for d in donnees_t2}
+    map_t3_ia = {d["Actif"]: d for d in donnees_t3}
+    map_t4_ia = {d["Actif"]: d for d in donnees_t4}
+
+     synthese_opportunites = []
+    for d1 in donnees_t1:
+         clef_actif = d1["Actif"]
+         nom_b = d1["NomBrut"]
+         d2 = map_t2_ia.get(clef_actif, {})
+         d3 = map_t3_ia.get(clef_actif, {})
+         d4 = map_t4_ia.get(clef_actif, {})
+
+         info_w = WATCHLIST_ACTIVE.get(nom_b, {})
+         devise_a = info_w.get("devise", "EUR")
+         sym_d = "$" if devise_a == "USD" else "€"
+         facteur_d = (1.0 / TAUX_USD_EUR) if devise_a == "USD" else 1.0
+
+         try:
+             prix_f = float(str(d1["Prix"]).split()[0])
+         except Exception:
+             prix_f = float(prix_temps_reel.get(nom_b, 50.0))
+
+         try:
+             sup_f = float(str(d4.get("Support 30J", f"{prix_f*0.95}")).split()[0])
+             res_f = float(str(d4.get("Résistance 30J", f"{prix_f*1.05}")).split()[0])
+         except Exception:
+             sup_f, res_f = prix_f * 0.95, prix_f * 1.05
+
+         amp_30 = max(0.01, res_f - sup_f)
+         pos_canal_30 = max(0.0, min(100.0, ((prix_f - sup_f) / amp_30) * 100.0))
+         stoch_f = float(d1.get("Stoch", 50.0))
+         score_timing_ct = int(round(100.0 - (0.55 * pos_canal_30 + 0.45 * stoch_f)))
+         score_timing_ct = max(10, min(98, score_timing_ct))
+
+         ecart_3a = float(d2.get("EcartNum", 0.0))
+         try:
+             rend_f = float(str(d3.get("Rendement", "3.0%")).replace("%", "").strip())
+         except Exception:
+             rend_f = 3.0
+         try:
+             payout_f = float(str(d3.get("Payout", "55%")).replace("%", "").strip())
+         except Exception:
+             payout_f = 55.0
+
+         # Analyse par rapport au Portefeuille de l'utilisateur
+         pos_pf = portefeuille_utilisateur.get(nom_b)
+         bonus_pf = 0
+         est_sous_pru = False
+         if pos_pf and float(pos_pf.get("qte", 0)) > 0:
+             q_pf = int(pos_pf["qte"])
+             pru_pf = float(pos_pf["pru"])
+             val_l_eur = q_pf * prix_f * facteur_d
+             poids_pf = (val_l_eur / valeur_totale_portefeuille * 100.0) if valeur_totale_portefeuille > 0 else 0.0
+             ecart_pru_pct = ((prix_f - pru_pf) / pru_pf * 100.0) if pru_pf > 0 else 0.0
+
+             if prix_f < pru_pf and poids_pf < 25.0:
+                 est_sous_pru = True
+                 bonus_pf = 8
+                 badge_pf = f"<span class='b-green'>📉 Sous votre PRU ({pru_pf:.2f} {sym_d} | {ecart_pru_pct:+.1f}%)</span>"
+                 conseil_pf = f"Idéal pour <b>abaisser votre PRU</b> (Poids actuel : {poids_pf:.1f}%)"
+             elif poids_pf >= 28.0:
+                 bonus_pf = -12
+                 badge_pf = f"<span class='b-yellow'>⚖️ Ligne forte ({poids_pf:.1f}% du PF)</span>"
+                 conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} — Évitez de surpondérer davantage"
+             else:
+                 bonus_pf = 4
+                 badge_pf = f"<span class='b-blue'>💼 En portefeuille ({q_pf} act. | {poids_pf:.1f}%)</span>"
+                 conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} ({ecart_pru_pct:+.1f}%) — Renforcement sain"
+         else:
+             bonus_pf = 6
+             badge_pf = "<span class='b-purple'>✨ Absente du portefeuille</span>"
+             conseil_pf = "Opportunité d'<b>ouverture de ligne</b> (Diversification)"
+
+         # Calcul du Score de Convergence 360° (/100)
+         pts_radar = float(d1["Score"]) * 0.40
+         pts_timing = float(score_timing_ct) * 0.25
+         pts_value = (20.0 if ecart_3a <= -10 else (15.0 if ecart_3a < 0 else (8.0 if ecart_3a <= 5 else 2.0)))
+         pts_div = min(15.0, (rend_f * 1.8) + (5.0 if payout_f <= 65 else 1.5))
+         score_conv = int(round(min(99.0, max(12.0, pts_radar + pts_timing + pts_value + pts_div + bonus_pf))))
+
+         ordre_limite_ideal = max(sup_f, min(prix_f, sup_f + 0.25 * amp_30))
+
+         synthese_opportunites.append({
+             "Nom": nom_b,
+             "Actif": clef_actif,
+             "Prix": d1["Prix"],
+             "Cible": d1["Prix Cible"],
+             "EcartCible": d1["Écart Cible (%)"],
+             "ScoreRadar": d1["Score"],
+             "ScoreTiming": score_timing_ct,
+             "ScoreConv": score_conv,
+             "RSI": d1["RSI"],
+             "Stoch": int(stoch_f),
+             "Ecart3A": d2.get("Écart %", "0.0%"),
+             "Ecart3ANum": ecart_3a,
+             "StatutValue": d2.get("Statut Value", "Neutre"),
+             "Rendement": d3.get("Rendement", "N/A"),
+             "RendNum": rend_f,
+             "Payout": d3.get("Payout", "N/A"),
+             "PayoutNum": payout_f,
+             "Support": d4.get("Support 30J", "N/A"),
+             "OrdreLimite": f"{ordre_limite_ideal:.2f} {sym_d}",
+             "BadgePF": badge_pf,
+             "ConseilPF": conseil_pf,
+             "EstSousPRU": est_sous_pru,
+             "EnPortefeuille": bool(pos_pf and float(pos_pf.get("qte", 0)) > 0),
+         })
+
+    synthese_opportunites.sort(key=lambda x: x["ScoreConv"], reverse=True)
+
+    st.markdown("#### 🎯 Radar de Convergence 360° : Les Meilleures Opportunités du Moment")
+    st.caption("Croisement automatique en temps réel entre vos **4 Tableaux Techniques/Fondamentaux** et **les lignes de votre Portefeuille**.")
+
+    if synthese_opportunites:
+        top_podium = synthese_opportunites[:3]
+        medailles = ["🥇 TOP OPPORTUNITÉ #1", "🥈 OPPORTUNITÉ #2", "🥉 OPPORTUNITÉ #3"]
+        couleurs_bord = ["#2ecc71", "#3498db", "#9b59b6"]
+
+        html_podium = "<div class='argon-grid'>"
+        for idx_p, opp in enumerate(top_podium):
+            c_b = couleurs_bord[idx_p]
+            b_val_c = "b-green" if opp["Ecart3ANum"] < 0 else "b-neutral"
+            b_tim_c = "b-green" if opp["ScoreTiming"] >= 65 else ("b-blue" if opp["ScoreTiming"] >= 48 else "b-yellow")
+
+            html_podium += f"""
+            <div class="argon-card" style="text-align:left; border-top: 4px solid {c_b}; min-width: 260px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <span style="font-size:0.75em; font-weight:900; color:{c_b}; letter-spacing:0.6px;">{medailles[idx_p]}</span>
+                    <span class="b-green" style="font-size:0.82em;">Convergence : {opp['ScoreConv']}/100</span>
+                </div>
+                <div style="font-size:1.22em; font-weight:900; margin-bottom:4px;">{opp['Actif']} — <span style="color:{c_b};">{opp['Prix']}</span></div>
+                <div style="font-size:0.80em; opacity:0.85; margin-bottom:10px;">🎯 Objectif Cible : <b>{opp['Cible']}</b> ({opp['EcartCible']})</div>
+                <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px;">
+                    <span class="b-blue" style="font-size:0.76em;">📊 Radar : {opp['ScoreRadar']}/100 (RSI {opp['RSI']})</span>
+                    <span class="{b_val_c}" style="font-size:0.76em;">📐 Canal 3A : {opp['Ecart3A']}</span>
+                    <span class="{b_tim_c}" style="font-size:0.76em;">⚡ Timing 30J : {opp['ScoreTiming']}/100</span>
+                    <span class="b-green" style="font-size:0.76em;">💰 Div : {opp['Rendement']} (Payout {opp['Payout']})</span>
+                </div>
+                <div style="background:rgba(128,128,128,0.06); border-radius:8px; padding:8px 10px; font-size:0.82em; line-height:1.45;">
+                    <div style="margin-bottom:4px;">{opp['BadgePF']}</div>
+                    <div>💡 {opp['ConseilPF']}</div>
+                    <div style="margin-top:4px; color:#2ecc71; font-weight:700;">🛒 Entrée / Ordre limite conseillé : {opp['OrdreLimite']} (Support : {opp['Support']})</div>
+                </div>
+            </div>
+            """
+        html_podium += "</div>"
+        afficher_html(html_podium)
+
+        # Les 4 boussoles thématiques rapides
+        opp_moyennage = next((x for x in synthese_opportunites if x["EstSousPRU"]), None)
+        opp_value_timing = sorted(synthese_opportunites, key=lambda x: (x["Ecart3ANum"] - x["ScoreTiming"] * 0.3))[0]
+        opp_rendement = sorted([x for x in synthese_opportunites if x["PayoutNum"] <= 75], key=lambda x: x["RendNum"], reverse=True)
+        opp_rend_top = opp_rendement[0] if opp_rendement else synthese_opportunites[0]
+        opp_decouverte = next((x for x in synthese_opportunites if not x["EnPortefeuille"]), synthese_opportunites[0])
+
+        txt_moy = f"<b>{opp_moyennage['Nom']}</b> (Cours {opp_moyennage['Prix']} sous votre PRU)" if opp_moyennage else "Toutes vos lignes sont au-dessus de leur PRU 🎉"
+
+        html_boussole = f"""
+        <div class="meteo-bar" style="margin-top: -6px; margin-bottom: 18px;">
+            <div class="meteo-item" style="border-left-color:#2ecc71;">
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">📉 MEILLEUR MOYENNAGE PRU</div><div style="font-size:0.90em; margin-top:2px;">{txt_moy}</div></div>
+            </div>
+            <div class="meteo-item" style="border-left-color:#3498db;">
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">📐 TOP DÉCOTE + TIMING</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_value_timing['Nom']}</b> (3A : {opp_value_timing['Ecart3A']} | Timing {opp_value_timing['ScoreTiming']}/100)</div></div>
+            </div>
+            <div class="meteo-item" style="border-left-color:#f39c12;">
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">👑 TOP RENDEMENT SÉCURISÉ</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_rend_top['Nom']}</b> ({opp_rend_top['Rendement']} | Payout {opp_rend_top['Payout']})</div></div>
+            </div>
+            <div class="meteo-item" style="border-left-color:#9b59b6;">
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">🌱 IDÉE DIVERSIFICATION (HORS PF)</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_decouverte['Nom']}</b> (Convergence {opp_decouverte['ScoreConv']}/100)</div></div>
+            </div>
+        </div>
+        """
+        afficher_html(html_boussole)
+
+        with st.expander("📊 Voir la Matrice Complète de Convergence 360° (Toutes vos actions classées)", expanded=False):
+            html_mat = """
+            <table class='r-table'>
+            <thead>
+                <tr>
+                    <th>Rang</th>
+                    <th style='text-align:left;'>Actif</th>
+                    <th>Score Convergence</th>
+                    <th>Radar (/100)</th>
+                    <th>Canal 3 Ans</th>
+                    <th>Timing 30J</th>
+                    <th>Dividende (Payout)</th>
+                    <th>Statut Portefeuille</th>
+                    <th>Ordre Limite Idéal</th>
+                </tr>
+            </thead>
+            <tbody>
+            """
+            for idx_m, om in enumerate(synthese_opportunites, start=1):
+                c_conv = "#2ecc71" if om["ScoreConv"] >= 70 else ("#3498db" if om["ScoreConv"] >= 55 else "#f39c12")
+                html_mat += f"""
+                <tr>
+                    <td><b>#{idx_m}</b></td>
+                    <td class='r-name'>{om['Actif']}<br><span style='font-size:0.80em; opacity:0.75;'>Cours : {om['Prix']}</span></td>
+                    <td>
+                        <div style='font-weight:900; color:{c_conv};'>{om['ScoreConv']} / 100</div>
+                        <div class='score-bg'><div style='width:{om['ScoreConv']}%; background:{c_conv}; height:100%;'></div></div>
+                    </td>
+                    <td><b>{om['ScoreRadar']}</b> (RSI {om['RSI']})</td>
+                    <td>{om['Ecart3A']}</td>
+                    <td>{om['ScoreTiming']}/100 (Stoch {om['Stoch']}%)</td>
+                    <td><b style='color:#2ecc71;'>{om['Rendement']}</b> ({om['Payout']})</td>
+                    <td>{om['BadgePF']}</td>
+                    <td><span class='b-green'>{om['OrdreLimite']}</span></td>
+                </tr>
+                """
+            html_mat += "</tbody></table>"
+            afficher_html(html_mat)
 
     def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
