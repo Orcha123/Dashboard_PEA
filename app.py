@@ -27,18 +27,7 @@ def afficher_html(html_brut):
     st.markdown(html_propre, unsafe_allow_html=True)
 
 STYLE_ARGON = """
-<style> :
-/* --- MASQUAGE INTERFACE STREAMLIT (MODE PRO BOURSING) --- */
-    #MainMenu {visibility: hidden !important; display: none !important;}
-    footer {visibility: hidden !important; display: none !important;}
-    header[data-testid="stHeader"] {background: transparent !important; height: 0px !important;}
-    div[data-testid="stToolbar"] {visibility: hidden !important; display: none !important;}
-    div[data-testid="stDecoration"] {visibility: hidden !important; display: none !important;}
-    div[data-testid="stStatusWidget"] {visibility: hidden !important; display: none !important;}
-    .stAppDeployButton {display: none !important; visibility: hidden !important;}
-    [data-testid="manage-app-button"] {display: none !important; visibility: hidden !important;}
-
- 
+<style>
 [data-testid="stToolbarActions"], .stAppDeployButton { display: none !important; }
 .argon-grid { display: flex; gap: 15px; margin: 10px 0 22px 0; flex-wrap: wrap; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; }
 .argon-card { flex: 1; min-width: 200px; background: linear-gradient(145deg, rgba(128,128,128,0.06) 0%, rgba(128,128,128,0.02) 100%); border: 1px solid rgba(128,128,128,0.22); border-radius: 14px; padding: 16px 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.04); text-align: center; }
