@@ -2330,7 +2330,7 @@ with onglet_ia:
          d3 = map_t3_ia.get(clef_actif, {})
          d4 = map_t4_ia.get(clef_actif, {})
 
-         info_w = UNIVERS_ACTIFS.get(nom_b, {})
+         info_w = WATCHLIST_DEFAUT.get(nom_b, {})
          devise_a = info_w.get("devise", "EUR")
          sym_d = "$" if devise_a == "USD" else "€"
          facteur_d = (1.0 / TAUX_USD_EUR) if devise_a == "USD" else 1.0
