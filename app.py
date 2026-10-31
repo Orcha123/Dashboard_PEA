@@ -498,26 +498,235 @@ BUDGET_MENSUEL = st.session_state["budget_dca"]
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Ajouter / Gérer les actions")
 
-mode_ajout = st.sidebar.radio("Mode d'ajout :", ["Catalogue (PEA & US)", "Ticker Yahoo libre"], horizontal=True)
+# --- MÉGA-CATALOGUE ENRICHI (+100 VALEURS PEA, SBF 120, EUROPE, ETF & US) ---
+ENRICHISSEMENT_CATALOGUE = {
+    # Actions Françaises (CAC 40 & SBF 120 - PEA)
+    "Air Liquide": ("AI.PA", "EUR", "Chimie/Industrie", 165.0, 3.20, 0.55, "+8.5%", ["Mai"]),
+    "Airbus": ("AIR.PA", "EUR", "Aéronautique/Défense", 145.0, 2.00, 0.35, "+6.5%", ["Avr"]),
+    "Alstom": ("ALO.PA", "EUR", "Ferroviaire", 18.0, 0.25, 0.30, "+2.0%", ["Juil"]),
+    "Alten": ("ATE.PA", "EUR", "Ingénierie/Tech", 95.0, 1.50, 0.25, "+8.0%", ["Juin"]),
+    "Amundi": ("AMUN.PA", "EUR", "Finance/Gestion", 62.0, 4.10, 0.70, "+5.5%", ["Mai"]),
+    "Arkema": ("AKE.PA", "EUR", "Chimie", 82.0, 3.50, 0.45, "+6.5%", ["Mai"]),
+    "AXA": ("CS.PA", "EUR", "Assurance", 35.0, 1.98, 0.55, "+9.2%", ["Mai"]),
+    "Bic": ("BB.PA", "EUR", "Consommation", 58.0, 2.85, 0.50, "+5.0%", ["Mai"]),
+    "BioMérieux": ("BIM.PA", "EUR", "Santé/Diagnostic", 98.0, 0.85, 0.28, "+6.0%", ["Mai"]),
+    "BNP Paribas": ("BNP.PA", "EUR", "Banque", 65.0, 4.60, 0.50, "+7.0%", ["Mai"]),
+    "Bolloré": ("BOL.PA", "EUR", "Holding/Logistique", 5.6, 0.07, 0.25, "+3.0%", ["Juin"]),
+    "Bouygues": ("EN.PA", "EUR", "BTP/Télécoms", 32.0, 1.90, 0.65, "+3.5%", ["Mai"]),
+    "Bureau Veritas": ("BVI.PA", "EUR", "Certification", 27.0, 0.83, 0.55, "+6.0%", ["Mai"]),
+    "Capgemini": ("CAP.PA", "EUR", "Services IT", 165.0, 3.40, 0.35, "+10.0%", ["Mai"]),
+    "Carrefour": ("CA.PA", "EUR", "Distribution", 14.0, 0.87, 0.52, "+8.0%", ["Juin"]),
+    "Coface": ("COFA.PA", "EUR", "Assurance Crédit", 13.5, 1.30, 0.80, "+7.5%", ["Mai"]),
+    "Covivio": ("COV.PA", "EUR", "Immobilier", 48.0, 3.30, 0.78, "+2.0%", ["Mai"]),
+    "Crédit Agricole": ("ACA.PA", "EUR", "Banque", 14.0, 1.05, 0.55, "+6.5%", ["Mai"]),
+    "Danone": ("BN.PA", "EUR", "Agroalimentaire", 60.0, 2.10, 0.60, "+3.5%", ["Mai"]),
+    "Dassault Aviation": ("AM.PA", "EUR", "Aéronautique/Défense", 195.0, 3.37, 0.32, "+9.0%", ["Mai"]),
+    "Dassault Systèmes": ("DSY.PA", "EUR", "Logiciels/Tech", 33.0, 0.23, 0.22, "+7.0%", ["Mai"]),
+    "Edenred": ("EDEN.PA", "EUR", "Paiements/Services", 34.0, 1.10, 0.48, "+9.5%", ["Mai"]),
+    "Eiffage": ("FGR.PA", "EUR", "BTP/Concessions", 88.0, 4.10, 0.42, "+8.5%", ["Mai"]),
+    "Elis": ("ELIS.PA", "EUR", "Services Industriels", 20.0, 0.43, 0.30, "+6.0%", ["Mai"]),
+    "Engie": ("ENGI.PA", "EUR", "Énergie/Utilities", 16.0, 1.43, 0.65, "+5.0%", ["Mai"]),
+    "EssilorLuxottica": ("EL.PA", "EUR", "Santé/Optique", 205.0, 3.95, 0.55, "+7.5%", ["Mai"]),
+    "Eurazeo": ("RF.PA", "EUR", "Private Equity", 72.0, 2.42, 0.45, "+8.0%", ["Mai"]),
+    "Euronext": ("ENX.PA", "EUR", "Bourse/Finance", 92.0, 2.48, 0.50, "+6.5%", ["Mai"]),
+    "FDJ - Française des Jeux": ("FDJ.PA", "EUR", "Loisirs/Loterie", 34.0, 1.78, 0.75, "+7.0%", ["Mai"]),
+    "GTT - Gaztransport": ("GTT.PA", "EUR", "Ingénierie/GNL", 125.0, 7.30, 0.80, "+11.0%", ["Juin", "Déc"]),
+    "Gecina": ("GFC.PA", "EUR", "Immobilier", 92.0, 5.30, 0.75, "+2.0%", ["Mar", "Juil"]),
+    "Getlink": ("GET.PA", "EUR", "Infrastructures", 15.5, 0.55, 0.55, "+6.0%", ["Juin"]),
+    "Hermès": ("RMS.PA", "EUR", "Luxe", 2050.0, 15.00, 0.35, "+14.0%", ["Fév", "Mai"]),
+    "Ipsen": ("IPN.PA", "EUR", "Santé/Pharma", 108.0, 1.20, 0.25, "+4.0%", ["Mai"]),
+    "Icade": ("ICAD.PA", "EUR", "Immobilier", 24.0, 4.30, 0.82, "+1.5%", ["Mar", "Juil"]),
+    "Interparfums": ("ITP.PA", "EUR", "Cosmétiques/Luxe", 42.0, 1.15, 0.55, "+10.0%", ["Mai"]),
+    "Kering": ("KER.PA", "EUR", "Luxe", 230.0, 6.00, 0.58, "+3.0%", ["Jan", "Mai"]),
+    "Klépierre": ("LI.PA", "EUR", "Immobilier Commercial", 26.0, 1.80, 0.72, "+4.5%", ["Mar", "Juil"]),
+    "L'Oréal": ("OR.PA", "EUR", "Cosmétiques", 360.0, 6.60, 0.52, "+8.5%", ["Avr"]),
+    "Legrand": ("LR.PA", "EUR", "Équipement Élec.", 95.0, 2.09, 0.48, "+7.5%", ["Mai"]),
+    "LVMH": ("MC.PA", "EUR", "Luxe", 620.0, 13.00, 0.45, "+12.0%", ["Avr", "Déc"]),
+    "M6 - Métropole TV": ("MMT.PA", "EUR", "Médias", 12.0, 1.25, 0.68, "+4.0%", ["Mai"]),
+    "Michelin": ("ML.PA", "EUR", "Automobile/Pneus", 32.0, 1.35, 0.48, "+6.5%", ["Mai"]),
+    "Nexans": ("NEX.PA", "EUR", "Câbles/Énergie", 105.0, 2.30, 0.35, "+10.0%", ["Mai"]),
+    "Orange": ("ORA.PA", "EUR", "Télécoms", 10.5, 0.72, 0.68, "+2.0%", ["Juin", "Déc"]),
+    "Pernod Ricard": ("RI.PA", "EUR", "Spiritueux", 70.0, 4.70, 0.55, "+6.0%", ["Juil", "Nov"]),
+    "Publicis": ("PUB.PA", "EUR", "Communication", 92.0, 3.40, 0.48, "+8.5%", ["Juil"]),
+    "Rémy Cointreau": ("RCO.PA", "EUR", "Spiritueux", 62.0, 2.00, 0.52, "+4.0%", ["Oct"]),
+    "Renault": ("RNO.PA", "EUR", "Automobile", 42.0, 1.85, 0.30, "+8.0%", ["Mai"]),
+    "Rexel": ("RXL.PA", "EUR", "Distribution Élec.", 24.0, 1.20, 0.45, "+7.0%", ["Mai"]),
+    "Rubis": ("RUI.PA", "EUR", "Énergie/Stockage", 25.0, 1.98, 0.62, "+3.5%", ["Juin"]),
+    "Safran": ("SAF.PA", "EUR", "Aéronautique/Défense", 195.0, 2.20, 0.38, "+9.5%", ["Mai"]),
+    "Saint-Gobain": ("SGO.PA", "EUR", "Matériaux", 78.0, 2.10, 0.38, "+7.5%", ["Juin"]),
+    "Sanofi": ("SAN.PA", "EUR", "Santé", 90.0, 3.76, 0.58, "+4.8%", ["Mai"]),
+    "Schneider Electric": ("SU.PA", "EUR", "Industrie/Tech", 210.0, 3.50, 0.48, "+8.8%", ["Mai"]),
+    "Scor": ("SCR.PA", "EUR", "Réassurance", 20.0, 1.80, 0.55, "+4.0%", ["Mai"]),
+    "Seb": ("SK.PA", "EUR", "Électroménager", 92.0, 2.62, 0.42, "+5.5%", ["Mai"]),
+    "Société Générale": ("GLE.PA", "EUR", "Banque", 25.0, 0.90, 0.40, "+3.0%", ["Mai"]),
+    "Sodexo": ("SW.PA", "EUR", "Restauration/Services", 75.0, 3.10, 0.50, "+6.0%", ["Déc"]),
+    "Sopra Steria": ("SOP.PA", "EUR", "Services IT", 175.0, 4.65, 0.38, "+9.0%", ["Mai"]),
+    "Spie": ("SPIE.PA", "EUR", "Services Énergie", 34.0, 0.83, 0.42, "+7.5%", ["Mai", "Sep"]),
+    "Stellantis": ("STLAP.PA", "EUR", "Automobile", 13.0, 1.55, 0.35, "+6.0%", ["Mai"]),
+    "STMicroelectronics": ("STMPA.PA", "EUR", "Semi-conducteurs", 26.0, 0.36, 0.18, "+5.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Téléperformance": ("TEP.PA", "EUR", "Relation Client", 88.0, 3.85, 0.45, "+7.0%", ["Mai"]),
+    "TF1": ("TFI.PA", "EUR", "Médias", 8.0, 0.55, 0.62, "+5.0%", ["Avr"]),
+    "Thales": ("HO.PA", "EUR", "Défense/Aérospatial", 148.0, 3.40, 0.40, "+8.5%", ["Mai", "Déc"]),
+    "TotalEnergies": ("TTE.PA", "EUR", "Énergie", 58.0, 3.22, 0.42, "+6.1%", ["Jan", "Avr", "Juil", "Oct"]),
+    "Trigano": ("TRI.PA", "EUR", "Loisirs/Camping-cars", 118.0, 3.50, 0.25, "+9.0%", ["Mai", "Déc"]),
+    "Vallourec": ("VK.PA", "EUR", "Énergie/Tubes", 15.0, 1.50, 0.45, "+5.0%", ["Mai"]),
+    "Veolia": ("VIE.PA", "EUR", "Environnement", 28.0, 1.25, 0.65, "+6.5%", ["Mai"]),
+    "Verallia": ("VRLA.PA", "EUR", "Emballage Verre", 27.0, 2.15, 0.50, "+8.0%", ["Mai"]),
+    "Vicat": ("VCT.PA", "EUR", "Matériaux/Ciment", 35.0, 2.00, 0.42, "+4.5%", ["Mai"]),
+    "Vinci": ("DG.PA", "EUR", "Concessions/BTP", 105.0, 4.50, 0.52, "+7.5%", ["Avr", "Nov"]),
+    "Vivendi": ("VIV.PA", "EUR", "Médias/Divertissement", 9.5, 0.25, 0.45, "+3.0%", ["Avr"]),
+    "Wendel": ("MF.PA", "EUR", "Holding/Investissement", 88.0, 4.00, 0.45, "+6.5%", ["Mai"]),
 
-if mode_ajout == "Catalogue (PEA & US)":
-    choix_menu_yf = st.sidebar.selectbox("Sélectionner une valeur :", ["-- Choisir une action --"] + sorted(CATALOGUE_ACTIONS.keys()))
+    # Grandes Actions Européennes éligibles PEA
+    "Allianz (Allemagne)": ("ALV.DE", "EUR", "Assurance EUR", 265.0, 13.80, 0.60, "+8.0%", ["Mai"]),
+    "ASML Holding (Pays-Bas)": ("ASML.AS", "EUR", "Semi-conducteurs EUR", 680.0, 6.10, 0.32, "+14.0%", ["Fév", "Mai", "Août", "Nov"]),
+    "BMW (Allemagne)": ("BMW.DE", "EUR", "Automobile EUR", 78.0, 6.00, 0.38, "+5.0%", ["Mai"]),
+    "Deutsche Telekom (All.)": ("DTE.DE", "EUR", "Télécoms EUR", 25.0, 0.77, 0.48, "+6.0%", ["Avr"]),
+    "Enel (Italie)": ("ENEL.MI", "EUR", "Énergie EUR", 6.8, 0.43, 0.65, "+5.5%", ["Jan", "Juil"]),
+    "Ferrari (Italie)": ("RACE.MI", "EUR", "Luxe/Auto EUR", 385.0, 2.44, 0.30, "+12.0%", ["Mai"]),
+    "Iberdrola (Espagne)": ("IBE.MC", "EUR", "Énergie Verte EUR", 12.5, 0.55, 0.65, "+6.5%", ["Jan", "Juil"]),
+    "Inditex - Zara (Espagne)": ("ITX.MC", "EUR", "Mode/Retail EUR", 46.0, 1.54, 0.60, "+9.0%", ["Mai", "Nov"]),
+    "ING Groep (Pays-Bas)": ("INGA.AS", "EUR", "Banque EUR", 15.0, 1.10, 0.50, "+7.0%", ["Mai", "Août"]),
+    "Intesa Sanpaolo (Italie)": ("ISP.MI", "EUR", "Banque EUR", 3.6, 0.30, 0.70, "+8.0%", ["Mai", "Nov"]),
+    "Mercedes-Benz (Allemagne)": ("MBG.DE", "EUR", "Automobile EUR", 58.0, 5.30, 0.42, "+6.0%", ["Mai"]),
+    "SAP (Allemagne)": ("SAP.DE", "EUR", "Logiciels/Cloud EUR", 190.0, 2.20, 0.40, "+7.5%", ["Mai"]),
+    "Shell (Pays-Bas)": ("SHELL.AS", "EUR", "Énergie EUR", 31.0, 1.28, 0.38, "+5.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Siemens (Allemagne)": ("SIE.DE", "EUR", "Industrie/Tech EUR", 170.0, 4.70, 0.48, "+6.5%", ["Fév"]),
+    "Unilever (Pays-Bas)": ("UNA.AS", "EUR", "Consommation EUR", 52.0, 1.73, 0.62, "+3.5%", ["Mar", "Juin", "Sep", "Déc"]),
+
+    # ETFs éligibles PEA (Capitalisants / Distribuants)
+    "ETF Amundi MSCI World PEA (CW8)": ("CW8.PA", "EUR", "ETF Monde PEA", 510.0, 0.0, 0.0, "+9.5%", ["Mai"]),
+    "ETF BNP S&P 500 PEA (ESE)": ("ESE.PA", "EUR", "ETF USA PEA", 25.0, 0.0, 0.0, "+10.5%", ["Mai"]),
+    "ETF Amundi Nasdaq-100 PEA (PUST)": ("PUST.PA", "EUR", "ETF Tech US PEA", 72.0, 0.0, 0.0, "+12.0%", ["Mai"]),
+    "ETF Amundi Euro Stoxx 50 PEA": ("MSE.PA", "EUR", "ETF Europe PEA", 48.0, 1.45, 0.40, "+6.5%", ["Juil", "Déc"]),
+
+    # Actions Américaines (CTO en USD - Dividend Aristocrats & Tech)
+    "AbbVie": ("ABBV", "USD", "Santé US", 175.0, 6.20, 0.58, "+7.5%", ["Fév", "Mai", "Août", "Nov"]),
+    "Alphabet - Google": ("GOOGL", "USD", "Tech US", 170.0, 0.80, 0.12, "+10.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Amazon": ("AMZN", "USD", "Tech/E-Commerce US", 185.0, 0.0, 0.0, "+12.0%", ["Mai"]),
+    "Apple": ("AAPL", "USD", "Tech US", 200.0, 1.00, 0.16, "+5.5%", ["Fév", "Mai", "Août", "Nov"]),
+    "Broadcom": ("AVGO", "USD", "Semi-conducteurs US", 160.0, 2.12, 0.42, "+14.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Caterpillar": ("CAT", "USD", "Industrie US", 330.0, 5.64, 0.28, "+8.0%", ["Fév", "Mai", "Août", "Nov"]),
+    "Chevron": ("CVX", "USD", "Énergie US", 148.0, 6.52, 0.55, "+6.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Coca-Cola": ("KO", "USD", "Consommation US", 62.0, 1.94, 0.70, "+4.5%", ["Avr", "Juil", "Oct", "Déc"]),
+    "Costco": ("COST", "USD", "Distribution US", 820.0, 4.64, 0.28, "+11.0%", ["Fév", "Mai", "Août", "Nov"]),
+    "Eli Lilly": ("LLY", "USD", "Santé/Pharma US", 800.0, 5.20, 0.35, "+15.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "ExxonMobil": ("XOM", "USD", "Énergie US", 112.0, 3.80, 0.44, "+4.5%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Home Depot": ("HD", "USD", "Distribution US", 365.0, 9.00, 0.58, "+8.5%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Johnson & Johnson": ("JNJ", "USD", "Santé US", 155.0, 4.96, 0.52, "+5.5%", ["Mar", "Juin", "Sep", "Déc"]),
+    "JPMorgan Chase": ("JPM", "USD", "Banque US", 205.0, 5.00, 0.28, "+7.0%", ["Jan", "Avr", "Juil", "Oct"]),
+    "Main Street Capital (Mensuel)": ("MAIN", "USD", "Finance/BDC US", 48.0, 3.00, 0.72, "+4.5%", ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]),
+    "Mastercard": ("MA", "USD", "Paiements US", 460.0, 2.64, 0.20, "+13.0%", ["Fév", "Mai", "Août", "Nov"]),
+    "McDonald's": ("MCD", "USD", "Restauration US", 275.0, 7.08, 0.58, "+7.5%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Merck & Co": ("MRK", "USD", "Santé/Pharma US", 112.0, 3.08, 0.48, "+6.5%", ["Jan", "Avr", "Juil", "Oct"]),
+    "Meta Platforms": ("META", "USD", "Tech US", 520.0, 2.00, 0.12, "+10.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Microsoft": ("MSFT", "USD", "Tech US", 400.0, 3.32, 0.25, "+10.2%", ["Mar", "Juin", "Sep", "Déc"]),
+    "NVIDIA": ("NVDA", "USD", "IA & Semi-conducteurs US", 120.0, 0.04, 0.02, "+15.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "PepsiCo": ("PEP", "USD", "Consommation US", 168.0, 5.42, 0.66, "+7.0%", ["Jan", "Mar", "Juin", "Sep"]),
+    "Pfizer": ("PFE", "USD", "Santé/Pharma US", 28.0, 1.68, 0.68, "+3.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Procter & Gamble": ("PG", "USD", "Consommation US", 162.0, 4.03, 0.62, "+6.0%", ["Fév", "Mai", "Août", "Nov"]),
+    "Realty Income": ("O", "USD", "Immobilier US (REIT)", 55.0, 3.16, 0.74, "+3.8%", ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]),
+    "Texas Instruments": ("TXN", "USD", "Semi-conducteurs US", 185.0, 5.44, 0.65, "+7.5%", ["Fév", "Mai", "Août", "Nov"]),
+    "UnitedHealth": ("UNH", "USD", "Santé/Assurance US", 520.0, 8.40, 0.32, "+12.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Verizon": ("VZ", "USD", "Télécoms US", 40.0, 2.71, 0.60, "+2.0%", ["Fév", "Mai", "Août", "Nov"]),
+    "Visa": ("V", "USD", "Paiements US", 275.0, 2.36, 0.22, "+14.0%", ["Mar", "Juin", "Sep", "Déc"]),
+    "Walmart": ("WMT", "USD", "Distribution US", 72.0, 0.83, 0.35, "+4.0%", ["Jan", "Avr", "Mai", "Sep"]),
+}
+
+for nom_e, (sym_e, dev_e, sec_e, cib_e, div_e, pay_e, cr_e, mois_e) in ENRICHISSEMENT_CATALOGUE.items():
+    CATALOGUE_ACTIONS[f"{nom_e} ({dev_e})"] = (sym_e, dev_e, sec_e)
+    if nom_e not in WATCHLIST_DEFAUT:
+        WATCHLIST_DEFAUT[nom_e] = {
+            "symbole": sym_e,
+            "prix_cible": cib_e,
+            "secteur": sec_e,
+            "div_eur": div_e,
+            "payout_ratio": pay_e,
+            "croissance_5a": cr_e,
+            "mois_div": mois_e,
+            "devise": dev_e,
+        }
+
+WATCHLIST_DEFAUT.update(st.session_state["watchlist"])
+
+@st.cache_data(ttl=1800)
+def rechercher_actions_yahoo_live(requete):
+    """Recherche n'importe quelle action sur Yahoo Finance par nom ou ticker."""
+    if not requete or len(requete.strip()) < 2:
+        return []
+    q_enc = urllib.parse.quote(requete.strip())
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    resultats = []
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for item in data.get("quotes", []):
+                q_type = item.get("quoteType", "")
+                if q_type in ("EQUITY", "ETF"):
+                    sym = item.get("symbol", "")
+                    nom_long = item.get("shortname") or item.get("longname") or sym
+                    bourse = item.get("exchDisp") or item.get("exchange") or ""
+                    secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
+                    est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
+                    dev_y = "EUR" if est_eur else "USD"
+                    resultats.append({
+                        "label": f"{nom_long} ({sym} — {bourse} | {dev_y})",
+                        "nom": nom_long,
+                        "symbole": sym,
+                        "devise": dev_y,
+                        "secteur": secteur_y,
+                    })
+    except Exception:
+        pass
+    return resultats
+
+mode_ajout = st.sidebar.radio(
+    "Mode de recherche :",
+    ["📚 Catalogue (+100 valeurs)", "🌐 Recherche Yahoo Live"],
+    horizontal=True,
+)
+
+if mode_ajout == "📚 Catalogue (+100 valeurs)":
+    filtre_texte_cat = st.sidebar.text_input("🔎 Filtrer le catalogue (ex: Thales, GTT, ETF, Luxe...)", "").strip().lower()
+    cles_catalogue = sorted(CATALOGUE_ACTIONS.keys())
+    if filtre_texte_cat:
+        cles_catalogue = [
+            k for k in cles_catalogue
+            if filtre_texte_cat in k.lower()
+            or filtre_texte_cat in CATALOGUE_ACTIONS[k][0].lower()
+            or filtre_texte_cat in CATALOGUE_ACTIONS[k][2].lower()
+        ]
+
+    choix_menu_yf = st.sidebar.selectbox(
+        f"Sélectionner ({len(cles_catalogue)} valeurs dispo) :",
+        ["-- Choisir une action --"] + cles_catalogue,
+    )
     if choix_menu_yf != "-- Choisir une action --":
         symbole_sel, devise_sel, secteur_def = CATALOGUE_ACTIONS[choix_menu_yf]
-        nom_propre = choix_menu_yf.split(" (")[0]
+        nom_propre = choix_menu_yf.rsplit(" (", 1)[0]
+        info_pre = WATCHLIST.get(nom_propre, WATCHLIST_DEFAUT.get(nom_propre, {}))
+
         with st.sidebar.form("form_catalogue_yf"):
             st.markdown(f"**{nom_propre}** (`{symbole_sel}`) — **{devise_sel}**")
-            nouveau_secteur = st.text_input("Secteur", value=secteur_def)
-            nouveau_cible = st.number_input(f"Prix cible ({devise_sel})", min_value=0.0, value=float(WATCHLIST.get(nom_propre, {}).get("prix_cible", 100.0)), step=1.0)
-            nouveau_div = st.number_input(f"Dividende annuel ({devise_sel})", min_value=0.0, value=float(WATCHLIST.get(nom_propre, {}).get("div_eur", 2.5)), step=0.1)
-            nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=float(WATCHLIST.get(nom_propre, {}).get("payout_ratio", 0.50)), step=0.05)
-            nouveau_croiss = st.text_input("Croissance Div. 5A", value=WATCHLIST.get(nom_propre, {}).get("croissance_5a", "+6.0%"))
+            nouveau_secteur = st.text_input("Secteur", value=info_pre.get("secteur", secteur_def))
+            nouveau_cible = st.number_input(f"Prix cible ({devise_sel})", min_value=0.0, value=float(info_pre.get("prix_cible", 100.0)), step=1.0)
+            nouveau_div = st.number_input(f"Dividende annuel ({devise_sel})", min_value=0.0, value=float(info_pre.get("div_eur", 2.5)), step=0.1)
+            nouveau_payout = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=float(info_pre.get("payout_ratio", 0.50)), step=0.05)
+            nouveau_croiss = st.text_input("Croissance Div. 5A", value=info_pre.get("croissance_5a", "+6.0%"))
             liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
             def_mois = ["Mar", "Juin", "Sep", "Déc"] if devise_sel == "USD" else ["Mai"]
-            nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles, default=WATCHLIST.get(nom_propre, {}).get("mois_div", def_mois))
+            nouveau_mois = st.multiselect("Mois de versement :", liste_mois_possibles, default=info_pre.get("mois_div", def_mois))
 
-            if st.form_submit_button("➕ Ajouter / Mettre à jour"):
-                st.session_state["watchlist"][nom_propre] = {
+            st.markdown("---")
+            st.caption("💼 **Optionnel : Ajouter aussi dans mon Portefeuille**")
+            qte_init_pf = int(st.session_state["portefeuille"].get(nom_propre, {}).get("qte", 0))
+            pru_init_pf = float(st.session_state["portefeuille"].get(nom_propre, {}).get("pru", float(info_pre.get("prix_cible", 100.0))))
+            qte_ajout_pf = st.number_input("Quantité détenue (0 = Radar seul)", min_value=0, value=qte_init_pf, step=1)
+            pru_ajout_pf = st.number_input(f"Mon PRU unitaire ({devise_sel})", min_value=0.0, value=pru_init_pf, step=0.5)
+
+            if st.form_submit_button("➕ Ajouter au Radar & Portefeuille", type="primary"):
+                nouvel_objet_act = {
                     "symbole": symbole_sel,
                     "prix_cible": nouveau_cible,
                     "secteur": nouveau_secteur,
@@ -527,36 +736,83 @@ if mode_ajout == "Catalogue (PEA & US)":
                     "mois_div": nouveau_mois,
                     "devise": devise_sel,
                 }
+                st.session_state["watchlist"][nom_propre] = nouvel_objet_act
+                WATCHLIST_DEFAUT[nom_propre] = nouvel_objet_act
+                if qte_ajout_pf > 0:
+                    st.session_state["portefeuille"][nom_propre] = {"qte": int(qte_ajout_pf), "pru": float(pru_ajout_pf)}
+                    st.session_state[f"qte_{nom_propre}"] = int(qte_ajout_pf)
+                    st.session_state[f"pru_{nom_propre}"] = float(pru_ajout_pf)
                 sauvegarder_dans_cloud()
                 st.rerun()
 else:
+    requete_yahoo = st.sidebar.text_input("🌐 Tapez un nom ou ticker (ex: Novo Nordisk, Ferrari, Dassault, O...)").strip()
+    resultats_yahoo = rechercher_actions_yahoo_live(requete_yahoo) if len(requete_yahoo) >= 2 else []
+
+     nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = "", requete_yahoo.upper(), "EUR", "Action Internationale"
+    if resultats_yahoo:
+        choix_res_y = st.sidebar.selectbox("Résultats Yahoo Finance :", [r["label"] for r in resultats_yahoo])
+        item_y = next((r for r in resultats_yahoo if r["label"] == choix_res_y), resultats_yahoo[0])
+        nom_defaut_y = item_y["nom"]
+        sym_defaut_y = item_y["symbole"]
+        dev_defaut_y = item_y["devise"]
+        sec_defaut_y = item_y["secteur"]
+
+    prix_detecte, _, _, _ = recuperer_donnees(sym_defaut_y) if sym_defaut_y else (None, None, None, None)
+    cible_auto = round(prix_detecte * 0.95, 2) if prix_detecte else 100.0
+
     with st.sidebar.form("form_ticker_libre"):
-        nom_libre = st.text_input("Nom de l'entreprise (ex: Netflix)").strip()
-        sym_libre = st.text_input("Ticker Yahoo (ex: NFLX ou ASML.AS)").strip().upper()
-        dev_libre = st.selectbox("Devise de cotation :", ["EUR", "USD"])
-        sec_libre = st.text_input("Secteur", value="Technologie")
-        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=100.0, step=1.0)
-        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=1.5, step=0.1)
-        payout_libre = st.number_input("Payout Ratio (ex: 0.45)", min_value=0.0, max_value=2.0, value=0.45, step=0.05)
+        if prix_detecte:
+            st.success(f"⚡ Cours en direct détecté : **{prix_detecte:.2f} {dev_defaut_y}**")
+        nom_libre = st.text_input("Nom de l'action", value=nom_defaut_y).strip()
+        sym_libre = st.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y).strip().upper()
+        dev_libre = st.selectbox("Devise de cotation :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1)
+        sec_libre = st.text_input("Secteur", value=sec_defaut_y)
+        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=float(cible_auto), step=1.0)
+        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=float(round(cible_auto * 0.035, 2)), step=0.1)
+        payout_libre = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.50, step=0.05)
         liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=["Mai"])
+        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"])
 
-        if st.form_submit_button("➕ Ajouter ce Ticker"):
+        st.markdown("---")
+        st.caption("💼 **Optionnel : Ajouter aussi dans mon Portefeuille**")
+        qte_libre_pf = st.number_input("Quantité détenue (0 = Radar seul)", min_value=0, value=0, step=1)
+        pru_libre_pf = st.number_input(f"Mon PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5)
+
+        if st.form_submit_button("🚀 Valider & Ajouter cette Action", type="primary"):
             if nom_libre and sym_libre:
-                st.session_state["watchlist"][nom_libre] = {
-                    "symbole": sym_libre,
-                    "prix_cible": cible_libre,
-                    "secteur": sec_libre,
-                    "div_eur": div_libre,
-                    "payout_ratio": payout_libre,
-                    "croissance_5a": "+5.0%",
-                    "mois_div": mois_libre,
-                    "devise": dev_libre,
-                }
-                sauvegarder_dans_cloud()
-                st.rerun()
+                test_p, _, _, _ = recuperer_donnees(sym_libre)
+                if test_p is None:
+                    st.error(f"❌ Ticker `{sym_libre}` introuvable sur Yahoo Finance.")
+                else:
+                    nouvel_act_l = {
+                        "symbole": sym_libre,
+                        "prix_cible": cible_libre,
+                        "secteur": sec_libre,
+                        "div_eur": div_libre,
+                        "payout_ratio": payout_libre,
+                        "croissance_5a": "+5.0%",
+                        "mois_div": mois_libre,
+                        "devise": dev_libre,
+                    }
+                    st.session_state["watchlist"][nom_libre] = nouvel_act_l
+                    WATCHLIST_DEFAUT[nom_libre] = nouvel_act_l
+                    if qte_libre_pf > 0:
+                        st.session_state["portefeuille"][nom_libre] = {"qte": int(qte_libre_pf), "pru": float(pru_libre_pf)}
+                        st.session_state[f"qte_{nom_libre}"] = int(qte_libre_pf)
+                        st.session_state[f"pru_{nom_libre}"] = float(pru_libre_pf)
+                    sauvegarder_dans_cloud()
+                    st.rerun()
 
-with st.sidebar.expander("🗑️ Supprimer une action du radar"):
+    if WATCHLIST:
+        action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()))
+        if st.button("Supprimer définitivement"):
+            if action_a_suppr in st.session_state["watchlist"]:
+                del st.session_state["watchlist"][action_a_suppr]
+            if action_a_suppr in st.session_state["portefeuille"]:
+                del st.session_state["portefeuille"][action_a_suppr]
+            st.session_state[f"qte_{action_a_suppr}"] = 0
+            sauvegarder_dans_cloud()
+            st.rerun()
     if WATCHLIST:
         action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()))
         if st.button("Supprimer définitivement"):
