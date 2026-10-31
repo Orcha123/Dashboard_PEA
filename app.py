@@ -3131,51 +3131,49 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         )
     with col_q_btn:
     if st.button("✨ Lancer l'Analyse IA", use_container_width=True):
-    q_clean = question_ia.strip() if "question_ia" in locals() else ""
-    q_low = q_clean.lower()
+            q_clean = question_ia.strip() if "question_ia" in locals() else ""
+            q_low = q_clean.lower()
 
-    if not q_clean or len(q_clean) < 3:
-        st.warning("💡 Veuillez saisir une vraie question (ex: « Que faire sur BNP Paribas ? », « Analyse mon PRU », « Quelles actions pour mon DCA ? »).")
-    else:
-        # 1. Recherche si l'utilisateur mentionne une ou plusieurs actions de sa liste
-        actions_trouvees = [
-            item for item in synthese_opportunites
-            if item["nom"].lower() in q_low or item.get("symbole", "").lower().replace(".pa", "") in q_low
-        ]
+            if not q_clean or len(q_clean) < 3:
+                st.warning("💡 Veuillez saisir une vraie question (ex: « Que faire sur BNP Paribas ? », « Analyse mon PRU », « Quelles actions pour mon DCA ? »).")
+            else:
+                actions_trouvees = [
+                    item for item in synthese_opportunites
+                    if item["nom"].lower() in q_low or item.get("symbole", "").lower().replace(".pa", "") in q_low
+                ]
 
-        # 2. Construction d'une réponse 100 % adaptée à la question
-        if actions_trouvees:
-            blocs_actions = ""
-            for act in actions_trouvees:
-                nom_a = act["nom"]
-                cours_a = act.get("cours_eur", act.get("cours", 0.0))
-                cible_a = act.get("cible", 0.0)
-                score_a = act.get("score_global", act.get("score", 0))
-                rsi_a = act.get("rsi", 50.0)
-                div_pct = act.get("rendement", 0.0)
-                support_a = act.get("support", cours_a * 0.97)
-                en_pf = act.get("en_portefeuille", False)
-                pru_a = act.get("pru", 0.0)
+                if actions_trouvees:
+                    blocs_actions = ""
+                    for act in actions_trouvees:
+                        nom_a = act["nom"]
+                        cours_a = act.get("cours_eur", act.get("cours", 0.0))
+                        cible_a = act.get("cible", 0.0)
+                        score_a = act.get("score_global", act.get("score", 0))
+                        rsi_a = act.get("rsi", 50.0)
+                        div_pct = act.get("rendement", 0.0)
+                        support_a = act.get("support", cours_a * 0.97)
+                        en_pf = act.get("en_portefeuille", False)
+                        pru_a = act.get("pru", 0.0)
 
-                if en_pf and pru_a > 0:
-                    ecart_pru = ((cours_a - pru_a) / pru_a) * 100
-                    info_pru = f"Vous détenez cette ligne avec un PRU de **{pru_a:.2f} €** ({ecart_pru:+.1f}%). "
-                    info_pru += "Un renforcement actuel abaissera mécaniquement votre PRU." if cours_a < pru_a else "Votre ligne est déjà en plus-value latente."
-                else:
-                    info_pru = "Cette valeur est actuellement **absente de votre portefeuille** (idéale pour diversifier)."
+                        if en_pf and pru_a > 0:
+                            ecart_pru = ((cours_a - pru_a) / pru_a) * 100
+                            info_pru = f"Vous détenez cette ligne avec un PRU de **{pru_a:.2f} €** ({ecart_pru:+.1f}%). "
+                            info_pru += "Un renforcement actuel abaissera mécaniquement votre PRU." if cours_a < pru_a else "Votre ligne est déjà en plus-value latente."
+                        else:
+                            info_pru = "Cette valeur est actuellement **absente de votre portefeuille** (idéale pour diversifier)."
 
-                verdict_a = (
-                    "🟢 **Opportunité d'achat / Renforcement DCA**" if score_a >= 65
-                    else ("🟡 **Surveillance / Achat sur repli**" if score_a >= 45 else "🟠 **Conservation / Attente de repli**")
-                )
+                        verdict_a = (
+                            "🟢 **Opportunité d'achat / Renforcement DCA**" if score_a >= 65
+                            else ("🟡 **Surveillance / Achat sur repli**" if score_a >= 45 else "🟠 **Conservation / Attente de repli**")
+                        )
 
-                blocs_actions += f"""
+                        blocs_actions += f"""
 #### 🎯 Focus détaillé sur **{nom_a}**
 * **Diagnostic temps réel :** Cours à **{cours_a:.2f} €** | Objectif cible : **{cible_a:.2f} €** | Convergence : **{score_a}/100** | RSI : **{rsi_a:.1f}** | Rendement : **{div_pct:.2f}%**
 * **Situation dans votre portefeuille :** {info_pru}
 * **Stratégie recommandée :** {verdict_a}. Privilégiez un ordre limite proche de **{min(cours_a, support_a):.2f} €** (Support 30J : {support_a:.2f} €).
 """
-            reponse_dynamique = f"""
+                    reponse_dynamique = f"""
 ### 🧠 Réponse Personnalisée de votre Coach IA 2.0
 *Votre question : « {q_clean} »*
 
@@ -3184,13 +3182,13 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 *⚖️ Rappel : Analyse statistique et pédagogique générée par votre moteur algorithmique (Non-CIF).*
 """
 
-        elif any(mot in q_low for mot in ["pru", "moyenner", "baisse", "perte", "moins-value"]):
-            lignes_sous_pru = [x for x in synthese_opportunites if x.get("en_portefeuille") and x.get("pru", 0) > x.get("cours_eur", x.get("cours", 0))]
-            if lignes_sous_pru:
-                liste_txt = "\n".join([f"* **{x['nom']}** : Cours **{x.get('cours_eur', x.get('cours', 0)):.2f} €** sous votre PRU de **{x['pru']:.2f} €** (Score : {x.get('score_global', 0)}/100)" for x in lignes_sous_pru[:4]])
-            else:
-                liste_txt = "* Aucune de vos lignes actuelles n'est sous son PRU ! Vos positions sont toutes au-dessus de leur prix de revient."
-            reponse_dynamique = f"""
+                elif any(mot in q_low for mot in ["pru", "moyenner", "baisse", "perte", "moins-value"]):
+                    lignes_sous_pru = [x for x in synthese_opportunites if x.get("en_portefeuille") and x.get("pru", 0) > x.get("cours_eur", x.get("cours", 0))]
+                    if lignes_sous_pru:
+                        liste_txt = "\n".join([f"* **{x['nom']}** : Cours **{x.get('cours_eur', x.get('cours', 0)):.2f} €** sous votre PRU de **{x['pru']:.2f} €** (Score : {x.get('score_global', 0)}/100)" for x in lignes_sous_pru[:4]])
+                    else:
+                        liste_txt = "* Aucune de vos lignes actuelles n'est sous son PRU ! Vos positions sont toutes au-dessus de leur prix de revient."
+                    reponse_dynamique = f"""
 ### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Spécial Optimisation PRU
 *Votre question : « {q_clean} »*
 
@@ -3202,10 +3200,10 @@ Voici les lignes de votre portefeuille où un achat permet d'abaisser immédiate
 *⚖️ Rappel : Analyse statistique et pédagogique (Non-CIF).*
 """
 
-        elif any(mot in q_low for mot in ["dividende", "rente", "rendement", "passif", "revenu"]):
-            top_div = sorted(synthese_opportunites, key=lambda x: x.get("rendement", 0), reverse=True)[:3]
-            liste_div = "\n".join([f"* **{x['nom']}** : Rendement **{x.get('rendement', 0):.2f}%** (Score : {x.get('score_global', 0)}/100)" for x in top_div])
-            reponse_dynamique = f"""
+                elif any(mot in q_low for mot in ["dividende", "rente", "rendement", "passif", "revenu"]):
+                    top_div = sorted(synthese_opportunites, key=lambda x: x.get("rendement", 0), reverse=True)[:3]
+                    liste_div = "\n".join([f"* **{x['nom']}** : Rendement **{x.get('rendement', 0):.2f}%** (Score : {x.get('score_global', 0)}/100)" for x in top_div])
+                    reponse_dynamique = f"""
 ### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Spécial Rente & Dividendes
 *Votre question : « {q_clean} »*
 
@@ -3217,10 +3215,10 @@ Voici les 3 valeurs offrant actuellement les meilleurs rendements sur votre rada
 *⚖️ Rappel : Analyse statistique et pédagogique (Non-CIF).*
 """
 
-        elif any(mot in q_low for mot in ["dca", "acheter", "achat", "opportunité", "investir", "portefeuille", "conseil", "quoi"]):
-            top3 = synthese_opportunites[:3]
-            liste_top = "\n".join([f"* **{x['nom']}** (Score **{x.get('score_global', 0)}/100** — Cours : {x.get('cours_eur', x.get('cours', 0)):.2f} €, Cible : {x.get('cible', 0):.2f} €, RSI : {x.get('rsi', 50):.1f})" for x in top3])
-            reponse_dynamique = f"""
+                elif any(mot in q_low for mot in ["dca", "acheter", "achat", "opportunité", "investir", "portefeuille", "conseil", "quoi"]):
+                    top3 = synthese_opportunites[:3]
+                    liste_top = "\n".join([f"* **{x['nom']}** (Score **{x.get('score_global', 0)}/100** — Cours : {x.get('cours_eur', x.get('cours', 0)):.2f} €, Cible : {x.get('cible', 0):.2f} €, RSI : {x.get('rsi', 50):.1f})" for x in top3])
+                    reponse_dynamique = f"""
 ### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Allocation DCA du Moment
 *Votre question : « {q_clean} »*
 
@@ -3233,9 +3231,9 @@ Voici les 3 valeurs offrant actuellement les meilleurs rendements sur votre rada
 *⚖️ Rappel : Analyse statistique et pédagogique (Non-CIF).*
 """
 
-        else:
-            noms_exemples = ", ".join([x["nom"] for x in synthese_opportunites[:4]])
-            reponse_dynamique = f"""
+                else:
+                    noms_exemples = ", ".join([x["nom"] for x in synthese_opportunites[:4]])
+                    reponse_dynamique = f"""
 ### 🧠 Coach IA 2.0 — Précisez votre demande
 Je n'ai pas détecté de nom d'action ou de thème financier précis dans votre saisie : **« {q_clean} »**.
 
@@ -3246,8 +3244,9 @@ Vous pouvez m'interroger directement sur :
 * 🚀 **Votre prochain DCA** (ex : *« Quoi acheter ce mois-ci avec mon DCA ? »*)
 """
 
-        st.session_state["dernier_audit_ia"] = reponse_dynamique
-        st.markdown(reponse_dynamique)
+                st.session_state["dernier_audit_ia"] = reponse_dynamique
+                st.markdown(reponse_dynamique)
+
 
 
     if len(st.session_state.get("historique_chat_ia", [])) > 1:
