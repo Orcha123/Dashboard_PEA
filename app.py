@@ -2692,29 +2692,13 @@ with onglet_ia:
             b_val_c = "b-green" if opp["Ecart3ANum"] < 0 else "b-neutral"
             b_tim_c = "b-green" if opp["ScoreTiming"] >= 65 else ("b-blue" if opp["ScoreTiming"] >= 48 else "b-yellow")
 
-            html_podium += f"""
-            <div class="argon-card" style="text-align:left; border-top: 4px solid {c_b}; min-width: 260px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="font-size:0.75em; font-weight:900; color:{c_b}; letter-spacing:0.6px;">{medailles[idx_p]}</span>
-                    <span class="b-green" style="font-size:0.82em;">Convergence : {opp['ScoreConv']}/100</span>
-                </div>
-                <div style="font-size:1.22em; font-weight:900; margin-bottom:4px;">{opp['Actif']} — <span style="color:{c_b};">{opp['Prix']}</span></div>
-                <div style="font-size:0.80em; opacity:0.85; margin-bottom:10px;">🎯 Objectif Cible : <b>{opp['Cible']}</b> ({opp['EcartCible']})</div>
-                <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px;">
-                    <span class="b-blue" style="font-size:0.76em;">📊 Radar : {opp['ScoreRadar']}/100 (RSI {opp['RSI']})</span>
-                    <span class="{b_val_c}" style="font-size:0.76em;">📐 Canal 3A : {opp['Ecart3A']}</span>
-                    <span class="{b_tim_c}" style="font-size:0.76em;">⚡ Timing 30J : {opp['ScoreTiming']}/100</span>
-                    <span class="b-green" style="font-size:0.76em;">💰 Div : {opp['Rendement']} (Payout {opp['Payout']})</span>
-                </div>
-                <div style="background:rgba(128,128,128,0.06); border-radius:8px; padding:8px 10px; font-size:0.82em; line-height:1.45;">
-                    <div style="margin-bottom:4px;">{opp['BadgePF']}</div>
-                    <div>💡 {opp['ConseilPF']}</div>
-                    <div style="margin-top:4px; color:#2ecc71; font-weight:700;">🛒 Entrée / Ordre limite conseillé : {opp['OrdreLimite']} (Support : {opp['Support']})</div>
-                </div>
-            </div>
-            """
-        html_podium += "</div>"
-        afficher_html(html_podium)
+            # Calcul dynamique de l'impact PRU si l'action est en portefeuille
+            nom_o = opp["Nom"]
+            pos_p = portefeuille_utilisateur.get(nom_o)
+            conseil_pru_dynamique = opp['ConseilPF']
+           
+            if pos_p and float(pos_p.get("qte", 0)) > 0:
+                q_actuelle = float(pos_p["qte"])
 
         # Les 4 boussoles thématiques rapides
         opp_moyennage = next((x for x in synthese_opportunites if x["EstSousPRU"]), None)
