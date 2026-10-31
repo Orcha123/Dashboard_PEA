@@ -1346,7 +1346,7 @@ with onglet_radar:
         html_t4 += "</tbody></table>"
         afficher_html(html_t4)
 
-   with tab_div:
+    with tab_div:
         html_guide_div = """
         <div class="argon-grid" style="margin-bottom: 14px;">
             <div class="argon-card" style="text-align:left; padding:12px 15px;">
