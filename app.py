@@ -27,7 +27,7 @@ def afficher_html(html_brut):
     st.markdown(html_propre, unsafe_allow_html=True)
 
 STYLE_ARGON = """
-<style>
+<style> :
 /* --- MASQUAGE INTERFACE STREAMLIT (MODE PRO BOURSING) --- */
     #MainMenu {visibility: hidden !important; display: none !important;}
     footer {visibility: hidden !important; display: none !important;}
