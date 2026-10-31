@@ -805,7 +805,7 @@ else:
                     sauvegarder_dans_cloud()
                     st.rerun()
 
-      with st.sidebar.expander("🗑️ Supprimer une action du radar"):
+with st.sidebar.expander("🗑️ Supprimer une action du radar"):
     if WATCHLIST:
         action_a_suppr = st.selectbox("Choisir l'action à retirer :", list(WATCHLIST.keys()), key="sel_suppr_radar")
         if st.button("Supprimer définitivement", key="btn_suppr_radar"):
