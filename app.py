@@ -3153,30 +3153,46 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             if pm not in modeles_candidats:
                 modeles_candidats.append(pm)
 
-        modeles_ordonnes = sorted(
-            modeles_candidats,
-            key=lambda x: (0 if "2.5-flash" in x else (1 if "2.0-flash" in x else (2 if "flash" in x else 3)))
-        )
+        # On place les modèles texte officiels en priorité absolue (en excluant les variantes TTS/audio/image)
+        modeles_propres = [
+            m for m in modeles_candidats
+            if not any(ex in m for ex in ["tts", "audio", "image", "vision", "embedding", "bis"])
+        ]
+        modeles_ordonnes = []
+        for m_prio in priorite_modeles + modeles_propres:
+            if m_prio not in modeles_ordonnes:
+                modeles_ordonnes.append(m_prio)
 
-        for mod in modeles_ordonnes[:5]:
+        derniere_erreur_ia = ""
+        for mod in modeles_ordonnes[:6]:
             try:
-                url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={cle_gemini}"
+                url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={urllib.parse.quote(cle_gemini)}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
                 req_ia = urllib.request.Request(
                     url_api,
                     data=payload_ia,
-                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": cle_gemini,
+                        "User-Agent": "Mozilla/5.0"
+                    },
                 )
                 with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
                     res_json = json.loads(resp_ia.read().decode("utf-8"))
                     texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     if texte_rep:
                         return texte_rep
-            except Exception:
+            except urllib.error.HTTPError as e_http:
+                detail_err = e_http.read().decode("utf-8", errors="ignore")
+                derniere_erreur_ia = f"[{mod}] HTTP {e_http.code} : {detail_err[:180]}"
+                continue
+            except Exception as e_gen:
+                derniere_erreur_ia = f"[{mod}] {str(e_gen)}"
                 continue
 
+        if derniere_erreur_ia:
+            return f"> ⚠️ **Diagnostic API Gemini :** `{derniere_erreur_ia}`\n\n" + generer_audit_expert_hybride(question_utilisateur, code_audit)
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
-
     st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
 
     col_ia1, col_ia2, col_ia3 = st.columns(3)
