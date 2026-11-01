@@ -2980,21 +2980,85 @@ with onglet_ia:
                         f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
                     )
 
-            bloc_focus = "\n".join(focus_actions) if focus_actions else "* Voici les 3 meilleures opportunités détectées sur votre radar aujourd'hui :\n  * " + "\n  * ".join(top_3_radar)
+            q_low = question_utilisateur.strip().lower()
 
+        # CAS 1 : L'utilisateur a mentionné une ou plusieurs actions précises
+        if focus_actions:
+            bloc_focus = "\n".join(focus_actions)
             return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0
 
 **Votre question :** *« {question_utilisateur} »*
 
-#### 1. Analyse Technique & Fondamentale en Direct
+#### 1. Analyse Technique & Fondamentale sur mesure
 {bloc_focus}
 
-#### 2. Recommandation Stratégique par rapport à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
-* **Discipline de Prix Cible & PRU :** Tant que le cours d'une action est **inférieur à votre Prix Cible** (ou inférieur à votre PRU actuel) avec un **RSI < 45** et un **Score ≥ 50/100**, le renforcement progressif via votre enveloppe DCA de **{BUDGET_MENSUEL:.0f} €/mois** est optimal.
-* **Gestion du Timing :** Si le titre affiche un RSI supérieur à 65 ou dépasse nettement son objectif de cours, patientez sur un repli vers le **Support 30J** ou la **Borne Basse de Bollinger** avant d'exécuter votre ordre.
+#### 2. Stratégie adaptée à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
+* **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
+* **Timing d'exécution :** Si le RSI dépasse 65, patientez sur un repli technique avant de passer votre ordre.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
+        # CAS 2 : Question sur le PRU ou le moyennage à la baisse
+        elif any(m in q_low for m in ["pru", "moyenner", "baisse", "perte", "moins-value", "renforcer"]):
+            lignes_pru = []
+            for nom_p, data_p in portefeuille_utilisateur.items():
+                qte_p = float(data_p.get("qte", 0))
+                pru_p = float(data_p.get("pru", 0))
+                cours_p = float(prix_temps_reel.get(nom_p, 0))
+                if qte_p > 0 and pru_p > 0 and cours_p > 0 and cours_p < pru_p:
+                    ecart_p = ((cours_p - pru_p) / pru_p) * 100
+                    lignes_pru.append(f"* **{nom_p}** : Cours actuel **{cours_p:.2f} €** sous votre PRU de **{pru_p:.2f} €** (**{ecart_p:+.1f}%**)")
+            txt_pru = "\n".join(lignes_pru) if lignes_pru else "* Aucune ligne de votre portefeuille n'est actuellement sous son PRU !"
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Diagnostic PRU
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Lignes de votre portefeuille actuellement sous votre PRU
+{txt_pru}
+
+#### 2. Règle d'or pour moyenner à la baisse
+* Ne renforcez une ligne sous son PRU que si son **RSI est inférieur à 50** et que le **Signal EMA 2/12** montre des signes de stabilisation, afin d'abaisser votre prix de revient sans surpondérer une chute libre.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 3 : Question sur les dividendes ou la rente passive
+        elif any(m in q_low for m in ["dividende", "rente", "rendement", "passif", "revenu"]):
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Stratégie Dividendes & Rente
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Optimisation de votre Rente sur un portefeuille de {valeur_totale_portefeuille:,.0f} €
+* **Sécurité du dividende :** Ciblez en priorité les valeurs de votre radar affichant un **rendement supérieur à 4%** combiné à un **Payout Ratio inférieur à 65%** pour garantir la pérennité des versements.
+* **Effet boule de neige :** Réinvestissez vos dividendes perçus en priorité sur vos lignes en décote (sous leur Prix Cible ou sous votre PRU) pour accélérer la croissance de votre rente mensuelle.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 4 : Question sur le prochain achat DCA ou les opportunités générales
+        elif any(m in q_low for m in ["dca", "acheter", "achat", "opportunité", "investir", "conseil", "quoi", "portefeuille", "analyse"]):
+            bloc_defaut = "\n".join(focus_actions) if focus_actions else "* Consultez le **Podium de Convergence 360°** juste au-dessus pour visualiser vos 3 meilleures opportunités DCA en temps réel."
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Allocation DCA
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Priorités d'investissement du moment
+{bloc_defaut}
+
+#### 2. Recommandation Stratégique ({valeur_totale_portefeuille:,.0f} €)
+* **Discipline DCA :** Allouez votre enveloppe mensuelle en priorité sur les valeurs du Podium affichant un **Score ≥ 65/100** et situées sous votre **PRU** ou votre **Prix Cible**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 5 : Saisie non reconnue (ex: "jjss")
+        else:
+            return f"""### 🧠 Coach IA 2.0 — Précisez votre question
+
+Je n'ai détecté aucun nom d'action ni thème financier précis dans votre saisie : **« {question_utilisateur} »**.
+
+💡 **Exemples de questions que vous pouvez me poser :**
+* 📊 **Sur une ou plusieurs actions :** *« Que faire sur BNP Paribas et Air Liquide ? »*
+* 📉 **Sur vos prix de revient :** *« Quelles actions renforcer pour baisser mon PRU ? »*
+* 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
+* 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
     def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
         if hasattr(st, "secrets"):
