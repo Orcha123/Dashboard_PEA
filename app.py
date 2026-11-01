@@ -2391,7 +2391,7 @@ with onglet_dividendes:
                 item_d.pop("jours", None)
             st.markdown("#### 📌 Prochains Détachements de Dividendes (Horizon 90 jours)")
             st.dataframe(lignes_detachement_90j, use_container_width=True, hide_index=True)
-            st.markdown("---"
+            st.markdown("---")
         mois_ordre = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
         noms_mois_complets = {
             "Jan": "Janvier", "Fév": "Février", "Mar": "Mars", "Avr": "Avril",
