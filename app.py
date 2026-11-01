@@ -3142,22 +3142,24 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             pass
 
         priorite_modeles = [
-            "gemini-3.0-flash",
-            "gemini-3.0-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
+            "gemini-3-flash-preview",
+            "gemini-3.0-flash-preview",
+            "gemini-flash-latest",
         ]
-        modeles_propres = [
-            m for m in modeles_candidats
-            if not any(ex in m for ex in ["1.5", "tts", "audio", "image", "vision", "embedding", "bis"])
-        ]
+        modeles_propres = sorted(
+            [
+                m for m in modeles_candidats
+                if not any(ex in m for ex in ["1.5", "2.0", "2.5-flash", "tts", "audio", "image", "vision", "embedding", "bis"])
+            ],
+            key=lambda x: (0 if "3" in x else (1 if "latest" in x else 2))
+        )
         modeles_ordonnes = []
-        for m_prio in priorite_modeles + modeles_propres:
+        for m_prio in modeles_propres + priorite_modeles + modeles_candidats:
             if m_prio not in modeles_ordonnes:
                 modeles_ordonnes.append(m_prio)
 
         erreurs_ia = []
-        for mod in modeles_ordonnes[:4]:
+        for mod in modeles_ordonnes[:12]:
             try:
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={urllib.parse.quote(cle_gemini)}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
@@ -3184,7 +3186,8 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
                 continue
 
         if erreurs_ia:
-            return f"> ⚠️ **Diagnostic API Gemini :** `{erreurs_ia[0]}`\n\n" + generer_audit_expert_hybride(question_utilisateur, code_audit)
+            return f"> ⚠️ **Diagnostic API Gemini :** `Modèles détectés: {modeles_candidats[:6]} | Erreur: {erreurs_ia[0]}`\n\n" + generer_audit_expert_hybride(question_utilisateur, code_audit)
+
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
 
