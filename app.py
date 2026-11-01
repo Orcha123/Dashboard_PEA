@@ -2330,6 +2330,76 @@ with onglet_dividendes:
     if not portefeuille_utilisateur:
         st.warning("Ajoutez des actions dans votre portefeuille pour générer votre calendrier de revenus passifs.")
     else:
+    # --- RADAR DES PROCHAINS DÉTACHEMENTS (FILTRÉ SUR 90 JOURS MAX) ---
+        HORIZON_JOURS = 90  # Remplacez 90 par 60 si vous souhaitez un filtre à 2 mois
+
+        @st.cache_data(ttl=3600)
+        def recuperer_prochain_detachement_yahoo(symbole):
+            try:
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=2y&interval=1d&events=div"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                divs = data["chart"]["result"][0].get("events", {}).get("dividends", {})
+                if not divs:
+                    return None, None, None
+               
+                ajd = datetime.now().date()
+                prochaines_dates = []
+                for ts_key, d_info in divs.items():
+                    dt_hist = datetime.fromtimestamp(int(d_info.get("date", ts_key))).date()
+                    montant_u = float(d_info.get("amount", 0.0))
+                    for annee_cible in [ajd.year, ajd.year + 1]:
+                        try:
+                            dt_proj = dt_hist.replace(year=annee_cible)
+                        except ValueError:
+                            dt_proj = dt_hist.replace(year=annee_cible, day=28)
+                        ecart_jours = (dt_proj - ajd).days
+                        if 0 <= ecart_jours <= 365:
+                            prochaines_dates.append((ecart_jours, dt_proj, montant_u))
+               
+                if not prochaines_dates:
+                    return None, None, None
+                prochaines_dates.sort(key=lambda x: x[0])
+                return prochaines_dates[0]
+            except Exception:
+                return None, None, None
+
+        lignes_detachement = []
+        source_actions = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+        for nom_d, pos_d in portefeuille_utilisateur.items():
+            if nom_d == "Espèces" or float(pos_d.get("qte", 0)) <= 0:
+                continue
+            info_d = source_actions.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
+            sym_d = info_d.get("symbole", "")
+            if not sym_d:
+                continue
+            nb_j, date_ex, mt_unit = recuperer_prochain_detachement_yahoo(sym_d)
+            # Filtrage strict sur la fenêtre de 60 ou 90 jours
+            if date_ex is not None and nb_j <= HORIZON_JOURS:
+                qte_d = float(pos_d.get("qte", 0))
+                dev_d = "$" if info_d.get("devise") == "USD" else "€"
+                statut_ex = "🔥 Imminent (< 21j)" if nb_j <= 21 else ("🟢 Sous 60 jours" if nb_j <= 60 else "📅 Sous 90 jours")
+                lignes_detachement.append({
+                    "jours": nb_j,
+                    "Action": nom_d,
+                    "Date Ex-Dividende (Estimée)": date_ex.strftime("%d/%m/%Y"),
+                    "Compte à rebours": f"J-{nb_j}" if nb_j > 0 else "⚡ Aujourd'hui !",
+                    "Coupon unitaire": f"{mt_unit:.2f} {dev_d}",
+                    "Montant estimé": f"{mt_unit * qte_d:.2f} {dev_d}",
+                    "Statut": statut_ex
+                })
+
+        st.markdown(f"#### 📌 Prochains Détachements de Dividendes (Horizon {HORIZON_JOURS} jours)")
+        if lignes_detachement:
+            lignes_detachement.sort(key=lambda x: x["jours"])
+            for item_d in lignes_detachement:
+                item_d.pop("jours", None)
+            st.caption("💡 *L'action doit être détenue en portefeuille au plus tard la veille de la date de détachement.*")
+            st.dataframe(lignes_detachement, use_container_width=True, hide_index=True)
+        else:
+            st.info(f"📅 Aucun détachement de dividende prévu dans les {HORIZON_JOURS} prochains jours sur vos lignes en portefeuille.")
+        st.markdown("---")
     # --- CALENDRIER DES DATES DE DÉTACHEMENT (EX-DIVIDEND) & COMPTE À REBOURS ---
         @st.cache_data(ttl=3600)
         def recuperer_prochain_detachement_yahoo(symbole):
