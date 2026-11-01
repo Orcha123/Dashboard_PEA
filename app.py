@@ -2387,11 +2387,51 @@ with onglet_dividendes:
 
         if lignes_detachement_90j:
             lignes_detachement_90j.sort(key=lambda x: x["jours"])
+            lignes_html_90j = ""
             for item_d in lignes_detachement_90j:
-                item_d.pop("jours", None)
-            st.markdown("#### 📌 Prochains Détachements de Dividendes (Horizon 90 jours)")
-            st.dataframe(lignes_detachement_90j, use_container_width=True, hide_index=True)
-            st.markdown("---")
+                j_rest = item_d.get("jours", 90)
+                if j_rest <= 15:
+                    bg_b, col_b, brd_b = "#fef2f2", "#dc2626", "#fecaca"
+                elif j_rest <= 45:
+                    bg_b, col_b, brd_b = "#eff6ff", "#2563eb", "#bfdbfe"
+                else:
+                    bg_b, col_b, brd_b = "#f8fafc", "#475569", "#e2e8f0"
+
+                lignes_html_90j += (
+                    f"<tr style='border-bottom:1px solid #f1f5f9;'>"
+                    f"<td style='padding:12px 10px; font-weight:700; color:#0f172a; font-size:0.95rem;'>🏢 {item_d['Action']}</td>"
+                    f"<td style='padding:12px 10px; color:#334155; font-weight:600; font-size:0.9rem;'>📅 {item_d['Date Ex-Dividende']}</td>"
+                    f"<td style='padding:12px 10px;'>"
+                    f"<span style='background:{bg_b}; color:{col_b}; border:1px solid {brd_b}; padding:4px 10px; border-radius:999px; font-weight:700; font-size:0.8rem;'>⏳ {item_d['Échéance']}</span>"
+                    f"</td>"
+                    f"<td style='padding:12px 10px; color:#475569; font-weight:600; font-size:0.9rem;'>{item_d['Coupon unitaire']} / action</td>"
+                    f"<td style='padding:12px 10px; text-align:right;'>"
+                    f"<span style='background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; padding:5px 12px; border-radius:8px; font-weight:800; font-size:0.92rem;'>+{item_d['Total estimé']}</span>"
+                    f"</td>"
+                    f"</tr>"
+                )
+
+            nb_det = len(lignes_detachement_90j)
+            html_carte_detachement = (
+                f"<div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:18px 22px; box-shadow:0 4px 12px rgba(15,23,42,0.04); margin-bottom:20px;'>"
+                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;'>"
+                f"<div style='font-size:0.8rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;'>📌 PROCHAINS DÉTACHEMENTS DE DIVIDENDES (HORIZON 90 JOURS)</div>"
+                f"<div style='background:#e0f2fe; color:#0284c7; padding:4px 12px; border-radius:999px; font-size:0.78rem; font-weight:700;'>{nb_det} détachement{'s' if nb_det > 1 else ''} à venir</div>"
+                f"</div>"
+                f"<table style='width:100%; border-collapse:collapse; text-align:left;'>"
+                f"<thead><tr style='border-bottom:2px solid #f1f5f9; color:#94a3b8; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em;'>"
+                f"<th style='padding:8px 10px;'>Action</th>"
+                f"<th style='padding:8px 10px;'>Date Ex-Dividende</th>"
+                f"<th style='padding:8px 10px;'>Échéance</th>"
+                f"<th style='padding:8px 10px;'>Coupon Unitaire</th>"
+                f"<th style='padding:8px 10px; text-align:right;'>Montant Estimé</th>"
+                f"</tr></thead>"
+                f"<tbody>{lignes_html_90j}</tbody>"
+                f"</table>"
+                f"<div style='margin-top:10px; font-size:0.78rem; color:#94a3b8;'>💡 <i>L'action doit être détenue en portefeuille au plus tard la veille de la date Ex-Dividende pour percevoir le coupon.</i></div>"
+                f"</div>"
+            )
+            st.markdown(html_carte_detachement, unsafe_allow_html=True)
         mois_ordre = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
         noms_mois_complets = {
             "Jan": "Janvier", "Fév": "Février", "Mar": "Mars", "Avr": "Avril",
