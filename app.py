@@ -3142,10 +3142,10 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             pass
 
         priorite_modeles = [
+            "gemini-3.0-flash",
+            "gemini-3.0-pro",
             "gemini-2.5-flash",
             "gemini-2.5-pro",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
         ]
         modeles_propres = [
             m for m in modeles_candidats
