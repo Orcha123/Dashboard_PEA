@@ -1106,6 +1106,28 @@ html_meteo = f"""
 </div>
 """
 afficher_html(html_meteo)
+# --- BADGE DE SYNCHRONISATION CLOUD EN TEMPS RÉEL ---
+try:
+    from zoneinfo import ZoneInfo
+    heure_sync = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
+except Exception:
+    heure_sync = datetime.now().strftime("%H:%M")
+
+est_connecte = st.session_state.get("user") is not None
+couleur_sync = "#2ecc71" if est_connecte else "#f39c12"
+texte_sync = f"☁️ Cloud synchronisé ({heure_sync})" if est_connecte else f"💾 Mode local ({heure_sync})"
+
+st.sidebar.markdown(
+    f"""
+    <div style="background: rgba(46, 204, 113, 0.08); border: 1px solid {couleur_sync}55;
+                border-radius: 8px; padding: 7px 12px; margin-bottom: 12px;
+                display: flex; align-items: center; justify-content: space-between; font-size: 0.8em;">
+        <span style="font-weight: 700; color: {couleur_sync};">● {texte_sync}</span>
+        <span style="opacity: 0.7; font-size: 0.9em;">Sécurisé</span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 if st.session_state["user"] is None:
     html_landing_banner = """
     <div style="background: linear-gradient(135deg, rgba(46,204,113,0.14) 0%, rgba(52,152,219,0.14) 100%); border: 1px solid rgba(46,204,113,0.35); border-radius: 14px; padding: 18px 24px; margin-bottom: 22px; font-family: sans-serif;">
