@@ -1419,7 +1419,19 @@ with onglet_radar:
                     else:
                         st.info(msg_mail)
 
-    st.subheader("📊 Tableau 1 : Timing, Momentum & Score Algorithmique (EUR & US)")
+    # --- TITRE DU TABLEAU 1 À GAUCHE + BOUTON ACTUALISER À DROITE ---
+        col_titre_t1, col_btn_t1 = st.columns([4.5, 1.2])
+        with col_titre_t1:
+            st.markdown(
+                "<h3 style='margin: 10px 0 4px 0; padding: 0;'>📊 Tableau 1 : Timing, Momentum & Score Algorithmique (EUR & US)</h3>",
+                unsafe_allow_html=True
+            )
+        with col_btn_t1:
+            if st.button("🔄 Actualiser les cours", use_container_width=True, key="btn_actu_radar_t1"):
+                st.cache_data.clear()
+                if "prix_temps_reel" in st.session_state:
+                    st.session_state["prix_temps_reel"] = {}
+                st.rerun()
     html_t1 = """
     <table class="r-table">
     <thead>
