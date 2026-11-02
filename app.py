@@ -262,10 +262,9 @@ if "est_abonne_pro" not in st.session_state:
 if "reponse_ia_coach" not in st.session_state:
     st.session_state["reponse_ia_coach"] = ""
 if "historique_chat_ia" not in st.session_state:
+    st.session_state["historique_chat_ia"] = []
 if "historique_ventes" not in st.session_state:
     st.session_state["historique_ventes"] = []
-    st.session_state["historique_chat_ia"] = []
-
 date_jour_str = datetime.now().strftime("%Y-%m-%d")
 if st.session_state.get("quota_ia_date") != date_jour_str:
     st.session_state["quota_ia_date"] = date_jour_str
