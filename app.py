@@ -301,14 +301,15 @@ def sauvegarder_dans_cloud():
             st.session_state["est_abonne_pro"] = est_pro_val
 
             payload = {
-                "user_id": user_id_str,
-                "email": email_str,
-                "budget_dca": float(st.session_state["budget_dca"]),
-                "watchlist": dict(watchlist_actuelle),
-                "portefeuille": dict(st.session_state["portefeuille"]),
-                "est_abonne_pro": est_pro_val,
-                "updated_at": datetime.utcnow().isoformat()
-            }
+    "user_id": user_id_str,
+    "email": email_str,
+    "budget_dca": float(st.session_state["budget_dca"]),
+    "watchlist": dict(watchlist_actuelle),
+    "portefeuille": dict(st.session_state["portefeuille"]),
+    "historique_ventes": list(st.session_state.get("historique_ventes", [])),
+    "est_abonne_pro": est_pro_val,
+    "updated_at": datetime.utcnow().isoformat()
+}
             supabase.table("user_data").upsert(payload).execute()
 
             dict_prix = st.session_state.get("prix_temps_reel", {})
