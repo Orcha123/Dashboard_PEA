@@ -1419,7 +1419,17 @@ with onglet_radar:
                     else:
                         st.info(msg_mail)
 
-    st.subheader("📊 Tableau 1 : Timing, Momentum & Score Algorithmique (EUR & US)")
+    # --- TITRE DU RADAR + BOUTON ACTUALISER INTÉGRÉ SUR LA MÊME LIGNE ---
+        col_titre_rad, col_btn_rad = st.columns([3, 1])
+        with col_titre_rad:
+            st.subheader("1. Radar, DCA & Alertes")
+        with col_btn_rad:
+            st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
+            if st.button("🔄 Actualiser les cours", use_container_width=True, key="btn_actu_radar_inline"):
+                # On vide le cache des prix pour forcer le rechargement immédiat
+                if "prix_temps_reel" in st.session_state:
+                    st.session_state["prix_temps_reel"] = {}
+                st.rerun()
     html_t1 = """
     <table class="r-table">
     <thead>
