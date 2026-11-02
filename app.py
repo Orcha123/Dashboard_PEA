@@ -1337,12 +1337,14 @@ montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item
 # ==============================================================================
 # NAVIGATION PAR ONGLETS
 # ==============================================================================
-onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia = st.tabs([
+onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia, onglet_ventes = st.tabs([
     "🔍 1. Radar, DCA & Alertes",
     "💼 2. Portefeuille & Trajectoire Boursière",
     "📅 3. Calendrier 12 Mois & Boule de Neige",
     "🤖 4. Coach & Audit IA 2.0 (Gemini)",
+    "💰 5. Arbitrages & Plus-Values Actées",
 ])
+
 
 # ------------------------------------------------------------------------------
 # ONGLET 1 : RADAR ALGORITHMIQUE, ALLOCATION DCA (MAX 2 LIGNES) & ALERTES EMAIL
