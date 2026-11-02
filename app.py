@@ -1419,14 +1419,12 @@ with onglet_radar:
                     else:
                         st.info(msg_mail)
 
-    # --- TITRE DU RADAR + BOUTON ACTUALISER INTÉGRÉ SUR LA MÊME LIGNE ---
-        col_titre_rad, col_btn_rad = st.columns([3, 1])
+    # --- TITRE DU RADAR COLLÉ À GAUCHE + BOUTON ACTUALISER À DROITE ---
+        col_titre_rad, col_btn_rad = st.columns([4, 1])
         with col_titre_rad:
-            st.subheader("1. Radar, DCA & Alertes")
+            st.markdown("<h3 style='margin: 0; padding-top: 5px;'>1. Radar, DCA & Alertes</h3>", unsafe_allow_html=True)
         with col_btn_rad:
-            st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
-            if st.button("🔄 Actualiser les cours", use_container_width=True, key="btn_actu_radar_inline"):
-                # On vide le cache des prix pour forcer le rechargement immédiat
+            if st.button("🔄 Actualiser", use_container_width=True, key="btn_actu_radar_inline"):
                 if "prix_temps_reel" in st.session_state:
                     st.session_state["prix_temps_reel"] = {}
                 st.rerun()
