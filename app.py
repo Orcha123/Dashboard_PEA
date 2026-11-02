@@ -2319,7 +2319,72 @@ with onglet_portefeuille:
                 </div>
                 """
                 afficher_html(html_bilan_traj)
+# --- MINI-SIMULATEUR D'IMPACT PRU & RENFORCEMENT DCA (STYLE ARGON) ---
+        st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
+        actions_Simu_pru = [
+            k for k, v in portefeuille_utilisateur.items()
+            if k != "Espèces" and float(v.get("qte", 0)) > 0
+        ]
+        if actions_Simu_pru:
+            st.markdown("#### 🧮 Simulateur Express d'Impact PRU & DCA")
+            col_sim1, col_sim2 = st.columns([2, 1])
+            with col_sim1:
+                act_choisie = st.selectbox(
+                    "Action du portefeuille à renforcer :",
+                    actions_Simu_pru,
+                    key="simu_pru_action"
+                )
+            with col_sim2:
+                budget_simu = st.number_input(
+                    "Montant DCA à investir (€) :",
+                    min_value=50.0,
+                    max_value=50000.0,
+                    value=450.0,
+                    step=50.0,
+                    key="simu_pru_budget"
+                )
 
+            pos_act = portefeuille_utilisateur.get(act_choisie, {})
+            qte_act = float(pos_act.get("qte", 0.0))
+            pru_act = float(pos_act.get("pru", pos_act.get("prix_achat", 0.0)))
+            info_w = st.session_state.get("watchlist", WATCHLIST_DEFAUT).get(act_choisie, WATCHLIST_DEFAUT.get(act_choisie, {}))
+            dev_sim = "$" if info_w.get("devise") == "USD" else "€"
+            div_unit = float(info_w.get("div_eur", 0.0))
+            cours_live = float(st.session_state.get("prix_temps_reel", {}).get(act_choisie, pru_act))
+
+            if cours_live > 0 and qte_act > 0:
+                nb_ach = int(budget_simu // cours_live)
+                mode_1_titre = False
+                if nb_ach == 0:
+                    nb_ach = 1
+                    mode_1_titre = True
+                cout_ordre = nb_ach * cours_live
+                nouv_qte = qte_act + nb_ach
+                nouv_pru = ((qte_act * pru_act) + cout_ordre) / nouv_qte
+                ecart_pru = nouv_pru - pru_act
+                ecart_pru_pct = (ecart_pru / pru_act * 100) if pru_act > 0 else 0.0
+                gain_div_an = nb_ach * div_unit
+
+                if ecart_pru <= 0:
+                    bg_p, col_p, brd_p = "#ecfdf5", "#059669", "#a7f3d0"
+                    txt_badge = f"📉 PRU abaissé de {ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
+                else:
+                    bg_p, col_p, brd_p = "#eff6ff", "#2563eb", "#bfdbfe"
+                    txt_badge = f"📈 PRU moyenné à +{ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
+
+                note_1t = f" (Budget ajusté à 1 action = {cout_ordre:.2f} {dev_sim})" if mode_1_titre else f" (Investi : {cout_ordre:.2f} {dev_sim})"
+                html_simu_pru = (
+                    f"<div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:16px 20px; box-shadow:0 4px 12px rgba(15,23,42,0.04); margin-bottom:16px;'>"
+                    f"<div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;'>"
+                    f"<div><span style='font-size:0.78rem; color:#64748b; font-weight:700; text-transform:uppercase;'>Ordre simulé au cours actuel ({cours_live:.2f} {dev_sim})</span>"
+                    f"<div style='font-size:1.05rem; font-weight:800; color:#0f172a; margin-top:2px;'>+{nb_ach} action{'s' if nb_ach > 1 else ''} {act_choisie} <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{note_1t}</span></div></div>"
+                    f"<div><span style='font-size:0.78rem; color:#64748b; font-weight:700; text-transform:uppercase;'>Trajectoire du PRU</span>"
+                    f"<div style='font-size:1.05rem; font-weight:800; color:#0f172a; margin-top:2px;'>{pru_act:.2f} {dev_sim} ➡️ <span style='color:{col_p};'>{nouv_pru:.2f} {dev_sim}</span></div></div>"
+                    f"<div><span style='background:{bg_p}; color:{col_p}; border:1px solid {brd_p}; padding:6px 12px; border-radius:999px; font-weight:700; font-size:0.82rem;'>{txt_badge}</span></div>"
+                    f"<div><span style='background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; padding:6px 12px; border-radius:8px; font-weight:800; font-size:0.88rem;'>+{gain_div_an:.2f} {dev_sim} / an de dividendes</span></div>"
+                    f"</div></div>"
+                )
+                st.markdown(html_simu_pru, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
 # ONGLET 3 : JAUGE D'OBJECTIF DE RENTE, CALENDRIER 12 MOIS & BOULE DE NEIGE
@@ -2987,6 +3052,16 @@ with onglet_ia:
             afficher_html(html_mat)
 
     def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
+    if question_utilisateur:
+            for sans_acc, avec_acc in [
+                ("opportunite", "opportunité"), ("strategie", "stratégie"),
+                ("securite", "sécurité"), ("equilibre", "équilibre"),
+                ("repartition", "répartition"), ("sante", "santé"),
+                ("impot", "impôt"), ("fiscalite", "fiscalité"),
+                (" general", " général"), (" etre ", " être "),
+                ("achat", "achat"), ("renforcer", "renforcer"),
+            ]:
+                question_utilisateur = question_utilisateur.replace(sans_acc, avec_acc).replace(sans_acc.capitalize(), avec_acc.capitalize())
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
         rente_mens_nette = dividendes_nets_totaux_eur / 12.0
