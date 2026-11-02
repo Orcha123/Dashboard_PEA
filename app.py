@@ -3465,4 +3465,184 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
- 
+# ------------------------------------------------------------------------------
+# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (RÉALISÉES)
+# ------------------------------------------------------------------------------
+with onglet_ventes:
+    st.subheader("💰 Journal des Arbitrages & Plus-Values Actées (Réalisées)")
+    st.caption("Enregistrez vos ventes d'actions pour suivre les plus-values réellement extraites du marché, mois par mois.")
+
+    # --- FORMULAIRE DE SAISIE D'UNE VENTE ---
+    actions_vendables = [
+        k for k, v in portefeuille_utilisateur.items()
+        if k != "Espèces" and float(v.get("qte", 0)) > 0
+    ]
+
+    with st.expander("➕ Enregistrer une nouvelle vente ou un arbitrage", expanded=True):
+        if not actions_vendables:
+            st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
+        else:
+            with st.form("form_saisie_vente"):
+                col_v1, col_v2, col_v3 = st.columns(3)
+                with col_v1:
+                    action_vendue = st.selectbox("Action concernée :", actions_vendables)
+               
+                pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
+                qte_detenue = int(pos_actuelle_v.get("qte", 1))
+                pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
+                info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
+                dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
+                cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
+
+                with col_v2:
+                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(5, qte_detenue), step=1)
+                with col_v3:
+                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=round(cours_actuel_v, 2), step=0.5)
+
+                col_v4, col_v5 = st.columns(2)
+                with col_v4:
+                    date_vente = st.date_input("Date de la transaction :", value=datetime.now())
+                with col_v5:
+                    crediter_especes = st.checkbox("Créditer automatiquement le produit de la vente dans ma poche Espèces (€)", value=True)
+
+                if st.form_submit_button("🚀 Valider & Enregistrer cette Vente", type="primary"):
+                    facteur_v = (1.0 / TAUX_USD_EUR) if dev_v == "USD" else 1.0
+                   
+                    # Calculs financiers en Euros
+                    montant_vente_eur = qte_a_vendre * prix_vente_saisi * facteur_v
+                    cout_initial_eur = qte_a_vendre * pru_actuel * facteur_v
+                     plus_value_eur = montant_vente_eur - cout_initial_eur
+                    perf_vente_pct = (plus_value_eur / cout_initial_eur * 100.0) if cout_initial_eur > 0 else 0.0
+
+                    # Enregistrement dans l'historique des ventes
+                    nouvelle_vente = {
+                        "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+                        "date": date_vente.strftime("%Y-%m-%d"),
+                        "mois_annee": date_vente.strftime("%Y-%m"),
+                        "action": action_vendue,
+                        "qte": int(qte_a_vendre),
+                        "pru": float(pru_actuel),
+                        "prix_vente": float(prix_vente_saisi),
+                        "devise": dev_v,
+                        "montant_eur": round(montant_vente_eur, 2),
+                        "plus_value_eur": round(plus_value_eur, 2),
+                        "perf_pct": round(perf_vente_pct, 2),
+                    }
+                    st.session_state["historique_ventes"].insert(0, nouvelle_vente)
+
+                    # Mise à jour du portefeuille (soustraction de la quantité vendue)
+                    nouvelle_qte = qte_detenue - qte_a_vendre
+                    if nouvelle_qte <= 0:
+                        if action_vendue in st.session_state["portefeuille"]:
+                            del st.session_state["portefeuille"][action_vendue]
+                    else:
+                        st.session_state["portefeuille"][action_vendue]["qte"] = nouvelle_qte
+
+                    # Optionnel : Créditer les espèces
+                    if crediter_especes:
+                        actuel_esp = float(st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0))
+                        nouveau_esp = actuel_esp + montant_vente_eur
+                        if "Espèces" not in st.session_state["portefeuille"]:
+                            st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": round(nouveau_esp, 2)}
+                        else:
+                            st.session_state["portefeuille"]["Espèces"]["pru"] = round(nouveau_esp, 2)
+                        st.session_state["pru_Espèces"] = round(nouveau_esp, 2)
+
+                    sauvegarder_dans_cloud()
+                    st.success(f"✅ Vente de {qte_a_vendre} {action_vendue} enregistrée avec succès ! Plus-value actée : {plus_value_eur:+,.2f} €")
+                    st.rerun()
+
+    # --- CALCULS & KPI DES VENTES RÉALISÉES ---
+    historique_v = st.session_state.get("historique_ventes", [])
+   
+    if not historique_v:
+        st.info("💡 Aucune vente enregistrée pour le moment. Utilisez le formulaire ci-dessus dès que vous réalisez un arbitrage.")
+    else:
+        total_pv_actee = sum(v["plus_value_eur"] for v in historique_v)
+        total_montant_vendu = sum(v["montant_eur"] for v in historique_v)
+        total_cout_initial = total_montant_vendu - total_pv_actee
+        perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
+       
+        nb_gagnantes = sum(1 for v in historique_v if v["plus_value_eur"] >= 0)
+        win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
+
+        c_pv_act = "#2ecc71" if total_pv_actee >= 0 else "#e74c3c"
+
+        html_kpi_ventes = f"""
+        <div class="argon-grid">
+            <div class="argon-card">
+                <div class="argon-title">💰 Total Plus-Values Actées</div>
+                <div class="argon-val" style="color:{c_pv_act};">{total_pv_actee:+,.2f} €</div>
+                <div class="argon-sub">Gains réels sécurisés en cash</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">📈 Performance Réelle Extraite</div>
+                <div class="argon-val" style="color:{c_pv_act};">{perf_globale_actee_pct:+.2f}%</div>
+                <div class="argon-sub">Sur un volume vendu de {total_montant_vendu:,.0f} €</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">🎯 Taux de Réussite (Win Rate)</div>
+                <div class="argon-val" style="color:#3498db;">{win_rate:.0f}%</div>
+                <div class="argon-sub">{nb_gagnantes} / {len(historique_v)} vente(s) en positif</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">📊 Nombre d'Arbitrages</div>
+                <div class="argon-val" style="color:#9b59b6;">{len(historique_v)}</div>
+                <div class="argon-sub">Transactions clôturées</div>
+            </div>
+        </div>
+        """
+        afficher_html(html_kpi_ventes)
+
+        # --- TABLEAU MENSUEL DES PLUS-VALUES ACTÉES ---
+        st.markdown("#### 📅 Bilan Mensuel des Plus-Values Réalisées")
+       
+        # Agrégation mois par mois
+        agregation_mois = {}
+        for v in historique_v:
+            m_key = v["mois_annee"]  # Format "YYYY-MM"
+            if m_key not in agregation_mois:
+                agregation_mois[m_key] = {"nb_ventes": 0, "montant_total": 0.0, "cout_total": 0.0, "pv_totale": 0.0}
+            agregation_mois[m_key]["nb_ventes"] += 1
+            agregation_mois[m_key]["montant_total"] += v["montant_eur"]
+            agregation_mois[m_key]["cout_total"] += (v["montant_eur"] - v["plus_value_eur"])
+            agregation_mois[m_key]["pv_totale"] += v["plus_value_eur"]
+
+        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Arbitrages</th><th>Volume Vendu (€)</th><th>Capital Initial (€)</th><th>Plus-Value Actée (€)</th><th>Performance (%)</th></tr></thead><tbody>"
+       
+        for m_k in sorted(agregation_mois.keys(), reverse=True):
+            d_m = agregation_mois[m_k]
+            p_m_pct = (d_m["pv_totale"] / d_m["cout_total"] * 100.0) if d_m["cout_total"] > 0 else 0.0
+            b_m = "b-green" if d_m["pv_totale"] >= 0 else "b-red"
+            c_m_col = "#2ecc71" if d_m["pv_totale"] >= 0 else "#e74c3c"
+
+            html_t_mois += f"""
+            <tr>
+                <td class='r-name'>📅 {m_k}</td>
+                <td><b>{d_m['nb_ventes']}</b> vente(s)</td>
+                <td>{d_m['montant_total']:,.2f} €</td>
+                <td>{d_m['cout_total']:,.2f} €</td>
+                <td><span class='{b_m}'>{d_m['pv_totale']:+,.2f} €</span></td>
+                <td style='color:{c_m_col}; font-weight:800;'>{p_m_pct:+.2f}%</td>
+            </tr>
+            """
+        html_t_mois += "</tbody></table>"
+        afficher_html(html_t_mois)
+
+        # --- HISTORIQUE DÉTAILLÉ & SUPPRESSION ---
+        with st.expander("📋 Historique détaillé de chaque vente & Suppression", expanded=False):
+            for idx_h, item_h in enumerate(historique_v):
+                col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
+                with col_h1:
+                    st.markdown(f"**{item_h['action']}** — {item_h['qte']} act. vendues à {item_h['prix_vente']} {item_h['devise']} (PRU : {item_h['pru']})")
+                    st.caption(f"Date : {item_h['date']} | Montant : {item_h['montant_eur']:,.2f} €")
+                with col_h2:
+                    col_pv_s = "#2ecc71" if item_h['plus_value_eur'] >= 0 else "#e74c3c"
+                    st.markdown(f"Plus-value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.1f}%)</span>", unsafe_allow_html=True)
+                with col_h3:
+                    if st.button("🗑️ Supprimer", key=f"suppr_vente_{item_h['id']}"):
+                        st.session_state["historique_ventes"].pop(idx_h)
+                        sauvegarder_dans_cloud()
+                        st.rerun()
+                st.markdown("---")
+
