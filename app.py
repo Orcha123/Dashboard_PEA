@@ -3168,23 +3168,20 @@ with onglet_ia:
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
-        else:
-            q_low = question_utilisateur.lower()
-            focus_actions = []
-            for d in donnees_t1:
-                nom_b = d["NomBrut"]
-                if nom_b.lower() in q_low:
-                    info_w = WATCHLIST_DEFAUT.get(nom_b, {})
-                    pos_pf = portefeuille_utilisateur.get(nom_b)
-                    txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
-                    focus_actions.append(
-                        f"* **{d['Actif']}** : Cours actuel **{d['Prix']}** | Prix Cible : **{d['Prix Cible']}** ({d['Écart Cible (%)']}) | "
-                        f"RSI : **{d['RSI']}** | Stochastique : **{d['Stoch']}%** | Signal EMA 2/12 : **{d['EMA 2/12']}** | "
-                        f"Rendement : **{(info_w.get('div_eur',0)/ max(0.01, prix_temps_reel.get(nom_b, 1))*100):.2f}%** | "
-                        f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
-                    )
-
-            q_low = question_utilisateur.strip().lower()
+         q_low = question_utilisateur.strip().lower()
+        focus_actions = []
+        for d in donnees_t1:
+            nom_b = d["NomBrut"]
+            if nom_b.lower() in q_low:
+                info_w = WATCHLIST_DEFAUT.get(nom_b, {})
+                pos_pf = portefeuille_utilisateur.get(nom_b)
+                txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
+                focus_actions.append(
+                    f"* **{d['Actif']}** : Cours actuel **{d['Prix']}** | Prix Cible : **{d['Prix Cible']}** ({d['Écart Cible (%)']}) | "
+                    f"RSI : **{d['RSI']}** | Stochastique : **{d['Stoch']}%** | Signal EMA 2/12 : **{d['EMA 2/12']}** | "
+                    f"Rendement : **{(info_w.get('div_eur',0)/ max(0.01, prix_temps_reel.get(nom_b, 1))*100):.2f}%** | "
+                    f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
+                )
 
         # CAS 1 : L'utilisateur a mentionné une ou plusieurs actions précises
         if focus_actions:
@@ -3197,8 +3194,8 @@ with onglet_ia:
 {bloc_focus}
 
 #### 2. Stratégie adaptée à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
-* **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
-* **Timing d'exécution :** Si le RSI dépasse 65, patientez sur un repli technique avant de passer votre ordre.
+- **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
+- **Timing d'exécution :** Si le RSI dépasse 65, patientez sur un repli technique avant de passer votre ordre.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
@@ -3221,7 +3218,7 @@ with onglet_ia:
 {txt_pru}
 
 #### 2. Règle d'or pour moyenner à la baisse
-* Ne renforcez une ligne sous son PRU que si son **RSI est inférieur à 50** et que le **Signal EMA 2/12** montre des signes de stabilisation, afin d'abaisser votre prix de revient sans surpondérer une chute libre.
+- Ne renforcez une ligne sous son PRU que si son **RSI est inférieur à 50** et que le **Signal EMA 2/12** montre des signes de stabilisation, afin d'abaisser votre prix de revient sans surpondérer une chute libre.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
@@ -3232,8 +3229,8 @@ with onglet_ia:
 **Votre question :** *« {question_utilisateur} »*
 
 #### 1. Optimisation de votre Rente sur un portefeuille de {valeur_totale_portefeuille:,.0f} €
-* **Sécurité du dividende :** Ciblez en priorité les valeurs de votre radar affichant un **rendement supérieur à 4%** combiné à un **Payout Ratio inférieur à 65%** pour garantir la pérennité des versements.
-* **Effet boule de neige :** Réinvestissez vos dividendes perçus en priorité sur vos lignes en décote (sous leur Prix Cible ou sous votre PRU) pour accélérer la croissance de votre rente mensuelle.
+- **Sécurité du dividende :** Ciblez en priorité les valeurs de votre radar affichant un **rendement supérieur à 4%** combiné à un **Payout Ratio inférieur à 65%** pour garantir la pérennité des versements.
+- **Effet boule de neige :** Réinvestissez vos dividendes perçus en priorité sur vos lignes en décote (sous leur Prix Cible ou sous votre PRU) pour accélérer la croissance de votre rente mensuelle.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
@@ -3248,21 +3245,39 @@ with onglet_ia:
 {bloc_defaut}
 
 #### 2. Recommandation Stratégique ({valeur_totale_portefeuille:,.0f} €)
-* **Discipline DCA :** Allouez votre enveloppe mensuelle en priorité sur les valeurs du Podium affichant un **Score ≥ 65/100** et situées sous votre **PRU** ou votre **Prix Cible**.
+- **Discipline DCA :** Allouez votre enveloppe mensuelle en priorité sur les valeurs du Podium affichant un **Score ≥ 65/100** et situées sous votre **PRU** ou votre **Prix Cible**.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
-        # CAS 5 : Saisie non reconnue (ex: "jjss")
+        # CAS 5 : Saisie non reconnue
         else:
             return f"""### 🧠 Coach IA 2.0 — Précisez votre question
 
 Je n'ai détecté aucun nom d'action ni thème financier précis dans votre saisie : **« {question_utilisateur} »**.
 
 💡 **Exemples de questions que vous pouvez me poser :**
-* 📊 **Sur une ou plusieurs actions :** *« Que faire sur BNP Paribas et Air Liquide ? »*
-* 📉 **Sur vos prix de revient :** *« Quelles actions renforcer pour baisser mon PRU ? »*
-* 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
-* 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
+- 📊 **Sur une ou plusieurs actions :** *« Que faire sur BNP Paribas et Air Liquide ? »*
+- 📉 **Sur vos prix de revient :** *« Quelles actions renforcer pour baisser mon PRU ? »*
+- 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
+- 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
+
+    @st.cache_data(ttl=3600)
+    def lister_modeles_gemini_actifs(cle_api):
+        modeles = []
+        try:
+            url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(cle_api)}"
+            req_list = urllib.request.Request(url_list, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req_list, timeout=8) as resp_l:
+                data_l = json.loads(resp_l.read().decode("utf-8"))
+                for m_info in data_l.get("models", []):
+                    methodes = m_info.get("supportedGenerationMethods", [])
+                    nom_m = m_info.get("name", "").replace("models/", "")
+                    if "generateContent" in methodes and "gemini" in nom_m:
+                        modeles.append(nom_m)
+        except Exception:
+            pass
+        return modeles
+
     def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
         if hasattr(st, "secrets"):
@@ -3309,20 +3324,7 @@ Mission demandée par l'utilisateur : {question_utilisateur}
 
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
-        modeles_candidats = []
-        try:
-            url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={cle_gemini}"
-            req_list = urllib.request.Request(url_list, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req_list, timeout=8) as resp_l:
-                data_l = json.loads(resp_l.read().decode("utf-8"))
-                for m_info in data_l.get("models", []):
-                    methodes = m_info.get("supportedGenerationMethods", [])
-                    nom_m = m_info.get("name", "").replace("models/", "")
-                    if "generateContent" in methodes and "gemini" in nom_m:
-                        modeles_candidats.append(nom_m)
-        except Exception:
-            pass
-
+        modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
         priorite_modeles = [
             "gemini-3-flash-preview",
             "gemini-3.0-flash-preview",
