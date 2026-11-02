@@ -2343,7 +2343,7 @@ with onglet_portefeuille:
                     "Montant DCA à investir (€) :",
                     min_value=50.0,
                     max_value=50000.0,
-                    value=450.0,
+                    value=float(BUDGET_MENSUEL),
                     step=50.0,
                     key="simu_pru_budget"
                 )
@@ -2357,7 +2357,8 @@ with onglet_portefeuille:
             cours_live = float(st.session_state.get("prix_temps_reel", {}).get(act_choisie, pru_act))
 
             if cours_live > 0 and qte_act > 0:
-                nb_ach = int(budget_simu // cours_live)
+                budget_devise = (budget_simu * TAUX_USD_EUR) if dev_sim == "$" else budget_simu
+                nb_ach = int(budget_devise // cours_live)
                 mode_1_titre = False
                 if nb_ach == 0:
                     nb_ach = 1
