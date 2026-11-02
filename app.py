@@ -1020,14 +1020,6 @@ cac_pts, cac_var = recuperer_indice_meteo("^FCHI")
 sp_pts, sp_var = recuperer_indice_meteo("^GSPC")
 vix_pts, vix_var = recuperer_indice_meteo("^VIX")
 
-cac_str = f"{cac_pts:,.0f} pts ({cac_var:+.2f}%)" if cac_pts else "En attente"
-sp_str = f"{sp_pts:,.0f} pts ({sp_var:+.2f}%)" if sp_pts else "En attente"
-vix_val = vix_pts if vix_pts else 18.0
-etat_vix = "🟢 Marché Calme" if vix_val < 16 else ("🔥 Peur / Opportunités DCA" if vix_val >= 24 else "🟡 Volatilité Normale")
-c_cac = "#2ecc71" if cac_var >= 0 else "#e74c3c"
-c_sp = "#2ecc71" if sp_var >= 0 else "#e74c3c"
-c_vix = "#2ecc71" if vix_val < 16 else ("#e74c3c" if vix_val >= 24 else "#f39c12")
-
 # --- CALCUL DU SIGNAL EMA 2/12 POUR LES INDICES MÉTÉO ---
 @st.cache_data(ttl=1800)
 def calculer_ema_meteo_indice(symbole):
@@ -1039,7 +1031,7 @@ def calculer_ema_meteo_indice(symbole):
             closes = [float(c) for c in data["chart"]["result"][0]["indicators"]["quote"][0]["close"] if c is not None]
         if len(closes) < 15:
             return "⚪ Neutre", "#95a5a6"
-       
+
         def calc_ema(vals, periode):
             k = 2.0 / (periode + 1.0)
             ema = [vals[0]]
@@ -1065,7 +1057,7 @@ statut_ema_cac, col_ema_cac = calculer_ema_meteo_indice("^FCHI")
 statut_ema_sp, col_ema_sp = calculer_ema_meteo_indice("^GSPC")
 
 cac_str = f"{cac_pts:,.0f} pts ({cac_var:+.2f}%)" if cac_pts else "En attente"
-sp_str = f"{sp_pts:,.0f} pts ({sp_var:+.2f}%)" if sp_str else "En attente"
+sp_str = f"{sp_pts:,.0f} pts ({sp_var:+.2f}%)" if sp_pts else "En attente"
 vix_val = vix_pts if vix_pts else 18.0
 etat_vix = "🟢 Marché Calme" if vix_val < 16 else ("🔥 Peur / Opportunités DCA" if vix_val >= 24 else "🟡 Volatilité Normale")
 c_cac = "#2ecc71" if cac_var >= 0 else "#e74c3c"
