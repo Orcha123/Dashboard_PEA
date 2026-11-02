@@ -3168,7 +3168,7 @@ with onglet_ia:
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
-         q_low = question_utilisateur.strip().lower()
+        q_low = question_utilisateur.strip().lower()
         focus_actions = []
         for d in donnees_t1:
             nom_b = d["NomBrut"]
