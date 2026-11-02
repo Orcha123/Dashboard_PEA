@@ -650,7 +650,22 @@ for nom_e, (sym_e, dev_e, sec_e, cib_e, div_e, pay_e, cr_e, mois_e) in ENRICHISS
         }
 
 WATCHLIST_DEFAUT.update(st.session_state["watchlist"])
-
+@st.cache_data(ttl=3600)
+def recuperer_donnees(symbole):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=3y&interval=1d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as response:
+            data = json.loads(response.read().decode())
+            result = data["chart"]["result"][0]
+            prix_actuel = float(result["meta"]["regularMarketPrice"])
+            quote = result["indicators"]["quote"][0]
+            closes = [float(p) for p in quote.get("close", []) if p is not None]
+            hauts = [float(h) for h in quote.get("high", []) if h is not None]
+            bas = [float(l) for l in quote.get("low", []) if l is not None]
+            return prix_actuel, closes, hauts, bas
+    except Exception:
+        return None, None, None, None
 @st.cache_data(ttl=1800)
 def rechercher_actions_yahoo_live(requete):
     """Recherche n'importe quelle action sur Yahoo Finance par nom ou ticker."""
@@ -995,22 +1010,6 @@ def calculer_regression_lineaire(clotures):
     ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100.0
     return val_reg, ecart_pct, droite_regression, std_res
 
-@st.cache_data(ttl=3600)
-def recuperer_donnees(symbole):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbole}?range=3y&interval=1d"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=6) as response:
-            data = json.loads(response.read().decode())
-            result = data["chart"]["result"][0]
-            prix_actuel = float(result["meta"]["regularMarketPrice"])
-            quote = result["indicators"]["quote"][0]
-            closes = [float(p) for p in quote.get("close", []) if p is not None]
-            hauts = [float(h) for h in quote.get("high", []) if h is not None]
-            bas = [float(l) for l in quote.get("low", []) if l is not None]
-            return prix_actuel, closes, hauts, bas
-    except Exception:
-        return None, None, None, None
 
 # ==============================================================================
 # EN-TÊTE PRINCIPAL, MÉTÉO DES MARCHÉS & BANNIÈRE D'ACCUEIL
