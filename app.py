@@ -3511,7 +3511,7 @@ with onglet_ventes:
                     # Calculs financiers en Euros
                     montant_vente_eur = qte_a_vendre * prix_vente_saisi * facteur_v
                     cout_initial_eur = qte_a_vendre * pru_actuel * facteur_v
-                     plus_value_eur = montant_vente_eur - cout_initial_eur
+                    plus_value_eur = montant_vente_eur - cout_initial_eur
                     perf_vente_pct = (plus_value_eur / cout_initial_eur * 100.0) if cout_initial_eur > 0 else 0.0
 
                     # Enregistrement dans l'historique des ventes
