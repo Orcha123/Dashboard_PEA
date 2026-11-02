@@ -1419,15 +1419,7 @@ with onglet_radar:
                     else:
                         st.info(msg_mail)
 
-    # --- TITRE & BOUTON ACTUALISER SUR LA MÊME LIGNE ---
-        col_t_rad, col_b_rad = st.columns([6, 1])
-        with col_t_rad:
-            st.markdown("<h3 style='margin: 0; padding: 0;'>1. Radar, DCA & Alertes</h3>", unsafe_allow_html=True)
-        with col_b_rad:
-            if st.button("🔄 Actualiser", key="btn_actu_radar_inline"):
-                if "prix_temps_reel" in st.session_state:
-                    st.session_state["prix_temps_reel"] = {}
-                st.rerun()
+    st.subheader("📊 Tableau 1 : Timing, Momentum & Score Algorithmique (EUR & US)")
     html_t1 = """
     <table class="r-table">
     <thead>
