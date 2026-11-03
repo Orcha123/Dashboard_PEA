@@ -1897,6 +1897,30 @@ with onglet_radar:
 # ------------------------------------------------------------------------------
 # ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
 # ------------------------------------------------------------------------------
+# --- CALCUL DU PLAFOND PEA ET DU CAPITAL AUTO-FINANCÉ ---
+# On estime les versements nets initiaux à partir du capital investi total moins les plus-values actées réinjectées
+total_ventes_actees = sum(float(v.get("plus_value_eur", 0.0)) for v in st.session_state.get("historique_ventes", []))
+versements_nets_estimes = max(0.0, cout_total_achat - total_ventes_actees)
+plafond_pea = 150000.0
+pct_plafond = min(100.0, (versements_nets_estimes / plafond_pea) * 100.0)
+
+html_plafond_pea = f"""
+<div style="background: rgba(52, 152, 219, 0.06); border: 1px solid rgba(52, 152, 219, 0.25); border-radius: 12px; padding: 14px 18px; margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <span style="font-weight: 800; font-size: 0.85em; text-transform: uppercase; color: #3498db;">🏛️ Suivi du Plafond de Versements PEA (150 000 €)</span>
+        <span style="font-weight: 800; font-size: 0.85em;">{pct_plafond:.1f}% utilisé</span>
+    </div>
+    <div class="score-bg" style="height: 10px; margin-bottom: 8px;">
+        <div style="width: {pct_plafond}%; background: #3498db; height: 100%; border-radius: 5px;"></div>
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 0.82em; opacity: 0.85;">
+        <span>Versements nets estimés : <b>{versements_nets_estimes:,.0f} €</b> / 150 000 €</span>
+        <span>Capital autofinancé par le marché : <b style="color: #2ecc71;">+{(valeur_totale_portefeuille - versements_nets_estimes):,.0f} €</b></span>
+    </div>
+</div>
+"""
+afficher_html(html_plafond_pea)
+
 with onglet_portefeuille:
     st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
 
