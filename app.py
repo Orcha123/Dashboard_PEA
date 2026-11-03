@@ -2532,7 +2532,7 @@ with onglet_portefeuille:
                     div_n = float(WATCHLIST_DEFAUT.get(act_n, {}).get("div_eur", 0.0))
                     bonus_annuel_nom += q_n * div_n * 0.10
 
-                 texte_al = ""
+                    texte_al = ""
                 if "Air Liquide" in portefeuille_utilisateur and float(portefeuille_utilisateur["Air Liquide"].get("qte", 0)) > 0:
                     q_al = int(portefeuille_utilisateur["Air Liquide"]["qte"])
                     act_gratuites = q_al // 10
