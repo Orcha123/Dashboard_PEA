@@ -3136,7 +3136,7 @@ with onglet_ia:
 
         def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
             if question_utilisateur:
-            for sans_acc, avec_acc in [
+                for sans_acc, avec_acc in [
                 ("opportunite", "opportunité"), ("strategie", "stratégie"),
                 ("securite", "sécurité"), ("equilibre", "équilibre"),
                 ("repartition", "répartition"), ("sante", "santé"),
