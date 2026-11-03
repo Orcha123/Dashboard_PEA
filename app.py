@@ -3346,12 +3346,12 @@ def appeler_gemini_coach(question_utilisateur, code_audit=""):
         ]
 
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
-        hist_ventes_ia = st.session_state.get("historique_ventes", [])
-        total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
-        total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
-        total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
-        perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
-        nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
+    hist_ventes_ia = st.session_state.get("historique_ventes", [])
+    total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
+    total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
+    total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
+    perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
+    nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
 
     resume_ventes_ia = [
         f"- {v['date']} ({v['mois_annee']}) : Vente de {v['qte']} {v['action']} à {v['prix_vente']} {v['devise']} "
