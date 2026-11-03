@@ -3346,24 +3346,24 @@ def appeler_gemini_coach(question_utilisateur, code_audit=""):
         ]
 
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
-        hist_ventes_ia = st.session_state.get("historique_ventes", [])
-        total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
-        total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
-        total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
-        perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
-        nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
-    
-        resume_ventes_ia = [
-            f"- {v['date']} ({v['mois_annee']}) : Vente de {v['qte']} {v['action']} à {v['prix_vente']} {v['devise']} "
-            f"(PRU {v['pru']} {v['devise']}) -> Plus-value actée : {v['plus_value_eur']:+.2f} € ({v['perf_pct']:+.2f}%)"
-            for v in hist_ventes_ia[:15]
-        ]
-        bloc_ventes_prompt = (
-            f"Total Plus-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} ventes, {nb_ventes_gagnantes_ia} gagnantes).\n"
-            + "\n".join(resume_ventes_ia)
-            if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
-        )
-        prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
+    hist_ventes_ia = st.session_state.get("historique_ventes", [])
+    total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
+    total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
+    total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
+    perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
+    nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
+
+    resume_ventes_ia = [
+        f"- {v['date']} ({v['mois_annee']}) : Vente de {v['qte']} {v['action']} à {v['prix_vente']} {v['devise']} "
+        f"(PRU {v['pru']} {v['devise']}) -> Plus-value actée : {v['plus_value_eur']:+.2f} € ({v['perf_pct']:+.2f}%)"
+        for v in hist_ventes_ia[:15]
+    ]
+    bloc_ventes_prompt = (
+        f"Total Plus-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} ventes, {nb_ventes_gagnantes_ia} gagnantes).\n"
+        + "\n".join(resume_ventes_ia)
+        if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
+    )
+    prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
@@ -3382,22 +3382,23 @@ Mission demandée par l'utilisateur : {question_utilisateur}
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
     modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
-    priorite_modeles = [
-        "gemini-3-flash-preview",
-        "gemini-3.0-flash-preview",
-        "gemini-flash-latest",
-    ]
-    modeles_propres = sorted(
-        [
-            m for m in modeles_candidats
-            if not any(ex in m for ex in ["1.5", "2.0", "2.5-flash", "tts", "audio", "image", "vision", "embedding", "bis"])
-        ],
-        key=lambda x: (0 if "3" in x else (1 if "latest" in x else 2))
-    )
-    modeles_ordonnes = []
-    for m_prio in modeles_propres + priorite_modeles + modeles_candidats:
-        if m_prio not in modeles_ordonnes:
-            modeles_ordonnes.append(m_prio)
+        priorite_modeles = [
+            "gemini-3-flash-preview",
+            "gemini-3.0-flash-preview",
+            "gemini-flash-latest",
+        ]
+        modeles_propres = sorted(
+            [
+                m for m in modeles_candidats
+                if not any(ex in m for ex in ["1.5", "2.0", "2.5-flash", "tts", "audio", "image", "vision", "embedding", "bis"])
+            ],
+            key=lambda x: (0 if "3" in x else (1 if "latest" in x else 2))
+        )
+        modeles_ordonnes = []
+        for m_prio in modeles_propres + priorite_modeles + modeles_candidats:
+            if m_prio not in modeles_ordonnes:
+                modeles_ordonnes.append(m_prio)
+
         erreurs_ia = []
         for mod in modeles_ordonnes[:12]:
             try:
