@@ -2268,38 +2268,50 @@ with onglet_portefeuille:
             afficher_html(html_sec)
 
         with col_hist:
-            st.subheader("🚀 Trajectoire Boursière au Fil du Temps")
-            choix_horizon_courbe = st.radio(
-                "Horizon boursier :",
-                ["1 Mois", "6 Mois", "1 An", "3 Ans"],
-                index=2,
-                horizontal=True,
-                label_visibility="collapsed",
-            )
+            st.subheader("🚀 Trajectoire & Benchmark vs ETF MSCI World (CW8)")
+            col_h_rad, col_h_chk = st.columns([2.2, 1.8])
+            with col_h_rad:
+                choix_horizon_courbe = st.radio(
+                    "Horizon boursier :",
+                    ["1 Mois", "6 Mois", "1 An", "3 Ans"],
+                    index=2,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+            with col_h_chk:
+                afficher_bench_cw8 = st.checkbox("🌍 Comparer à l'ETF MSCI World (CW8)", value=True)
+
             map_jours = {"1 Mois": 22, "6 Mois": 126, "1 An": 252, "3 Ans": 750}
             nb_j_cible = map_jours[choix_horizon_courbe]
 
             longueurs_dispo = [
                 len(historiques_prix[nom_a])
                 for nom_a in portefeuille_utilisateur
-                if nom_a != "Espèces" and nom_a in historiques_prix and len(historiques_prix[nom_a]) > 1
+                if nom_a not in ("Espèces", "_historique_ventes") and nom_a in historiques_prix and len(historiques_prix[nom_a]) > 1
             ]
             nb_jours_reels = min(nb_j_cible, min(longueurs_dispo)) if longueurs_dispo else 30
             dates_bourse = pd.bdate_range(end=datetime.now(), periods=nb_jours_reels)
             pas_echantillon = 3 if nb_jours_reels > 300 else 1
 
-            val_esp_fixe = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if "Espèces" in portefeuille_utilisateur else 0.0
+            # Récupération de l'historique du Benchmark CW8.PA
+            _, closes_cw8_brut, _, _ = recuperer_donnees("CW8.PA")
+            serie_cw8 = closes_cw8_brut if closes_cw8_brut else []
+
+            val_esp_fixe = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
             donnees_courbe_reelle = []
             valeurs_quotidiennes = []
+            valeurs_cw8_rebased = []
+            val_depart_pf = None
+            cw8_depart = None
 
             for idx_j in range(0, nb_jours_reels, pas_echantillon):
                 offset_fin = idx_j - nb_jours_reels
                 val_jour_eur = val_esp_fixe
 
                 for nom_a, d_pos in portefeuille_utilisateur.items():
-                    if nom_a == "Espèces" or nom_a not in WATCHLIST_DEFAUT:
+                    if nom_a in ("Espèces", "_historique_ventes") or not isinstance(d_pos, dict) or nom_a not in WATCHLIST_DEFAUT:
                         continue
-                    q_a = float(d_pos["qte"])
+                    q_a = float(d_pos.get("qte", 0.0))
                     dev_a = WATCHLIST_DEFAUT[nom_a].get("devise", "EUR")
                     fact_a = (1.0 / TAUX_USD_EUR) if dev_a == "USD" else 1.0
                     serie_c = historiques_prix.get(nom_a, [])
@@ -2312,6 +2324,11 @@ with onglet_portefeuille:
                 if idx_j >= nb_jours_reels - pas_echantillon:
                     val_jour_eur = valeur_totale_portefeuille
 
+                if val_depart_pf is None:
+                    val_depart_pf = max(1.0, val_jour_eur)
+                    if serie_cw8:
+                        cw8_depart = serie_cw8[offset_fin] if abs(offset_fin) <= len(serie_cw8) else serie_cw8[0]
+
                 date_iso = dates_bourse[idx_j].strftime("%Y-%m-%d")
                 date_fr = dates_bourse[idx_j].strftime("%d/%m/%Y")
                 ecart_pru_jour = round(val_jour_eur - cout_total_achat, 2)
@@ -2320,7 +2337,7 @@ with onglet_portefeuille:
                 donnees_courbe_reelle.append({
                     "Date": date_iso,
                     "DateFR": date_fr,
-                    "Série": "Valorisation Boursière (€)",
+                    "Série": "Valorisation Portefeuille (€)",
                     "Montant (€)": round(val_jour_eur, 2),
                     "Écart vs PRU (€)": ecart_pru_jour,
                 })
@@ -2332,44 +2349,53 @@ with onglet_portefeuille:
                     "Écart vs PRU (€)": ecart_pru_jour,
                 })
 
+                if afficher_bench_cw8 and serie_cw8 and cw8_depart and cw8_depart > 0:
+                    p_cw8_j = serie_cw8[offset_fin] if abs(offset_fin) <= len(serie_cw8) else serie_cw8[0]
+                    val_cw8_eq = val_depart_pf * (p_cw8_j / cw8_depart)
+                    valeurs_cw8_rebased.append(val_cw8_eq)
+                    donnees_courbe_reelle.append({
+                        "Date": date_iso,
+                        "DateFR": date_fr,
+                        "Série": "Benchmark ETF MSCI World CW8 (€)",
+                        "Montant (€)": round(val_cw8_eq, 2),
+                        "Écart vs PRU (€)": round(val_cw8_eq - cout_total_achat, 2),
+                    })
+
             df_courbe_reelle = pd.DataFrame(donnees_courbe_reelle)
+            domain_series = ["Valorisation Portefeuille (€)", "Capital Investi / PRU (€)"]
+            range_colors = ["#2ecc71", "#3498db"]
+            range_dash = [[1, 0], [6, 4]]
+            range_width = [2.8, 2.0]
+            if afficher_bench_cw8 and valeurs_cw8_rebased:
+                domain_series.append("Benchmark ETF MSCI World CW8 (€)")
+                range_colors.append("#9b59b6")
+                range_dash.append([3, 3])
+                range_width.append(2.2)
 
             spec_courbe_bourse = {
                 "height": 275,
                 "layer": [
                     {
-                        "mark": {"type": "area", "opacity": 0.18, "interpolate": "monotone"},
+                        "mark": {"type": "line", "interpolate": "monotone"},
                         "encoding": {
                             "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%b %Y", "grid": False}},
                             "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 18}, "axis": {"title": "Valeur (€)", "format": ",.0f"}},
                             "color": {
                                 "field": "Série",
                                 "type": "nominal",
-                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": ["#2ecc71", "#3498db"]},
+                                "scale": {"domain": domain_series, "range": range_colors},
                                 "legend": {"orient": "top", "title": None},
-                            },
-                        },
-                    },
-                    {
-                        "mark": {"type": "line", "interpolate": "monotone"},
-                        "encoding": {
-                            "x": {"field": "Date", "type": "temporal"},
-                            "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 18}},
-                            "color": {
-                                "field": "Série",
-                                "type": "nominal",
-                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": ["#2ecc71", "#3498db"]},
                             },
                             "strokeDash": {
                                 "field": "Série",
                                 "type": "nominal",
-                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": [[1, 0], [6, 4]]},
+                                "scale": {"domain": domain_series, "range": range_dash},
                                 "legend": None,
                             },
                             "strokeWidth": {
                                 "field": "Série",
                                 "type": "nominal",
-                                "scale": {"domain": ["Valorisation Boursière (€)", "Capital Investi / PRU (€)"], "range": [2.8, 2.0]},
+                                "scale": {"domain": domain_series, "range": range_width},
                                 "legend": None,
                             },
                             "tooltip": [
@@ -2388,26 +2414,45 @@ with onglet_portefeuille:
             if valeurs_quotidiennes:
                 pt_debut = valeurs_quotidiennes[0]
                 pt_fin = valeurs_quotidiennes[-1]
-                pt_haut = max(valeurs_quotidiennes, key=lambda x: x[1])
-                pt_bas = min(valeurs_quotidiennes, key=lambda x: x[1])
                 var_periode_eur = pt_fin[1] - pt_debut[1]
                 var_periode_pct = (var_periode_eur / pt_debut[1] * 100.0) if pt_debut[1] > 0 else 0.0
                 c_var_p = "#2ecc71" if var_periode_eur >= 0 else "#e74c3c"
 
+                # Calcul du Max Drawdown sur la période
+                pic_courant = valeurs_quotidiennes[0][1]
+                max_dd_pct = 0.0
+                for _, v_j in valeurs_quotidiennes:
+                    if v_j > pic_courant:
+                        pic_courant = v_j
+                    dd_j = ((v_j - pic_courant) / pic_courant * 100.0) if pic_courant > 0 else 0.0
+                    if dd_j < max_dd_pct:
+                        max_dd_pct = dd_j
+
+                # Calcul de l'Alpha vs ETF MSCI World (CW8)
+                if valeurs_cw8_rebased and len(valeurs_cw8_rebased) >= 2:
+                    perf_cw8_pct = ((valeurs_cw8_rebased[-1] - valeurs_cw8_rebased[0]) / valeurs_cw8_rebased[0] * 100.0) if valeurs_cw8_rebased[0] > 0 else 0.0
+                    alpha_pct = var_periode_pct - perf_cw8_pct
+                    c_alpha = "#2ecc71" if alpha_pct >= 0 else "#f39c12"
+                    ligne_bench_html = (
+                        f"<div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;'>"
+                        f"<span>🌍 <b>ETF MSCI World (CW8)</b> sur {choix_horizon_courbe}</span>"
+                        f"<span style='font-weight:800; color:{c_alpha};'>CW8 : {perf_cw8_pct:+.1f}% (Alpha : {alpha_pct:+.1f}%)</span>"
+                        f"</div>"
+                    )
+                else:
+                    ligne_bench_html = ""
+
                 html_bilan_traj = f"""
                 <div style="background:rgba(128,128,128,0.04); padding:14px; border-radius:12px; border:1px solid rgba(128,128,128,0.18);">
-                    <div style="font-size:0.82em; font-weight:800; text-transform:uppercase; opacity:0.75; margin-bottom:9px;">⚡ Dynamique Boursière sur {choix_horizon_courbe}</div>
+                    <div style="font-size:0.82em; font-weight:800; text-transform:uppercase; opacity:0.75; margin-bottom:9px;">⚡ Indicateurs Quantitatifs sur {choix_horizon_courbe}</div>
                     <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
-                        <span>📈 <b>Variation sur {choix_horizon_courbe}</b></span>
+                        <span>📈 <b>Performance Portefeuille ({choix_horizon_courbe})</b></span>
                         <span style="color:{c_var_p}; font-weight:800;">{var_periode_eur:+,.0f} € ({var_periode_pct:+.1f}%)</span>
                     </div>
+                    {ligne_bench_html}
                     <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
-                        <span>🏔️ <b>Pic le plus haut</b> ({pt_haut[0]})</span>
-                        <span style="color:#2ecc71; font-weight:800;">{pt_haut[1]:,.0f} €</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid rgba(128,128,128,0.12); font-size:0.88em;">
-                        <span>🛡️ <b>Point le plus bas</b> ({pt_bas[0]})</span>
-                        <span style="color:#3498db; font-weight:800;">{pt_bas[1]:,.0f} €</span>
+                        <span>🛡️ <b>Max Drawdown</b> (Repli max sur la période)</span>
+                        <span style="color:#3498db; font-weight:800;">{max_dd_pct:.1f}%</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; padding:5px 0; font-size:0.88em;">
                         <span>🎯 <b>Écart actuel vs PRU ({cout_total_achat:,.0f} €)</b></span>
@@ -2416,11 +2461,101 @@ with onglet_portefeuille:
                 </div>
                 """
                 afficher_html(html_bilan_traj)
-# --- MINI-SIMULATEUR D'IMPACT PRU & RENFORCEMENT DCA (STYLE ARGON) ---
+
+        # ======================================================================
+        # COMPTEUR OFFICIEL PLAFOND PEA (150 000 €) & RICHESSE TOTALE CRÉÉE
+        # ======================================================================
         st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
+        total_pv_actees_pf = sum(float(v.get("plus_value_eur", 0.0)) for v in st.session_state.get("historique_ventes", []))
+        div_encaisses_cumul = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
+        capital_autofinance = max(0.0, total_pv_actees_pf + div_encaisses_cumul)
+        versements_nets_pea = max(0.0, exposition_eur - capital_autofinance)
+        plafond_legal_pea = 150000.0
+        pct_plafond_pea = min(100.0, (versements_nets_pea / plafond_legal_pea) * 100.0)
+        marge_restante_pea = max(0.0, plafond_legal_pea - versements_nets_pea)
+
+        richesse_totale_creee = plus_value_globale + total_pv_actees_pf + dividendes_nets_totaux_eur
+        tri_global_pct = (richesse_totale_creee / cout_total_achat * 100.0) if cout_total_achat > 0 else 0.0
+        c_rich = "#2ecc71" if richesse_totale_creee >= 0 else "#e74c3c"
+
+        html_pea_tri = f"""
+        <div class="argon-grid" style="margin-bottom: 18px;">
+            <div class="argon-card" style="text-align:left; border-left: 4px solid #3498db;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span class="argon-title" style="color:#3498db; margin:0;">🏛️ Jauge Officielle Plafond PEA (150 000 €)</span>
+                    <span class="b-blue">{pct_plafond_pea:.1f}% utilisé</span>
+                </div>
+                <div class="score-bg" style="height:10px; margin:8px 0;">
+                    <div style="width:{max(2.0, pct_plafond_pea)}%; background:linear-gradient(90deg, #3498db, #2ecc71); height:100%;"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:0.82em; opacity:0.9;">
+                    <span>Versements nets estimés : <b>{versements_nets_pea:,.0f} €</b></span>
+                    <span>Marge de versement restante : <b>{marge_restante_pea:,.0f} €</b></span>
+                </div>
+            </div>
+            <div class="argon-card" style="text-align:left; border-left: 4px solid {c_rich};">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span class="argon-title" style="color:{c_rich}; margin:0;">🏆 Richesse Totale Créée (Latent + Acté + Rente)</span>
+                    <span class="{'b-green' if richesse_totale_creee >= 0 else 'b-red'}">Rendement Global : {tri_global_pct:+.1f}%</span>
+                </div>
+                <div style="font-size:1.35em; font-weight:900; color:{c_rich}; margin:4px 0;">{richesse_totale_creee:+,.2f} €</div>
+                <div style="font-size:0.80em; opacity:0.85;">
+                    PV Latente : <b>{plus_value_globale:+,.0f} €</b> | PV Actées : <b>{total_pv_actees_pf:+,.0f} €</b> | Rente Nette/an : <b style="color:#2ecc71;">+{dividendes_nets_totaux_eur:,.0f} €</b>
+                </div>
+            </div>
+        </div>
+        """
+        afficher_html(html_pea_tri)
+
+        # ======================================================================
+        # MODULE PRIME DE FIDÉLITÉ NOMINATIF ADMINISTRÉ (+10% & ACTIONS GRATUITES)
+        # ======================================================================
+        eligibles_nom_pf = [
+            k for k in portefeuille_utilisateur.keys()
+            if k in ("Air Liquide", "L'Oréal", "Engie", "Seb", "Crédit Agricole") and isinstance(portefeuille_utilisateur.get(k), dict) and float(portefeuille_utilisateur[k].get("qte", 0)) > 0
+        ]
+        if eligibles_nom_pf:
+            with st.expander("🏅 Prime de Fidélité Nominatif Administré (+10% Dividende & Actions Gratuites Air Liquide)", expanded=False):
+                if "actions_nominatif" not in st.session_state:
+                    st.session_state["actions_nominatif"] = eligibles_nom_pf.copy()
+                selection_nom = st.multiselect(
+                    "Sélectionnez vos lignes passées au Nominatif Administré (+10% de bonus dividende après 2 années civiles) :",
+                    options=eligibles_nom_pf,
+                    default=[a for a in st.session_state["actions_nominatif"] if a in eligibles_nom_pf],
+                    key="ms_actions_nominatif",
+                )
+                st.session_state["actions_nominatif"] = selection_nom
+
+                bonus_annuel_nom = 0.0
+                for act_n in selection_nom:
+                    q_n = float(portefeuille_utilisateur[act_n].get("qte", 0))
+                    div_n = float(WATCHLIST_DEFAUT.get(act_n, {}).get("div_eur", 0.0))
+                    bonus_annuel_nom += q_n * div_n * 0.10
+
+                 texte_al = ""
+                if "Air Liquide" in portefeuille_utilisateur and float(portefeuille_utilisateur["Air Liquide"].get("qte", 0)) > 0:
+                    q_al = int(portefeuille_utilisateur["Air Liquide"]["qte"])
+                    act_gratuites = q_al // 10
+                    manque_al = 10 - (q_al % 10) if (q_al % 10) != 0 else 0
+                    cours_al = float(prix_temps_reel.get("Air Liquide", 165.0))
+                    val_cadeau_al = act_gratuites * cours_al
+                    texte_al = (
+                        f" | 🎁 <b>Air Liquide ({q_al} titres)</b> : Droit à <b>{act_gratuites} action(s) gratuite(s)</b> (~{val_cadeau_al:,.0f} €)"
+                        + (f" — <i>Plus que {manque_al} action(s) pour débloquer la suivante !</i>" if manque_al > 0 else " — <i>Palier exact de 10 atteint !</i>")
+                    )
+
+                afficher_html(f"""
+                <div style="background:rgba(46,204,113,0.08); border:1px solid rgba(46,204,113,0.35); border-radius:10px; padding:12px 16px; font-size:0.90em;">
+                    🏅 <b>Gain de Rente Nominatif (+10%) :</b> <b style="color:#2ecc71;">+{bonus_annuel_nom:.2f} € / an</b> (soit <b>+{bonus_annuel_nom*10:.0f} €</b> sur 10 ans sans apport){texte_al}
+                </div>
+                """)
+
+        # ======================================================================
+        # MINI-SIMULATEUR D'IMPACT PRU & RENFORCEMENT DCA (100% ARGON DARK/LIGHT)
+        # ======================================================================
         actions_Simu_pru = [
             k for k, v in portefeuille_utilisateur.items()
-            if k != "Espèces" and float(v.get("qte", 0)) > 0
+            if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
         ]
         if actions_Simu_pru:
             st.markdown("#### 🧮 Simulateur Express d'Impact PRU & DCA")
@@ -2443,7 +2578,7 @@ with onglet_portefeuille:
 
             pos_act = portefeuille_utilisateur.get(act_choisie, {})
             qte_act = float(pos_act.get("qte", 0.0))
-            pru_act = float(pos_act.get("pru", pos_act.get("prix_achat", 0.0)))
+            pru_act = float(pos_act.get("pru", 0.0))
             info_w = st.session_state.get("watchlist", WATCHLIST_DEFAUT).get(act_choisie, WATCHLIST_DEFAUT.get(act_choisie, {}))
             dev_sim = "$" if info_w.get("devise") == "USD" else "€"
             div_unit = float(info_w.get("div_eur", 0.0))
@@ -2463,26 +2598,97 @@ with onglet_portefeuille:
                 ecart_pru_pct = (ecart_pru / pru_act * 100) if pru_act > 0 else 0.0
                 gain_div_an = nb_ach * div_unit
 
-                if ecart_pru <= 0:
-                    bg_p, col_p, brd_p = "#ecfdf5", "#059669", "#a7f3d0"
-                    txt_badge = f"📉 PRU abaissé de {ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
-                else:
-                    bg_p, col_p, brd_p = "#eff6ff", "#2563eb", "#bfdbfe"
-                    txt_badge = f"📈 PRU moyenné à +{ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
+                classe_b_pru = "b-green" if ecart_pru <= 0 else "b-blue"
+                col_p = "#2ecc71" if ecart_pru <= 0 else "#3498db"
+                txt_badge = f"📉 PRU abaissé de {ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)" if ecart_pru <= 0 else f"📈 PRU moyenné à +{ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
+                note_1t = f"(Ajusté à 1 titre = {cout_ordre:.2f} {dev_sim})" if mode_1_titre else f"(Investi : {cout_ordre:.2f} {dev_sim})"
 
-                note_1t = f" (Budget ajusté à 1 action = {cout_ordre:.2f} {dev_sim})" if mode_1_titre else f" (Investi : {cout_ordre:.2f} {dev_sim})"
-                html_simu_pru = (
-                    f"<div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:16px 20px; box-shadow:0 4px 12px rgba(15,23,42,0.04); margin-bottom:16px;'>"
-                    f"<div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;'>"
-                    f"<div><span style='font-size:0.78rem; color:#64748b; font-weight:700; text-transform:uppercase;'>Ordre simulé au cours actuel ({cours_live:.2f} {dev_sim})</span>"
-                    f"<div style='font-size:1.05rem; font-weight:800; color:#0f172a; margin-top:2px;'>+{nb_ach} action{'s' if nb_ach > 1 else ''} {act_choisie} <span style='font-size:0.85rem; color:#64748b; font-weight:500;'>{note_1t}</span></div></div>"
-                    f"<div><span style='font-size:0.78rem; color:#64748b; font-weight:700; text-transform:uppercase;'>Trajectoire du PRU</span>"
-                    f"<div style='font-size:1.05rem; font-weight:800; color:#0f172a; margin-top:2px;'>{pru_act:.2f} {dev_sim} ➡️ <span style='color:{col_p};'>{nouv_pru:.2f} {dev_sim}</span></div></div>"
-                    f"<div><span style='background:{bg_p}; color:{col_p}; border:1px solid {brd_p}; padding:6px 12px; border-radius:999px; font-weight:700; font-size:0.82rem;'>{txt_badge}</span></div>"
-                    f"<div><span style='background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; padding:6px 12px; border-radius:8px; font-weight:800; font-size:0.88rem;'>+{gain_div_an:.2f} {dev_sim} / an de dividendes</span></div>"
-                    f"</div></div>"
-                )
-                st.markdown(html_simu_pru, unsafe_allow_html=True)
+                html_simu_pru = f"""
+                <div class="argon-card" style="text-align:left; margin-bottom:18px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div>
+                            <div class="argon-title">Ordre simulé au cours actuel ({cours_live:.2f} {dev_sim})</div>
+                            <div style="font-size:1.08em; font-weight:900;">+{nb_ach} action(s) {act_choisie} <span style="font-size:0.84em; opacity:0.75; font-weight:600;">{note_1t}</span></div>
+                        </div>
+                        <div>
+                            <div class="argon-title">Trajectoire du PRU</div>
+                            <div style="font-size:1.08em; font-weight:900;">{pru_act:.2f} {dev_sim} ➔ <span style="color:{col_p};">{nouv_pru:.2f} {dev_sim}</span></div>
+                        </div>
+                        <div><span class="{classe_b_pru}">{txt_badge}</span></div>
+                        <div><span class="b-green">+{gain_div_an:.2f} {dev_sim} / an de dividendes</span></div>
+                    </div>
+                </div>
+                """
+                afficher_html(html_simu_pru)
+
+        # ======================================================================
+        # IMPORT MAGIQUE DU PORTEFEUILLE PAR CAPTURE D'ÉCRAN (GEMINI VISION)
+        # ======================================================================
+        with st.expander("📸 Import Magique : Mettre à jour mon portefeuille par Capture d'Écran (IA Gemini Vision)", expanded=False):
+            st.caption("Déposez une capture d'écran de votre courtier (BoursoBank, Fortuneo, Bourse Direct, Trade Republic, Crédit Agricole...) : l'IA extrait automatiquement vos quantités et vos PRU.")
+            fichier_img = st.file_uploader("Choisir une image (PNG, JPG, WEBP)", type=["png", "jpg", "jpeg", "webp"], key="up_vision_pf")
+            if fichier_img is not None:
+                if st.button("🤖 Analyser ma capture d'écran avec Gemini Vision", type="primary"):
+                    cle_gem_vis = ""
+                    if hasattr(st, "secrets"):
+                        for k_s in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
+                            v_s = str(st.secrets.get(k_s, "")).strip().strip('"').strip("'")
+                            if v_s:
+                                cle_gem_vis = v_s
+                                break
+                    if not cle_gem_vis:
+                        st.error("⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit.")
+                    else:
+                        import base64
+                        with st.spinner("🔍 Lecture optique de vos lignes et PRU en cours..."):
+                            b64_img = base64.b64encode(fichier_img.read()).decode("utf-8")
+                            mime_t = fichier_img.type or "image/jpeg"
+                            prompt_vis = (
+                                "Analyse cette capture d'écran de portefeuille boursier. Extrais chaque ligne d'action détenue. "
+                                "Réponds UNIQUEMENT avec un tableau JSON valide de la forme : "
+                                '[{"nom": "TotalEnergies", "qte": 25, "pru": 54.20}]. '
+                                "Utilise les noms standards français si tu reconnais l'entreprise (ex: TotalEnergies, Air Liquide, AXA, Rubis, LVMH, Sanofi, Engie, Vinci, BNP Paribas, Pernod Ricard, Schneider Electric, Veolia)."
+                            )
+                            payload_v = json.dumps({
+                                "contents": [{
+                                    "parts": [
+                                        {"text": prompt_vis},
+                                        {"inline_data": {"mime_type": mime_t, "data": b64_img}}
+                                    ]
+                                }]
+                            }).encode("utf-8")
+                            for mod_v in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+                                try:
+                                    url_v = f"https://generativelanguage.googleapis.com/v1beta/models/{mod_v}:generateContent?key={urllib.parse.quote(cle_gem_vis)}"
+                                    req_v = urllib.request.Request(url_v, data=payload_v, headers={"Content-Type": "application/json"})
+                                    with urllib.request.urlopen(req_v, timeout=25) as resp_v:
+                                        res_v = json.loads(resp_v.read().decode("utf-8"))
+                                        txt_v = res_v["candidates"][0]["content"]["parts"][0]["text"]
+                                        deb_j = txt_v.find("[")
+                                        fin_j = txt_v.rfind("]")
+                                        if deb_j != -1 and fin_j != -1:
+                                            st.session_state["_lignes_extraites_vision"] = json.loads(txt_v[deb_j:fin_j+1])
+                                            break
+                                except Exception:
+                                    continue
+
+                if st.session_state.get("_lignes_extraites_vision"):
+                    lignes_ext = st.session_state["_lignes_extraites_vision"]
+                    st.success(f"✅ {len(lignes_ext)} position(s) détectée(s) sur votre capture !")
+                    st.dataframe(pd.DataFrame(lignes_ext), use_container_width=True)
+                    if st.button("📥 Appliquer ces positions à mon Portefeuille", type="primary"):
+                        for item_ext in lignes_ext:
+                            nom_e = str(item_ext.get("nom", "")).strip()
+                            qte_e = int(float(item_ext.get("qte", 0)))
+                            pru_e = float(item_ext.get("pru", 0.0))
+                            if nom_e and qte_e > 0:
+                                st.session_state["portefeuille"][nom_e] = {"qte": qte_e, "pru": pru_e}
+                                st.session_state[f"qte_{nom_e}"] = qte_e
+                                st.session_state[f"pru_{nom_e}"] = pru_e
+                        st.session_state.pop("_lignes_extraites_vision", None)
+                        sauvegarder_dans_cloud()
+                        st.toast("✅ Portefeuille mis à jour depuis votre capture d'écran !")
+                        st.rerun()
 
 # ------------------------------------------------------------------------------
 # ONGLET 3 : JAUGE D'OBJECTIF DE RENTE, CALENDRIER 12 MOIS & BOULE DE NEIGE
