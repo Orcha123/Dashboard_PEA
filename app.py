@@ -3299,8 +3299,8 @@ Je n'ai détecté aucun nom d'action ni thème financier précis dans votre sais
 - 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
 - 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
 
-@st.cache_data(ttl=3600)
-def lister_modeles_gemini_actifs(cle_api):
+    @st.cache_data(ttl=3600)
+    def lister_modeles_gemini_actifs(cle_api):
         modeles = []
         try:
             url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(cle_api)}"
@@ -3316,7 +3316,7 @@ def lister_modeles_gemini_actifs(cle_api):
             pass
         return modeles
 
-def appeler_gemini_coach(question_utilisateur, code_audit=""):
+    def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
         if hasattr(st, "secrets"):
             for nom_secret in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
@@ -3363,7 +3363,7 @@ def appeler_gemini_coach(question_utilisateur, code_audit=""):
         + "\n".join(resume_ventes_ia)
         if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
     )
-    prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
+        prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
@@ -3381,7 +3381,7 @@ Mission demandée par l'utilisateur : {question_utilisateur}
 
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
-    modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
+        modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
         priorite_modeles = [
             "gemini-3-flash-preview",
             "gemini-3.0-flash-preview",
