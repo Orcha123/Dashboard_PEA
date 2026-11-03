@@ -3316,7 +3316,7 @@ def lister_modeles_gemini_actifs(cle_api):
             pass
         return modeles
 
-    def appeler_gemini_coach(question_utilisateur, code_audit=""):
+def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
         if hasattr(st, "secrets"):
             for nom_secret in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
