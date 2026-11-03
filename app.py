@@ -271,7 +271,9 @@ if st.session_state.get("quota_ia_date") != date_jour_str:
     st.session_state["quota_ia_utilise"] = 0
 
 def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
-    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k != "Espèces"]
+    if "_historique_ventes" in portefeuille_cloud:
+        st.session_state["historique_ventes"] = list(portefeuille_cloud.get("_historique_ventes", []))
+    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k not in ("Espèces", "_historique_ventes")]
     toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()) + actions_pf_cloud)
 
     for nom_act in toutes_les_actions:
@@ -300,16 +302,18 @@ def sauvegarder_dans_cloud():
             est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
             st.session_state["est_abonne_pro"] = est_pro_val
 
+            pf_cloud_payload = {k: v for k, v in st.session_state["portefeuille"].items() if k != "_historique_ventes"}
+            pf_cloud_payload["_historique_ventes"] = list(st.session_state.get("historique_ventes", []))
+
             payload = {
-    "user_id": user_id_str,
-    "email": email_str,
-    "budget_dca": float(st.session_state["budget_dca"]),
-    "watchlist": dict(watchlist_actuelle),
-    "portefeuille": dict(st.session_state["portefeuille"]),
-    "historique_ventes": list(st.session_state.get("historique_ventes", [])),
-    "est_abonne_pro": est_pro_val,
-    "updated_at": datetime.utcnow().isoformat()
-}
+                "user_id": user_id_str,
+                "email": email_str,
+                "budget_dca": float(st.session_state["budget_dca"]),
+                "watchlist": dict(watchlist_actuelle),
+                "portefeuille": pf_cloud_payload,
+                "est_abonne_pro": est_pro_val,
+                "updated_at": datetime.utcnow().isoformat()
+            }
             supabase.table("user_data").upsert(payload).execute()
 
             dict_prix = st.session_state.get("prix_temps_reel", {})
@@ -321,6 +325,8 @@ def sauvegarder_dans_cloud():
                 rente_tot = 0.0
 
                 for nom, data in pf_actuel.items():
+                    if nom == "_historique_ventes" or not isinstance(data, dict):
+                        continue
                     if nom == "Espèces":
                         val_esp = float(data.get("pru", 0.0))
                         val_totale += val_esp
@@ -1855,6 +1861,18 @@ with onglet_radar:
 # ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
 # ------------------------------------------------------------------------------
 with onglet_portefeuille:
+    # --- APPLICATION AUTOMATIQUE DES VENTES DEPUIS L'ONGLET 5 (AVANT LES WIDGETS) ---
+    if "_vente_en_attente" in st.session_state:
+        v_pend = st.session_state.pop("_vente_en_attente")
+        act_vendue = v_pend["action"]
+        nouv_qte_v = int(v_pend["nouvelle_qte"])
+        st.session_state[f"qte_{act_vendue}"] = nouv_qte_v
+        if nouv_qte_v <= 0:
+            st.session_state["portefeuille"].pop(act_vendue, None)
+        else:
+            if act_vendue in st.session_state["portefeuille"]:
+                st.session_state["portefeuille"][act_vendue]["qte"] = nouv_qte_v
+        sauvegarder_dans_cloud()   
     st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
 
     # Intègre toutes les actions du catalogue pour pouvoir les sélectionner librement
@@ -1885,7 +1903,10 @@ with onglet_portefeuille:
         st.markdown("---")
         st.markdown("#### 🎯 Choisir les actions à afficher dans mon portefeuille")
 
-        actions_deja_detenues = [k for k in st.session_state["portefeuille"].keys() if k != "Espèces"]
+        actions_deja_detenues = [
+            k for k, v in st.session_state["portefeuille"].items()
+            if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+        ]
         actions_radar = list(st.session_state["watchlist"].keys())
         selection_par_defaut = sorted(list(set(actions_deja_detenues + actions_radar)))
 
@@ -2814,9 +2835,22 @@ with onglet_ia:
     texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
     etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
 
+    # --- SYNTHÈSE DES PLUS-VALUES ACTÉES POUR LE COACH IA ---
+    hist_ventes_ia = st.session_state.get("historique_ventes", [])
+    total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
+    total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
+    total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
+    perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
+    nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
+    texte_bilan_ventes_flash = (
+        f" Vos arbitrages ont permis d'acter <b>{total_pv_actee_ia:+,.2f} €</b> de plus-values réelles "
+        f"(performance d'extraction de <b>{perf_extraction_ia:+.2f}%</b> sur {len(hist_ventes_ia)} vente(s))."
+        if hist_ventes_ia else " Aucune vente actée enregistrée pour le moment."
+    )
+
     html_phrase_flash = f"""
     <div class="ia-flash">
-        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}%) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois), tandis que les meilleures opportunités DCA du moment sont {texte_opps_moment}.
+        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille actif de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}% latent) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois).{texte_bilan_ventes_flash} Les meilleures opportunités DCA du moment sont {texte_opps_moment}.
     </div>
     """
     afficher_html(html_phrase_flash)
@@ -3312,6 +3346,23 @@ Je n'ai détecté aucun nom d'action ni thème financier précis dans votre sais
         ]
 
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
+    hist_ventes_ia = st.session_state.get("historique_ventes", [])
+    total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
+    total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
+    total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
+    perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
+    nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
+
+    resume_ventes_ia = [
+        f"- {v['date']} ({v['mois_annee']}) : Vente de {v['qte']} {v['action']} à {v['prix_vente']} {v['devise']} "
+        f"(PRU {v['pru']} {v['devise']}) -> Plus-value actée : {v['plus_value_eur']:+.2f} € ({v['perf_pct']:+.2f}%)"
+        for v in hist_ventes_ia[:15]
+    ]
+    bloc_ventes_prompt = (
+        f"Total Plus-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} ventes, {nb_ventes_gagnantes_ia} gagnantes).\n"
+        + "\n".join(resume_ventes_ia)
+        if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
+    )
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
@@ -3319,6 +3370,8 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_glob:+.2f} €)
 - Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
 - Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois (condensée sur 1 à 2 lignes max)
+- Bilan des Plus-Values Actées (Réalisées) & Arbitrages :
+{bloc_ventes_prompt}
 - Détail des lignes du portefeuille (triées par poids décroissant) :
 {chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
 - Signaux techniques et fondamentaux du Radar Boursy aujourd'hui :
@@ -3466,150 +3519,216 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
 # ------------------------------------------------------------------------------
-# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (RÉALISÉES)
+# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (STYLE ARGON + CALENDRIER 12M)
 # ------------------------------------------------------------------------------
 with onglet_ventes:
     st.subheader("💰 Journal des Arbitrages & Plus-Values Actées (Réalisées)")
-    st.caption("Enregistrez vos ventes d'actions pour suivre les plus-values réellement extraites du marché, mois par mois.")
+    st.caption("Enregistrez vos ventes d'actions : la quantité vendue est automatiquement déduite de votre portefeuille et vos gains/pertes actés sont calculés mois par mois.")
 
-    # --- FORMULAIRE DE SAISIE D'UNE VENTE ---
     actions_vendables = [
         k for k, v in portefeuille_utilisateur.items()
-        if k != "Espèces" and float(v.get("qte", 0)) > 0
+        if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
     ]
 
-    with st.expander("➕ Enregistrer une nouvelle vente ou un arbitrage", expanded=True):
+    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction automatique du portefeuille)", expanded=True):
         if not actions_vendables:
             st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
         else:
+            action_vendue = st.selectbox("1️⃣ Choisissez l'action vendue :", actions_vendables, key="sel_action_vente")
+
+            pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
+            qte_detenue = int(pos_actuelle_v.get("qte", 1))
+            pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
+            info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
+            dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
+            cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
+
+            st.markdown(
+                f"<div style='background:rgba(52,152,219,0.08); border-left:4px solid #3498db; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:0.9em;'>"
+                f"📌 En portefeuille : <b>{qte_detenue} action(s) {action_vendue}</b> | Votre PRU : <b>{pru_actuel:.2f} {dev_v}</b> | Cours actuel : <b>{cours_actuel_v:.2f} {dev_v}</b>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
             with st.form("form_saisie_vente"):
-                col_v1, col_v2, col_v3 = st.columns(3)
+                col_v1, col_v2, col_v3, col_v4 = st.columns(4)
                 with col_v1:
-                    action_vendue = st.selectbox("Action concernée :", actions_vendables)
-               
-                pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
-                qte_detenue = int(pos_actuelle_v.get("qte", 1))
-                pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
-                info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
-                dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
-                cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
-
+                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(1, qte_detenue), step=1)
                 with col_v2:
-                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(5, qte_detenue), step=1)
+                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=float(round(cours_actuel_v, 2)), step=0.5)
                 with col_v3:
-                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=round(cours_actuel_v, 2), step=0.5)
-
-                col_v4, col_v5 = st.columns(2)
+                    frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5)
                 with col_v4:
-                    date_vente = st.date_input("Date de la transaction :", value=datetime.now())
-                with col_v5:
-                    crediter_especes = st.checkbox("Créditer automatiquement le produit de la vente dans ma poche Espèces (€)", value=True)
+                    date_vente = st.date_input("Date de la vente :", value=datetime.now())
 
-                if st.form_submit_button("🚀 Valider & Enregistrer cette Vente", type="primary"):
-                    facteur_v = (1.0 / TAUX_USD_EUR) if dev_v == "USD" else 1.0
-                   
-                    # Calculs financiers en Euros
-                    montant_vente_eur = qte_a_vendre * prix_vente_saisi * facteur_v
+                if st.form_submit_button("🚀 Valider la vente & Déduire du portefeuille", type="primary", use_container_width=True):
+                    facteur_v = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
+
+                    montant_vente_brut_eur = (qte_a_vendre * prix_vente_saisi * facteur_v)
+                    montant_vente_net_eur = montant_vente_brut_eur - frais_vente_eur
                     cout_initial_eur = qte_a_vendre * pru_actuel * facteur_v
-                    plus_value_eur = montant_vente_eur - cout_initial_eur
+                    plus_value_eur = montant_vente_net_eur - cout_initial_eur
                     perf_vente_pct = (plus_value_eur / cout_initial_eur * 100.0) if cout_initial_eur > 0 else 0.0
 
-                    # Enregistrement dans l'historique des ventes
                     nouvelle_vente = {
                         "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                         "date": date_vente.strftime("%Y-%m-%d"),
+                        "annee": date_vente.strftime("%Y"),
+                        "mois_num": int(date_vente.strftime("%m")),
                         "mois_annee": date_vente.strftime("%Y-%m"),
                         "action": action_vendue,
                         "qte": int(qte_a_vendre),
                         "pru": float(pru_actuel),
                         "prix_vente": float(prix_vente_saisi),
+                        "frais_eur": float(frais_vente_eur),
                         "devise": dev_v,
-                        "montant_eur": round(montant_vente_eur, 2),
+                        "montant_eur": round(montant_vente_net_eur, 2),
+                        "cout_initial_eur": round(cout_initial_eur, 2),
                         "plus_value_eur": round(plus_value_eur, 2),
                         "perf_pct": round(perf_vente_pct, 2),
                     }
                     st.session_state["historique_ventes"].insert(0, nouvelle_vente)
 
-                    # Mise à jour du portefeuille (soustraction de la quantité vendue)
-                    nouvelle_qte = qte_detenue - qte_a_vendre
-                    if nouvelle_qte <= 0:
-                        if action_vendue in st.session_state["portefeuille"]:
-                            del st.session_state["portefeuille"][action_vendue]
-                    else:
-                        st.session_state["portefeuille"][action_vendue]["qte"] = nouvelle_qte
-
-                    # Optionnel : Créditer les espèces
-                    if crediter_especes:
-                        actuel_esp = float(st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0))
-                        nouveau_esp = actuel_esp + montant_vente_eur
-                        if "Espèces" not in st.session_state["portefeuille"]:
-                            st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": round(nouveau_esp, 2)}
-                        else:
-                            st.session_state["portefeuille"]["Espèces"]["pru"] = round(nouveau_esp, 2)
-                        st.session_state["pru_Espèces"] = round(nouveau_esp, 2)
-
-                    sauvegarder_dans_cloud()
-                    st.success(f"✅ Vente de {qte_a_vendre} {action_vendue} enregistrée avec succès ! Plus-value actée : {plus_value_eur:+,.2f} €")
+                    # Prépare la déduction automatique pour l'Onglet 2 sans conflit de widget Streamlit
+                    nouvelle_qte = max(0, qte_detenue - int(qte_a_vendre))
+                    st.session_state["_vente_en_attente"] = {
+                        "action": action_vendue,
+                        "nouvelle_qte": nouvelle_qte,
+                    }
+                    st.toast(f"✅ Vente de {qte_a_vendre} {action_vendue} actée ({plus_value_eur:+,.2f} €) !")
                     st.rerun()
 
-    # --- CALCULS & KPI DES VENTES RÉALISÉES ---
+    # --- AFFICHAGE DES KPI ARGON & CALENDRIER 12 MOIS ---
     historique_v = st.session_state.get("historique_ventes", [])
-   
-    if not historique_v:
-        st.info("💡 Aucune vente enregistrée pour le moment. Utilisez le formulaire ci-dessus dès que vous réalisez un arbitrage.")
-    else:
-        total_pv_actee = sum(v["plus_value_eur"] for v in historique_v)
-        total_montant_vendu = sum(v["montant_eur"] for v in historique_v)
-        total_cout_initial = total_montant_vendu - total_pv_actee
-        perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
-       
-        nb_gagnantes = sum(1 for v in historique_v if v["plus_value_eur"] >= 0)
-        win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
 
+    if not historique_v:
+        st.info("💡 Aucune vente enregistrée pour le moment. Utilisez le guichet ci-dessus lorsque vous vendez tout ou partie d'une ligne.")
+    else:
+        total_pv_actee = sum(float(v.get("plus_value_eur", 0.0)) for v in historique_v)
+        total_montant_vendu = sum(float(v.get("montant_eur", 0.0)) for v in historique_v)
+        total_cout_initial = sum(float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - float(v.get("plus_value_eur", 0.0)))) for v in historique_v)
+        perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
+
+        nb_gagnantes = sum(1 for v in historique_v if float(v.get("plus_value_eur", 0.0)) >= 0)
+        win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
         c_pv_act = "#2ecc71" if total_pv_actee >= 0 else "#e74c3c"
 
         html_kpi_ventes = f"""
         <div class="argon-grid">
             <div class="argon-card">
-                <div class="argon-title">💰 Total Plus-Values Actées</div>
+                <div class="argon-title">💰 Total Plus/Moins-Values Actées</div>
                 <div class="argon-val" style="color:{c_pv_act};">{total_pv_actee:+,.2f} €</div>
-                <div class="argon-sub">Gains réels sécurisés en cash</div>
+                <div class="argon-sub">Gains nets réellement extraits</div>
             </div>
             <div class="argon-card">
-                <div class="argon-title">📈 Performance Réelle Extraite</div>
+                <div class="argon-title">📈 Performance d'Extraction Réelle</div>
                 <div class="argon-val" style="color:{c_pv_act};">{perf_globale_actee_pct:+.2f}%</div>
-                <div class="argon-sub">Sur un volume vendu de {total_montant_vendu:,.0f} €</div>
+                <div class="argon-sub">Sur {total_cout_initial:,.0f} € de capital initial vendu</div>
             </div>
             <div class="argon-card">
                 <div class="argon-title">🎯 Taux de Réussite (Win Rate)</div>
                 <div class="argon-val" style="color:#3498db;">{win_rate:.0f}%</div>
-                <div class="argon-sub">{nb_gagnantes} / {len(historique_v)} vente(s) en positif</div>
+                <div class="argon-sub">{nb_gagnantes} gagnante(s) / {len(historique_v)} vente(s)</div>
             </div>
             <div class="argon-card">
-                <div class="argon-title">📊 Nombre d'Arbitrages</div>
-                <div class="argon-val" style="color:#9b59b6;">{len(historique_v)}</div>
-                <div class="argon-sub">Transactions clôturées</div>
+                <div class="argon-title">💵 Cash Total Encaissé</div>
+                <div class="argon-val" style="color:#9b59b6;">{total_montant_vendu:,.2f} €</div>
+                <div class="argon-sub">À reporter selon vos besoins en Espèces</div>
             </div>
         </div>
         """
         afficher_html(html_kpi_ventes)
 
-        # --- TABLEAU MENSUEL DES PLUS-VALUES ACTÉES ---
-        st.markdown("#### 📅 Bilan Mensuel des Plus-Values Réalisées")
-       
-        # Agrégation mois par mois
+        # --- CALENDRIER 12 MOIS DES PLUS-VALUES ACTÉES (COMME L'ONGLET DIVIDENDES) ---
+        annees_dispo = sorted(list({str(v.get("date", "2026"))[:4] for v in historique_v}), reverse=True)
+        if not annees_dispo:
+            annees_dispo = [str(datetime.now().year)]
+
+        col_an_t, col_an_sel = st.columns([3, 1])
+        with col_an_t:
+            st.markdown("#### 🗓️ Calendrier 12 Mois des Plus & Moins-Values Actées")
+        with col_an_sel:
+            annee_choisie_v = st.selectbox("Année affichée :", annees_dispo, key="sel_annee_cal_ventes")
+
+        mois_noms_12 = [
+            (1, "Janvier"), (2, "Février"), (3, "Mars"), (4, "Avril"),
+            (5, "Mai"), (6, "Juin"), (7, "Juillet"), (8, "Août"),
+            (9, "Septembre"), (10, "Octobre"), (11, "Novembre"), (12, "Décembre")
+        ]
+        pv_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+        cout_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+        pills_par_mois_12 = {m_idx: [] for m_idx, _ in mois_noms_12}
+
+        for v in historique_v:
+            date_s = str(v.get("date", ""))
+            if date_s.startswith(str(annee_choisie_v)):
+                try:
+                    m_num = int(date_s.split("-")[1])
+                except Exception:
+                    m_num = 1
+                pv_v = float(v.get("plus_value_eur", 0.0))
+                cout_v = float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - pv_v))
+                pv_par_mois_12[m_num] += pv_v
+                cout_par_mois_12[m_num] += cout_v
+                pills_par_mois_12[m_num].append((v["action"], v["qte"], pv_v))
+
+        html_cal_ventes = "<div class='cal-grid'>"
+        for m_idx, m_label in mois_noms_12:
+            tot_m = pv_par_mois_12[m_idx]
+            cout_m = cout_par_mois_12[m_idx]
+            perf_m = (tot_m / cout_m * 100.0) if cout_m > 0 else 0.0
+            liste_p = pills_par_mois_12[m_idx]
+
+            if liste_p:
+                classe_c = "cal-card-active"
+                c_tot = "#2ecc71" if tot_m >= 0 else "#e74c3c"
+                icone_m = "🟢" if tot_m >= 0 else "🔴"
+                pills_str = "".join(
+                    f"<span class='cal-pill'><b>{act_p}</b> (x{q_p}) : <span style='color:{'#2ecc71' if pv_p>=0 else '#e74c3c'}; font-weight:800;'>{pv_p:+.1f} €</span></span>"
+                    for act_p, q_p, pv_p in liste_p
+                )
+                perf_badge = f"<span style='font-size:0.76em; font-weight:800; color:{c_tot};'>({perf_m:+.1f}%)</span>"
+            else:
+                classe_c = "cal-card"
+                c_tot = "rgba(128,128,128,0.45)"
+                icone_m = "⚪"
+                pills_str = "<span style='font-size:0.82em; opacity:0.45; font-style:italic;'>Aucune vente ce mois</span>"
+                perf_badge = ""
+
+            html_cal_ventes += f"""
+            <div class="{classe_c}">
+                <div>
+                    <div class="cal-month">
+                        <span>{m_idx:02d}. {m_label} {annee_choisie_v}</span>
+                        <span style="font-size:0.85em;">{icone_m}</span>
+                    </div>
+                    <div style="margin-bottom:10px;">{pills_str}</div>
+                </div>
+                <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px;">
+                    <span style="font-size:0.76em; opacity:0.75; margin-right:4px;">Acté :</span>
+                    <span class="cal-total" style="color:{c_tot};">{tot_m:+,.2f} €</span> {perf_badge}
+                </div>
+            </div>
+            """
+        html_cal_ventes += "</div>"
+        afficher_html(html_cal_ventes)
+
+        # --- TABLEAU RÉCAPITULATIF MOIS PAR MOIS ---
+        st.markdown("#### 📊 Tableau Récapitulatif d'Extraction de Performance Mois par Mois")
         agregation_mois = {}
         for v in historique_v:
-            m_key = v["mois_annee"]  # Format "YYYY-MM"
+            m_key = v.get("mois_annee", str(v.get("date", ""))[:7])
             if m_key not in agregation_mois:
                 agregation_mois[m_key] = {"nb_ventes": 0, "montant_total": 0.0, "cout_total": 0.0, "pv_totale": 0.0}
+            pv_val = float(v.get("plus_value_eur", 0.0))
+            mt_val = float(v.get("montant_eur", 0.0))
+            ct_val = float(v.get("cout_initial_eur", mt_val - pv_val))
             agregation_mois[m_key]["nb_ventes"] += 1
-            agregation_mois[m_key]["montant_total"] += v["montant_eur"]
-            agregation_mois[m_key]["cout_total"] += (v["montant_eur"] - v["plus_value_eur"])
-            agregation_mois[m_key]["pv_totale"] += v["plus_value_eur"]
+            agregation_mois[m_key]["montant_total"] += mt_val
+            agregation_mois[m_key]["cout_total"] += ct_val
+            agregation_mois[m_key]["pv_totale"] += pv_val
 
-        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Arbitrages</th><th>Volume Vendu (€)</th><th>Capital Initial (€)</th><th>Plus-Value Actée (€)</th><th>Performance (%)</th></tr></thead><tbody>"
-       
+        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Ventes Actées</th><th>Capital Initial Vendu (€)</th><th>Total Encaissé Net (€)</th><th>Plus/Moins-Value Actée (€)</th><th>Performance Extraite (%)</th></tr></thead><tbody>"
         for m_k in sorted(agregation_mois.keys(), reverse=True):
             d_m = agregation_mois[m_k]
             p_m_pct = (d_m["pv_totale"] / d_m["cout_total"] * 100.0) if d_m["cout_total"] > 0 else 0.0
@@ -3620,8 +3739,8 @@ with onglet_ventes:
             <tr>
                 <td class='r-name'>📅 {m_k}</td>
                 <td><b>{d_m['nb_ventes']}</b> vente(s)</td>
-                <td>{d_m['montant_total']:,.2f} €</td>
                 <td>{d_m['cout_total']:,.2f} €</td>
+                <td><b>{d_m['montant_total']:,.2f} €</b></td>
                 <td><span class='{b_m}'>{d_m['pv_totale']:+,.2f} €</span></td>
                 <td style='color:{c_m_col}; font-weight:800;'>{p_m_pct:+.2f}%</td>
             </tr>
@@ -3629,20 +3748,19 @@ with onglet_ventes:
         html_t_mois += "</tbody></table>"
         afficher_html(html_t_mois)
 
-        # --- HISTORIQUE DÉTAILLÉ & SUPPRESSION ---
-        with st.expander("📋 Historique détaillé de chaque vente & Suppression", expanded=False):
+        # --- HISTORIQUE LIGNE PAR LIGNE & BOUTON SUPPRIMER ---
+        with st.expander("📋 Historique détaillé de chaque vente & Annulation", expanded=False):
             for idx_h, item_h in enumerate(historique_v):
                 col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
                 with col_h1:
-                    st.markdown(f"**{item_h['action']}** — {item_h['qte']} act. vendues à {item_h['prix_vente']} {item_h['devise']} (PRU : {item_h['pru']})")
-                    st.caption(f"Date : {item_h['date']} | Montant : {item_h['montant_eur']:,.2f} €")
+                    st.markdown(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
+                    st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} €")
                 with col_h2:
-                    col_pv_s = "#2ecc71" if item_h['plus_value_eur'] >= 0 else "#e74c3c"
-                    st.markdown(f"Plus-value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.1f}%)</span>", unsafe_allow_html=True)
+                    col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
+                    st.markdown(f"Plus-value actée : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
                 with col_h3:
-                    if st.button("🗑️ Supprimer", key=f"suppr_vente_{item_h['id']}"):
+                    if st.button("🗑️ Supprimer", key=f"suppr_vente_{item_h['id']}_{idx_h}"):
                         st.session_state["historique_ventes"].pop(idx_h)
                         sauvegarder_dans_cloud()
                         st.rerun()
                 st.markdown("---")
-
