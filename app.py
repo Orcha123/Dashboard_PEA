@@ -799,54 +799,54 @@ if mode_ajout == "📚 Catalogue (+100 valeurs)":
                 sauvegarder_dans_cloud()
                 st.rerun()
 else:
-    requete_yahoo = st.sidebar.text_input("🌐 Tapez un nom ou ticker puis Entrée (ex: Total, Ferrari, ASML.AS, O...)").strip()
+    requete_yahoo = st.sidebar.text_input("🌐 Ticker Yahoo ou Nom (ex: MC.PA, AAPL, Total)", value="", key="input_req_yahoo").strip()
     resultats_yahoo = rechercher_actions_yahoo_live(requete_yahoo) if len(requete_yahoo) >= 2 else []
 
-    nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = requete_yahoo, requete_yahoo.upper(), "EUR", "Action Internationale"
+    nom_defaut_y = requete_yahoo
+    sym_defaut_y = requete_yahoo.upper()
+    dev_defaut_y = "EUR"
+    sec_defaut_y = "Action Internationale"
+
     if resultats_yahoo:
-        choix_res_y = st.sidebar.selectbox("Résultats trouvés :", [r["label"] for r in resultats_yahoo], key=f"sel_y_{requete_yahoo}")
+        choix_res_y = st.sidebar.selectbox("Résultats trouvés :", [r["label"] for r in resultats_yahoo], key="sel_res_yahoo_actif")
         item_y = next((r for r in resultats_yahoo if r["label"] == choix_res_y), resultats_yahoo[0])
         nom_defaut_y = item_y["nom"]
         sym_defaut_y = item_y["symbole"]
         dev_defaut_y = item_y["devise"]
         sec_defaut_y = item_y["secteur"]
-    elif len(requete_yahoo) >= 2:
-        st.sidebar.caption("💡 Astuce : Vous pouvez aussi saisir directement le ticker Yahoo (ex: `OR.PA`, `TTE.PA`, `NVDA`).")
 
     info_connue_y = WATCHLIST_DEFAUT.get(nom_defaut_y, {})
     prix_detecte, _, _, _ = recuperer_donnees(sym_defaut_y) if sym_defaut_y else (None, None, None, None)
     cible_auto = float(info_connue_y.get("prix_cible", round(prix_detecte * 0.95, 2) if prix_detecte else 100.0))
     div_auto = float(info_connue_y.get("div_eur", round(cible_auto * 0.035, 2)))
     payout_auto = float(info_connue_y.get("payout_ratio", 0.50))
-    cle_dyn = f"{sym_defaut_y}_{requete_yahoo}"
 
     with st.sidebar.form("form_ticker_libre"):
         if prix_detecte:
-            st.success(f"⚡ Cours en direct détecté : **{prix_detecte:.2f} {dev_defaut_y}**")
-        nom_libre = st.text_input("Nom de l'action", value=nom_defaut_y, key=f"nom_l_{cle_dyn}").strip()
-        sym_libre = st.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y, key=f"sym_l_{cle_dyn}").strip().upper()
-        dev_libre = st.selectbox("Devise de cotation :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1, key=f"dev_l_{cle_dyn}")
-        sec_libre = st.text_input("Secteur", value=sec_defaut_y, key=f"sec_l_{cle_dyn}")
-        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=cible_auto, step=1.0, key=f"cib_l_{cle_dyn}")
-        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=div_auto, step=0.1, key=f"div_l_{cle_dyn}")
-        payout_libre = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=payout_auto, step=0.05, key=f"pay_l_{cle_dyn}")
+            st.success(f"⚡ Cours en direct : **{prix_detecte:.2f} {dev_defaut_y}**")
+        nom_libre = st.text_input("Nom de l'action", value=nom_defaut_y).strip()
+        sym_libre = st.text_input("Ticker Yahoo exact", value=sym_defaut_y).strip().upper()
+        dev_libre = st.selectbox("Devise :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1)
+        sec_libre = st.text_input("Secteur", value=sec_defaut_y)
+        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=cible_auto, step=1.0)
+        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=div_auto, step=0.1)
+        payout_libre = st.number_input("Payout Ratio", min_value=0.0, max_value=2.0, value=payout_auto, step=0.05)
         liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-        mois_def_y = info_connue_y.get("mois_div", ["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"])
-        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=mois_def_y, key=f"mois_l_{cle_dyn}")
+        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=info_connue_y.get("mois_div", ["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"]))
 
         st.markdown("---")
-        st.caption("💼 **Optionnel : Ajouter aussi dans mon Portefeuille**")
-        qte_libre_pf = st.number_input("Quantité détenue (0 = Radar seul)", min_value=0, value=0, step=1, key=f"qte_l_{cle_dyn}")
-        pru_libre_pf = st.number_input(f"Mon PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5, key=f"pru_l_{cle_dyn}")
+        st.caption("💼 **Optionnel : Portefeuille**")
+        qte_libre_pf = st.number_input("Quantité détenue", min_value=0, value=0, step=1)
+        pru_libre_pf = st.number_input(f"PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5)
 
-        if st.form_submit_button("🚀 Valider & Ajouter cette Action", type="primary"):
+        if st.form_submit_button("🚀 Valider & Ajouter", type="primary"):
             nom_final = nom_libre if nom_libre else sym_libre
             if not sym_libre:
-                st.error("⚠️ Veuillez saisir un nom ou un ticker Yahoo.")
+                st.error("⚠️ Veuillez saisir un ticker Yahoo valide.")
             else:
                 test_p, _, _, _ = recuperer_donnees(sym_libre)
                 if test_p is None:
-                    st.error(f"❌ Ticker `{sym_libre}` introuvable sur Yahoo Finance. Vérifiez le suffixe (ex: `.PA` pour Paris).")
+                    st.error(f"❌ Ticker `{sym_libre}` introuvable sur Yahoo Finance.")
                 else:
                     nouvel_act_l = {
                         "symbole": sym_libre,
@@ -865,7 +865,7 @@ else:
                         st.session_state[f"qte_{nom_final}"] = int(qte_libre_pf)
                         st.session_state[f"pru_{nom_final}"] = float(pru_libre_pf)
                     sauvegarder_dans_cloud()
-                    st.toast(f"✅ {nom_final} ({sym_libre}) ajoutée avec succès !")
+                    st.toast(f"✅ {nom_final} ajoutée avec succès !")
                     st.rerun()
 
 with st.sidebar.expander("🗑️ Supprimer une action du radar"):
@@ -3276,10 +3276,10 @@ def lister_modeles_gemini_actifs(cle_api):
             for v in hist_ventes_ia[:15]
         ]
         bloc_ventes_prompt = (
-            f"Total Plus/Moins-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} vente(s), {nb_ventes_gagnantes_ia} gagnante(s), Cash total encaissé : {total_vol_vendu_ia:.2f} €).\n"
-            + "\n".join(resume_ventes_ia)
-            if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
-        )
+        f"Total Plus/Moins-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} vente(s), {nb_ventes_gagnantes_ia} gagnantes).\n"
+        + "\n".join(resume_ventes_ia)
+        if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
+    )
 
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
