@@ -2507,12 +2507,16 @@ with onglet_portefeuille:
         """
         afficher_html(html_pea_tri)
 
-        # ======================================================================
+# ======================================================================
         # MODULE PRIME DE FIDÉLITÉ NOMINATIF ADMINISTRÉ (+10% & ACTIONS GRATUITES)
         # ======================================================================
+        bonus_annuel_nom = 0.0
+        texte_al = ""
         eligibles_nom_pf = [
             k for k in portefeuille_utilisateur.keys()
-            if k in ("Air Liquide", "L'Oréal", "Engie", "Seb", "Crédit Agricole") and isinstance(portefeuille_utilisateur.get(k), dict) and float(portefeuille_utilisateur[k].get("qte", 0)) > 0
+            if k in ("Air Liquide", "L'Oréal", "Engie", "Seb", "Crédit Agricole")
+            and isinstance(portefeuille_utilisateur.get(k), dict)
+            and float(portefeuille_utilisateur[k].get("qte", 0)) > 0
         ]
         if eligibles_nom_pf:
             with st.expander("🏅 Prime de Fidélité Nominatif Administré (+10% Dividende & Actions Gratuites Air Liquide)", expanded=False):
@@ -2526,14 +2530,12 @@ with onglet_portefeuille:
                 )
                 st.session_state["actions_nominatif"] = selection_nom
 
-                bonus_annuel_nom = 0.0
                 for act_n in selection_nom:
                     q_n = float(portefeuille_utilisateur[act_n].get("qte", 0))
                     div_n = float(WATCHLIST_DEFAUT.get(act_n, {}).get("div_eur", 0.0))
                     bonus_annuel_nom += q_n * div_n * 0.10
 
-                    texte_al = ""
-                if "Air Liquide" in portefeuille_utilisateur and float(portefeuille_utilisateur["Air Liquide"].get("qte", 0)) > 0:
+                if "Air Liquide" in portefeuille_utilisateur and isinstance(portefeuille_utilisateur.get("Air Liquide"), dict) and float(portefeuille_utilisateur["Air Liquide"].get("qte", 0)) > 0:
                     q_al = int(portefeuille_utilisateur["Air Liquide"]["qte"])
                     act_gratuites = q_al // 10
                     manque_al = 10 - (q_al % 10) if (q_al % 10) != 0 else 0
@@ -2743,6 +2745,7 @@ with onglet_portefeuille:
                     use_container_width=True,
                     on_click=appliquer_import_ia_portefeuille,
                 )
+
 
 # ------------------------------------------------------------------------------
 # ONGLET 3 : JAUGE D'OBJECTIF DE RENTE, CALENDRIER 12 MOIS & BOULE DE NEIGE
