@@ -2622,73 +2622,127 @@ with onglet_portefeuille:
                 afficher_html(html_simu_pru)
 
         # ======================================================================
-        # IMPORT MAGIQUE DU PORTEFEUILLE PAR CAPTURE D'ÉCRAN (GEMINI VISION)
+        # IMPORT MAGIQUE DU PORTEFEUILLE (CAPTURE D'ÉCRAN OU COPIER-COLLER BRUT)
         # ======================================================================
-        with st.expander("📸 Import Magique : Mettre à jour mon portefeuille par Capture d'Écran (IA Gemini Vision)", expanded=False):
-            st.caption("Déposez une capture d'écran de votre courtier (BoursoBank, Fortuneo, Bourse Direct, Trade Republic, Crédit Agricole...) : l'IA extrait automatiquement vos quantités et vos PRU.")
-            fichier_img = st.file_uploader("Choisir une image (PNG, JPG, WEBP)", type=["png", "jpg", "jpeg", "webp"], key="up_vision_pf")
-            if fichier_img is not None:
-                if st.button("🤖 Analyser ma capture d'écran avec Gemini Vision", type="primary"):
-                    cle_gem_vis = ""
-                    if hasattr(st, "secrets"):
-                        for k_s in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
-                            v_s = str(st.secrets.get(k_s, "")).strip().strip('"').strip("'")
-                            if v_s:
-                                cle_gem_vis = v_s
-                                break
+        def appliquer_import_ia_portefeuille():
+            lignes_ext = st.session_state.get("_lignes_extraites_vision", [])
+            nb_maj = 0
+            for item_ext in lignes_ext:
+                nom_e = str(item_ext.get("nom", "")).strip()
+                qte_e = int(float(item_ext.get("qte", 0)))
+                pru_e = round(float(item_ext.get("pru", 0.0)), 2)
+                if nom_e and qte_e > 0:
+                    st.session_state["portefeuille"][nom_e] = {"qte": qte_e, "pru": pru_e}
+                    st.session_state[f"qte_{nom_e}"] = qte_e
+                    st.session_state[f"pru_{nom_e}"] = pru_e
+                    if nom_e not in st.session_state["watchlist"] and nom_e in WATCHLIST_DEFAUT:
+                        st.session_state["watchlist"][nom_e] = WATCHLIST_DEFAUT[nom_e].copy()
+                    nb_maj += 1
+            st.session_state.pop("_lignes_extraites_vision", None)
+            sauvegarder_dans_cloud()
+            st.session_state["_notif_import_ia"] = f"✅ {nb_maj} ligne(s) importée(s) et synchronisée(s) dans votre portefeuille !"
+
+        if st.session_state.get("_notif_import_ia"):
+            st.success(st.session_state.pop("_notif_import_ia"))
+
+        with st.expander("📸 Import Magique : Mettre à jour mon portefeuille par Capture d'Écran ou Copier-Coller (IA Gemini)", expanded=False):
+            mode_imp_ia = st.radio(
+                "Méthode d'importation :",
+                ["📋 Copier-Coller le texte de mon courtier (Ultra-rapide)", "📸 Déposer une Capture d'Écran (PNG / JPG)"],
+                horizontal=True,
+                key="rad_mode_imp_ia",
+            )
+
+            cle_gem_vis = ""
+            if hasattr(st, "secrets"):
+                for k_s in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
+                    v_s = str(st.secrets.get(k_s, "")).strip().strip('"').strip("'")
+                    if v_s:
+                        cle_gem_vis = v_s
+                        break
+
+            prompt_base_json = (
+                "Extrais chaque ligne d'action détenue dans ce portefeuille boursier. "
+                "Réponds UNIQUEMENT avec un tableau JSON valide de la forme : "
+                '[{"nom": "TotalEnergies", "qte": 25, "pru": 54.20}]. '
+                "Utilise exactement les noms standards du catalogue si tu reconnais l'entreprise "
+                "(ex: TotalEnergies, Air Liquide, AXA, Rubis, LVMH, Sanofi, Engie, Vinci, BNP Paribas, "
+                "Pernod Ricard, Schneider Electric, Veolia, Alphabet - Google, Microsoft, Apple, Realty Income)."
+            )
+
+            if "Copier-Coller" in mode_imp_ia:
+                texte_courtier = st.text_area(
+                    "Collez ici en vrac les lignes copiées depuis votre courtier (BoursoBank, Crédit Agricole, Fortuneo, Bourse Direct, Excel...) :",
+                    placeholder="Exemple : TotalEnergies 25 titres PRU 54,20 € | Engie 40 actions à 15,10 € | Rubis 30 x 24,50 €...",
+                    height=100,
+                    key="txt_imp_courtier",
+                )
+                if st.button("🤖 Extraire mes positions depuis ce texte", type="primary", key="btn_ext_txt"):
                     if not cle_gem_vis:
                         st.error("⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit.")
+                    elif not texte_courtier.strip():
+                        st.warning("⚠️ Collez d'abord le texte de vos positions ci-dessus.")
                     else:
-                        import base64
-                        with st.spinner("🔍 Lecture optique de vos lignes et PRU en cours..."):
-                            b64_img = base64.b64encode(fichier_img.read()).decode("utf-8")
-                            mime_t = fichier_img.type or "image/jpeg"
-                            prompt_vis = (
-                                "Analyse cette capture d'écran de portefeuille boursier. Extrais chaque ligne d'action détenue. "
-                                "Réponds UNIQUEMENT avec un tableau JSON valide de la forme : "
-                                '[{"nom": "TotalEnergies", "qte": 25, "pru": 54.20}]. '
-                                "Utilise les noms standards français si tu reconnais l'entreprise (ex: TotalEnergies, Air Liquide, AXA, Rubis, LVMH, Sanofi, Engie, Vinci, BNP Paribas, Pernod Ricard, Schneider Electric, Veolia)."
-                            )
-                            payload_v = json.dumps({
-                                "contents": [{
-                                    "parts": [
-                                        {"text": prompt_vis},
-                                        {"inline_data": {"mime_type": mime_t, "data": b64_img}}
-                                    ]
-                                }]
+                        with st.spinner("🧠 Analyse de vos lignes et PRU en cours..."):
+                            payload_t = json.dumps({
+                                "contents": [{"parts": [{"text": f"{prompt_base_json}\n\nTexte du portefeuille :\n{texte_courtier}"}]}]
                             }).encode("utf-8")
                             for mod_v in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
                                 try:
                                     url_v = f"https://generativelanguage.googleapis.com/v1beta/models/{mod_v}:generateContent?key={urllib.parse.quote(cle_gem_vis)}"
-                                    req_v = urllib.request.Request(url_v, data=payload_v, headers={"Content-Type": "application/json"})
+                                    req_v = urllib.request.Request(url_v, data=payload_t, headers={"Content-Type": "application/json"})
                                     with urllib.request.urlopen(req_v, timeout=25) as resp_v:
                                         res_v = json.loads(resp_v.read().decode("utf-8"))
                                         txt_v = res_v["candidates"][0]["content"]["parts"][0]["text"]
-                                        deb_j = txt_v.find("[")
-                                        fin_j = txt_v.rfind("]")
+                                        deb_j, fin_j = txt_v.find("["), txt_v.rfind("]")
                                         if deb_j != -1 and fin_j != -1:
                                             st.session_state["_lignes_extraites_vision"] = json.loads(txt_v[deb_j:fin_j+1])
                                             break
                                 except Exception:
                                     continue
+            else:
+                fichier_img = st.file_uploader("Choisir une capture d'écran (PNG, JPG, WEBP)", type=["png", "jpg", "jpeg", "webp"], key="up_vision_pf_v2")
+                if fichier_img is not None:
+                    if st.button("🤖 Analyser ma capture d'écran avec Gemini Vision", type="primary", key="btn_ext_img"):
+                        if not cle_gem_vis:
+                            st.error("⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit.")
+                        else:
+                            import base64
+                            with st.spinner("🔍 Lecture optique de vos lignes et PRU en cours..."):
+                                b64_img = base64.b64encode(fichier_img.read()).decode("utf-8")
+                                mime_t = fichier_img.type or "image/jpeg"
+                                payload_v = json.dumps({
+                                    "contents": [{
+                                        "parts": [
+                                            {"text": prompt_base_json},
+                                            {"inline_data": {"mime_type": mime_t, "data": b64_img}}
+                                        ]
+                                    }]
+                                }).encode("utf-8")
+                                for mod_v in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+                                    try:
+                                        url_v = f"https://generativelanguage.googleapis.com/v1beta/models/{mod_v}:generateContent?key={urllib.parse.quote(cle_gem_vis)}"
+                                        req_v = urllib.request.Request(url_v, data=payload_v, headers={"Content-Type": "application/json"})
+                                        with urllib.request.urlopen(req_v, timeout=25) as resp_v:
+                                            res_v = json.loads(resp_v.read().decode("utf-8"))
+                                            txt_v = res_v["candidates"][0]["content"]["parts"][0]["text"]
+                                            deb_j, fin_j = txt_v.find("["), txt_v.rfind("]")
+                                            if deb_j != -1 and fin_j != -1:
+                                                st.session_state["_lignes_extraites_vision"] = json.loads(txt_v[deb_j:fin_j+1])
+                                                break
+                                    except Exception:
+                                        continue
 
-                if st.session_state.get("_lignes_extraites_vision"):
-                    lignes_ext = st.session_state["_lignes_extraites_vision"]
-                    st.success(f"✅ {len(lignes_ext)} position(s) détectée(s) sur votre capture !")
-                    st.dataframe(pd.DataFrame(lignes_ext), use_container_width=True)
-                    if st.button("📥 Appliquer ces positions à mon Portefeuille", type="primary"):
-                        for item_ext in lignes_ext:
-                            nom_e = str(item_ext.get("nom", "")).strip()
-                            qte_e = int(float(item_ext.get("qte", 0)))
-                            pru_e = float(item_ext.get("pru", 0.0))
-                            if nom_e and qte_e > 0:
-                                st.session_state["portefeuille"][nom_e] = {"qte": qte_e, "pru": pru_e}
-                                st.session_state[f"qte_{nom_e}"] = qte_e
-                                st.session_state[f"pru_{nom_e}"] = pru_e
-                        st.session_state.pop("_lignes_extraites_vision", None)
-                        sauvegarder_dans_cloud()
-                        st.toast("✅ Portefeuille mis à jour depuis votre capture d'écran !")
-                        st.rerun()
+            if st.session_state.get("_lignes_extraites_vision"):
+                lignes_ext = st.session_state["_lignes_extraites_vision"]
+                st.success(f"✅ {len(lignes_ext)} position(s) détectée(s) !")
+                st.dataframe(pd.DataFrame(lignes_ext), use_container_width=True)
+                st.button(
+                    "📥 Appliquer ces positions à mon Portefeuille",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=appliquer_import_ia_portefeuille,
+                )
 
 # ------------------------------------------------------------------------------
 # ONGLET 3 : JAUGE D'OBJECTIF DE RENTE, CALENDRIER 12 MOIS & BOULE DE NEIGE
