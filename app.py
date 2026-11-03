@@ -2699,7 +2699,7 @@ with onglet_dividendes:
     if not portefeuille_utilisateur:
         st.warning("Ajoutez des actions dans votre portefeuille pour générer votre calendrier de revenus passifs.")
     else:
-    # --- TABLEAU UNIQUE DES PROCHAINS DÉTACHEMENTS (HORIZON 90 JOURS) ---
+    # --- TABLEAU DES PROCHAINS DÉTACHEMENTS (90J - STYLE ARGON) & ENCAISSEMENT ESPÈCES ---
         @st.cache_data(ttl=3600)
         def recuperer_prochain_detachement_90j(symbole):
             try:
@@ -2710,7 +2710,7 @@ with onglet_dividendes:
                 divs = data["chart"]["result"][0].get("events", {}).get("dividends", {})
                 if not divs:
                     return None, None, None
-               
+
                 ajd = datetime.now().date()
                 prochaines_dates = []
                 for ts_key, d_info in divs.items():
@@ -2724,7 +2724,7 @@ with onglet_dividendes:
                         ecart_jours = (dt_proj - ajd).days
                         if 0 <= ecart_jours <= 90:
                             prochaines_dates.append((ecart_jours, dt_proj, montant_u))
-               
+
                 if not prochaines_dates:
                     return None, None, None
                 prochaines_dates.sort(key=lambda x: x[0])
@@ -2735,7 +2735,7 @@ with onglet_dividendes:
         lignes_detachement_90j = []
         source_actions = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
         for nom_d, pos_d in portefeuille_utilisateur.items():
-            if nom_d == "Espèces" or float(pos_d.get("qte", 0)) <= 0:
+            if nom_d in ("Espèces", "_historique_ventes") or not isinstance(pos_d, dict) or float(pos_d.get("qte", 0)) <= 0:
                 continue
             info_d = source_actions.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
             sym_d = info_d.get("symbole", "")
@@ -2756,51 +2756,82 @@ with onglet_dividendes:
 
         if lignes_detachement_90j:
             lignes_detachement_90j.sort(key=lambda x: x["jours"])
-            lignes_html_90j = ""
+            html_90j = """
+            <div style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:0.85em; font-weight:800; text-transform:uppercase; color:#3498db;">📌 Prochains Détachements de Dividendes (Horizon 90 Jours)</span>
+                <span class="b-blue">{nb} détachement(s) détecté(s)</span>
+            </div>
+            <table class="r-table">
+            <thead>
+                <tr>
+                    <th style="text-align:left;">Action</th>
+                    <th>Date Ex-Dividende Estimée</th>
+                    <th>Échéance</th>
+                    <th>Coupon Unitaire</th>
+                    <th>Montant Estimé</th>
+                </tr>
+            </thead>
+            <tbody>
+            """.format(nb=len(lignes_detachement_90j))
+
             for item_d in lignes_detachement_90j:
                 j_rest = item_d.get("jours", 90)
-                if j_rest <= 15:
-                    bg_b, col_b, brd_b = "#fef2f2", "#dc2626", "#fecaca"
-                elif j_rest <= 45:
-                    bg_b, col_b, brd_b = "#eff6ff", "#2563eb", "#bfdbfe"
-                else:
-                    bg_b, col_b, brd_b = "#f8fafc", "#475569", "#e2e8f0"
+                b_ech = "b-red" if j_rest <= 15 else ("b-blue" if j_rest <= 45 else "b-neutral")
+                html_90j += f"""
+                <tr>
+                    <td class="r-name">🏢 {item_d['Action']}</td>
+                    <td><b>📅 {item_d['Date Ex-Dividende']}</b></td>
+                    <td><span class="{b_ech}">⏳ {item_d['Échéance']}</span></td>
+                    <td>{item_d['Coupon unitaire']} / action</td>
+                    <td><span class="b-green">+{item_d['Total estimé']}</span></td>
+                </tr>
+                """
+            html_90j += "</tbody></table>"
+            afficher_html(html_90j)
 
-                lignes_html_90j += (
-                    f"<tr style='border-bottom:1px solid #f1f5f9;'>"
-                    f"<td style='padding:12px 10px; font-weight:700; color:#0f172a; font-size:0.95rem;'>🏢 {item_d['Action']}</td>"
-                    f"<td style='padding:12px 10px; color:#334155; font-weight:600; font-size:0.9rem;'>📅 {item_d['Date Ex-Dividende']}</td>"
-                    f"<td style='padding:12px 10px;'>"
-                    f"<span style='background:{bg_b}; color:{col_b}; border:1px solid {brd_b}; padding:4px 10px; border-radius:999px; font-weight:700; font-size:0.8rem;'>⏳ {item_d['Échéance']}</span>"
-                    f"</td>"
-                    f"<td style='padding:12px 10px; color:#475569; font-weight:600; font-size:0.9rem;'>{item_d['Coupon unitaire']} / action</td>"
-                    f"<td style='padding:12px 10px; text-align:right;'>"
-                    f"<span style='background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; padding:5px 12px; border-radius:8px; font-weight:800; font-size:0.92rem;'>+{item_d['Total estimé']}</span>"
-                    f"</td>"
-                    f"</tr>"
-                )
+        # --- GUICHET D'ENCAISSEMENT DES DIVIDENDES VERS LA POCHE ESPÈCES ---
+        def encaisser_dividende_vers_especes():
+            act_enc = st.session_state.get("sel_act_enc_div")
+            mt_enc = float(st.session_state.get("input_mt_enc_div", 0.0))
+            if act_enc and mt_enc > 0:
+                esp_actuel = float(st.session_state.get("pru_Espèces", st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0)))
+                nouveau_esp = round(esp_actuel + mt_enc, 2)
+                st.session_state["pru_Espèces"] = nouveau_esp
+                st.session_state["qte_Espèces"] = 1
+                st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouveau_esp}
+                st.session_state["dividendes_encaisses_cumul"] = round(float(st.session_state.get("dividendes_encaisses_cumul", 0.0)) + mt_enc, 2)
+                sauvegarder_dans_cloud()
+                st.session_state["_notif_div_encaisse"] = f"✅ +{mt_enc:,.2f} € de dividendes ({act_enc}) crédités dans votre poche Espèces (Nouveau solde Espèces : {nouveau_esp:,.2f} €) !"
 
-            nb_det = len(lignes_detachement_90j)
-            html_carte_detachement = (
-                f"<div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:18px 22px; box-shadow:0 4px 12px rgba(15,23,42,0.04); margin-bottom:20px;'>"
-                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;'>"
-                f"<div style='font-size:0.8rem; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;'>📌 PROCHAINS DÉTACHEMENTS DE DIVIDENDES (HORIZON 90 JOURS)</div>"
-                f"<div style='background:#e0f2fe; color:#0284c7; padding:4px 12px; border-radius:999px; font-size:0.78rem; font-weight:700;'>{nb_det} détachement{'s' if nb_det > 1 else ''} à venir</div>"
-                f"</div>"
-                f"<table style='width:100%; border-collapse:collapse; text-align:left;'>"
-                f"<thead><tr style='border-bottom:2px solid #f1f5f9; color:#94a3b8; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em;'>"
-                f"<th style='padding:8px 10px;'>Action</th>"
-                f"<th style='padding:8px 10px;'>Date Ex-Dividende</th>"
-                f"<th style='padding:8px 10px;'>Échéance</th>"
-                f"<th style='padding:8px 10px;'>Coupon Unitaire</th>"
-                f"<th style='padding:8px 10px; text-align:right;'>Montant Estimé</th>"
-                f"</tr></thead>"
-                f"<tbody>{lignes_html_90j}</tbody>"
-                f"</table>"
-                f"<div style='margin-top:10px; font-size:0.78rem; color:#94a3b8;'>💡 <i>L'action doit être détenue en portefeuille au plus tard la veille de la date Ex-Dividende pour percevoir le coupon.</i></div>"
-                f"</div>"
-            )
-            st.markdown(html_carte_detachement, unsafe_allow_html=True)
+        if st.session_state.get("_notif_div_encaisse"):
+            st.success(st.session_state.pop("_notif_div_encaisse"))
+
+        actions_div_pf = [
+            k for k, v in portefeuille_utilisateur.items()
+            if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+        ]
+        if actions_div_pf:
+            with st.expander("📥 Guichet d'Encaissement en 1 Clic : Créditer un dividende détaché dans ma poche Espèces", expanded=False):
+                col_ed1, col_ed2, col_ed3 = st.columns([2, 1.5, 1.5])
+                with col_ed1:
+                    act_choisie_div = st.selectbox("Action ayant versé son dividende :", actions_div_pf, key="sel_act_enc_div")
+                info_ed = WATCHLIST_DEFAUT.get(act_choisie_div, {})
+                qte_ed = float(portefeuille_utilisateur.get(act_choisie_div, {}).get("qte", 0))
+                fact_ed = (1.0 / TAUX_USD_EUR) if info_ed.get("devise") == "USD" else 1.0
+                nb_vers_ed = max(1, len(info_ed.get("mois_div", ["Mai"])))
+                bonus_nom_ed = 1.10 if act_choisie_div in st.session_state.get("actions_nominatif", []) else 1.0
+                montant_coupon_defaut = round((qte_ed * float(info_ed.get("div_eur", 0.0)) * fact_ed * bonus_nom_ed) / nb_vers_ed, 2)
+
+                with col_ed2:
+                    st.number_input("Montant net reçu (€) :", min_value=0.01, value=max(0.01, montant_coupon_defaut), step=1.0, key="input_mt_enc_div")
+                with col_ed3:
+                    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                    st.button(
+                        "💶 Créditer mes Espèces",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=encaisser_dividende_vers_especes,
+                    )
         mois_ordre = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
         noms_mois_complets = {
             "Jan": "Janvier", "Fév": "Février", "Mar": "Mars", "Avr": "Avril",
