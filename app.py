@@ -3420,22 +3420,20 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
+st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
+col_ia1, col_ia2, col_ia3 = st.columns(3)
+prompt_choisi = None
+code_audit_choisi = ""
+titre_audit = ""
 
-    st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
-
-    col_ia1, col_ia2, col_ia3 = st.columns(3)
-    prompt_choisi = None
-    code_audit_choisi = ""
-    titre_audit = ""
-
-    if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", use_container_width=True):
-        titre_audit = "Audit Complet 360° & Fiscalité"
-        code_audit_choisi = "AUDIT_1"
-        prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
-    if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
-        titre_audit = "Plan d'Action DCA du Mois"
-        code_audit_choisi = "AUDIT_2"
-        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € sur 1 ou 2 valeurs maximum ce mois-ci ?"
+if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", use_container_width=True):
+    titre_audit = "Audit Complet 360° & Fiscalité"
+    code_audit_choisi = "AUDIT_1"
+    prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
+if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
+    titre_audit = "Plan d'Action DCA du Mois"
+    code_audit_choisi = "AUDIT_2"
+    prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € sur 1 ou 2 valeurs maximum ce mois-ci ?"
     if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", use_container_width=True):
         titre_audit = "Arbitrage PEA (EUR) vs Actions US ($)"
         code_audit_choisi = "AUDIT_3"
