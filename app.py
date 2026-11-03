@@ -3144,7 +3144,7 @@ with onglet_ia:
                 (" general", " général"), (" etre ", " être "),
                 ("achat", "achat"), ("renforcer", "renforcer"),
             ]:
-                question_utilisateur = question_utilisateur.replace(sans_acc, avec_acc).replace(sans_acc.capitalize(), avec_acc.capitalize())
+                    question_utilisateur = question_utilisateur.replace(sans_acc, avec_acc).replace(sans_acc.capitalize(), avec_acc.capitalize())
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
         rente_mens_nette = dividendes_nets_totaux_eur / 12.0
