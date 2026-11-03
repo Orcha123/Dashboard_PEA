@@ -3398,8 +3398,8 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     for m_prio in modeles_propres + priorite_modeles + modeles_candidats:
         if m_prio not in modeles_ordonnes:
             modeles_ordonnes.append(m_prio)
-        erreurs_ia = []
-        for mod in modeles_ordonnes[:12]:
+    erreurs_ia = []
+    for mod in modeles_ordonnes[:12]:
             try:
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={urllib.parse.quote(cle_gemini)}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
