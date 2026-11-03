@@ -1893,6 +1893,51 @@ with onglet_radar:
         html_t3 += "</tbody></table>"
         afficher_html(html_t3)
 
+        # --- DÉTECTEUR DE YIELD TRAP (PIÈGES À RENDEMENT) & BONUS NOMINATIF +10% ---
+        valeurs_nominatif_eligibles = {"Air Liquide", "L'Oréal", "Engie", "Seb", "Crédit Agricole"}
+        alertes_yield_trap = []
+        pistes_nominatif = []
+        map_t2_trap = {d["Actif"]: d for d in donnees_t2}
+
+        for item_d in donnees_t3_enrichies:
+            nom_pur_d = item_d["Actif"].rsplit(" (", 1)[0]
+            ecart_3a_d = float(map_t2_trap.get(item_d["Actif"], {}).get("EcartNum", 0.0))
+            rend_d = item_d["RendPct"]
+            pay_d = item_d["PayoutPct"]
+
+            if rend_d >= 7.8 and (pay_d >= 75.0 or ecart_3a_d <= -12.0):
+                motif_trap = f"Rendement élevé ({rend_d:.2f}%) avec Payout tendu ({pay_d:.0f}%)" if pay_d >= 75.0 else f"Rendement facial ({rend_d:.2f}%) gonflé par une chute du cours ({ecart_3a_d:+.1f}% vs 3A)"
+                alertes_yield_trap.append(f"<li><b>{item_d['Actif']}</b> : {motif_trap} — <i>Vérifiez le cash-flow avant d'acheter.</i></li>")
+
+            if nom_pur_d in valeurs_nominatif_eligibles:
+                rend_boost = rend_d * 1.10
+                pistes_nominatif.append(
+                    f"<span class='cal-pill' style='border:1px solid rgba(46,204,113,0.4);'>"
+                    f"🏅 <b>{nom_pur_d}</b> : {rend_d:.2f}% ➔ <b style='color:#2ecc71;'>{rend_boost:.2f}%</b> au Nominatif (+10%)"
+                    f"</span>"
+                )
+
+        html_trap = (
+            "<ul style='margin:6px 0 0 18px; padding:0; font-size:0.84em; line-height:1.5;'>" + "".join(alertes_yield_trap) + "</ul>"
+            if alertes_yield_trap
+            else "<div style='font-size:0.84em; color:#2ecc71; font-weight:700; margin-top:4px;'>✅ Aucun piège à rendement (Yield Trap) détecté dans votre sélection actuelle.</div>"
+        )
+        html_nom_pills = "".join(pistes_nominatif) if pistes_nominatif else "<span style='font-size:0.84em; opacity:0.7;'>Aucune valeur éligible au bonus +10% dans le radar.</span>"
+
+        html_radar_pro = f"""
+        <div class="argon-grid" style="margin-top: 10px;">
+            <div class="argon-card" style="text-align:left; border-left: 4px solid {'#e74c3c' if alertes_yield_trap else '#2ecc71'};">
+                <div class="argon-title" style="color:{'#e74c3c' if alertes_yield_trap else '#2ecc71'};">🚨 Détecteur Algorithmique de "Yield Trap" (Piège à Rendement)</div>
+                {html_trap}
+            </div>
+            <div class="argon-card" style="text-align:left; border-left: 4px solid #f39c12;">
+                <div class="argon-title" style="color:#f39c12;">🏅 Valeurs du Radar Éligibles à la Prime de Fidélité (+10% Dividende au Nominatif Administré)</div>
+                <div style="margin-top:6px;">{html_nom_pills}</div>
+            </div>
+        </div>
+        """
+        afficher_html(html_radar_pro)
+
 
 # ------------------------------------------------------------------------------
 # ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
