@@ -3224,7 +3224,22 @@ with onglet_ia:
         except Exception:
             pass
         return modeles
-
+@st.cache_data(ttl=3600)
+def lister_modeles_gemini_actifs(cle_api):
+    modeles = []
+    try:
+        url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(cle_api)}"
+        req_list = urllib.request.Request(url_list, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req_list, timeout=8) as resp_l:
+            data_l = json.loads(resp_l.read().decode("utf-8"))
+            for m_info in data_l.get("models", []):
+                methodes = m_info.get("supportedGenerationMethods", [])
+                nom_m = m_info.get("name", "").replace("models/", "")
+                if "generateContent" in methodes and "gemini" in nom_m:
+                    modeles.append(nom_m)
+    except Exception:
+        pass
+    return modeles
     def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
         if hasattr(st, "secrets"):
