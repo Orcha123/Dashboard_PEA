@@ -670,34 +670,62 @@ def recuperer_donnees(symbole):
         return None, None, None, None
 @st.cache_data(ttl=1800)
 def rechercher_actions_yahoo_live(requete):
-    """Recherche n'importe quelle action sur Yahoo Finance par nom ou ticker."""
+    """Recherche hybride : Méga-Catalogue local instantané + API Yahoo Finance."""
     if not requete or len(requete.strip()) < 2:
         return []
-    q_enc = urllib.parse.quote(requete.strip())
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    q_clean = requete.strip()
+    q_low = q_clean.lower()
     resultats = []
-    try:
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            for item in data.get("quotes", []):
-                q_type = item.get("quoteType", "")
-                if q_type in ("EQUITY", "ETF"):
-                    sym = item.get("symbol", "")
-                    nom_long = item.get("shortname") or item.get("longname") or sym
-                    bourse = item.get("exchDisp") or item.get("exchange") or ""
-                    secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
-                    est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
-                    dev_y = "EUR" if est_eur else "USD"
-                    resultats.append({
-                        "label": f"{nom_long} ({sym} — {bourse} | {dev_y})",
-                        "nom": nom_long,
-                        "symbole": sym,
-                        "devise": dev_y,
-                        "secteur": secteur_y,
-                    })
-    except Exception:
-        pass
+    symboles_vus = set()
+
+    # 1. Recherche instantanée dans le catalogue local (+100 valeurs)
+    for lib_cat, (sym_c, dev_c, sec_c) in CATALOGUE_ACTIONS.items():
+        nom_c = lib_cat.rsplit(" (", 1)[0]
+        if q_low in nom_c.lower() or q_low in sym_c.lower() or q_low in sec_c.lower():
+            resultats.append({
+                "label": f"⭐ {nom_c} ({sym_c} — Catalogue | {dev_c})",
+                "nom": nom_c,
+                "symbole": sym_c,
+                "devise": dev_c,
+                "secteur": sec_c,
+            })
+            symboles_vus.add(sym_c.upper())
+
+    # 2. Recherche en direct sur Yahoo Finance (query2 + query1 en secours)
+    q_enc = urllib.parse.quote(q_clean)
+    headers_yahoo = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+    for host_y in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
+        url = f"https://{host_y}/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
+        req = urllib.request.Request(url, headers=headers_yahoo)
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("quotes", []):
+                    q_type = item.get("quoteType", "")
+                    sym = str(item.get("symbol", "")).strip().upper()
+                    if q_type in ("EQUITY", "ETF") and sym and sym not in symboles_vus:
+                        nom_long = item.get("shortname") or item.get("longname") or sym
+                        bourse = item.get("exchDisp") or item.get("exchange") or ""
+                        secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
+                        est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
+                        dev_y = "EUR" if est_eur else "USD"
+                        resultats.append({
+                            "label": f"{nom_long} ({sym} — {bourse} | {dev_y})",
+                            "nom": nom_long,
+                            "symbole": sym,
+                            "devise": dev_y,
+                            "secteur": secteur_y,
+                        })
+                        symboles_vus.add(sym)
+            if resultats:
+                break
+        except Exception:
+            continue
+
     return resultats
 
 mode_ajout = st.sidebar.radio(
@@ -764,63 +792,78 @@ if mode_ajout == "📚 Catalogue (+100 valeurs)":
                 sauvegarder_dans_cloud()
                 st.rerun()
 else:
-    requete_yahoo = st.sidebar.text_input("🌐 Tapez un nom ou ticker (ex: Novo Nordisk, Ferrari, Dassault, O...)").strip()
+    col_yq1, col_yq2 = st.sidebar.columns([3, 1.2])
+    with col_yq1:
+        requete_yahoo = st.text_input("🌐 Nom ou Ticker Yahoo", placeholder="Ex: Ferrari, Novo, MC.PA...").strip()
+    with col_yq2:
+        st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+        st.button("🔎 Chercher", use_container_width=True)
+
     resultats_yahoo = rechercher_actions_yahoo_live(requete_yahoo) if len(requete_yahoo) >= 2 else []
 
-    nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = "", requete_yahoo.upper(), "EUR", "Action Internationale"
+    nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = requete_yahoo, requete_yahoo.upper(), "EUR", "Action Internationale"
     if resultats_yahoo:
-        choix_res_y = st.sidebar.selectbox("Résultats Yahoo Finance :", [r["label"] for r in resultats_yahoo])
+        choix_res_y = st.sidebar.selectbox("Résultats trouvés :", [r["label"] for r in resultats_yahoo])
         item_y = next((r for r in resultats_yahoo if r["label"] == choix_res_y), resultats_yahoo[0])
         nom_defaut_y = item_y["nom"]
         sym_defaut_y = item_y["symbole"]
         dev_defaut_y = item_y["devise"]
         sec_defaut_y = item_y["secteur"]
 
+    info_connue_y = WATCHLIST_DEFAUT.get(nom_defaut_y, {})
     prix_detecte, _, _, _ = recuperer_donnees(sym_defaut_y) if sym_defaut_y else (None, None, None, None)
-    cible_auto = round(prix_detecte * 0.95, 2) if prix_detecte else 100.0
+    cible_auto = float(info_connue_y.get("prix_cible", round(prix_detecte * 0.95, 2) if prix_detecte else 100.0))
+    div_auto = float(info_connue_y.get("div_eur", round(cible_auto * 0.035, 2)))
+    payout_auto = float(info_connue_y.get("payout_ratio", 0.50))
 
-    with st.sidebar.form("form_ticker_libre"):
-        if prix_detecte:
-            st.success(f"⚡ Cours en direct détecté : **{prix_detecte:.2f} {dev_defaut_y}**")
-        nom_libre = st.text_input("Nom de l'action", value=nom_defaut_y).strip()
-        sym_libre = st.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y).strip().upper()
-        dev_libre = st.selectbox("Devise de cotation :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1)
-        sec_libre = st.text_input("Secteur", value=sec_defaut_y)
-        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=float(cible_auto), step=1.0)
-        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=float(round(cible_auto * 0.035, 2)), step=0.1)
-        payout_libre = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.50, step=0.05)
-        liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"])
+    if prix_detecte:
+        st.sidebar.success(f"⚡ Cours en direct détecté : **{prix_detecte:.2f} {dev_defaut_y}**")
 
-        st.markdown("---")
-        st.caption("💼 **Optionnel : Ajouter aussi dans mon Portefeuille**")
-        qte_libre_pf = st.number_input("Quantité détenue (0 = Radar seul)", min_value=0, value=0, step=1)
-        pru_libre_pf = st.number_input(f"Mon PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5)
+    nom_libre = st.sidebar.text_input("Nom de l'action", value=nom_defaut_y, key=f"yl_nom_{sym_defaut_y}").strip()
+    sym_libre = st.sidebar.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y, key=f"yl_sym_{sym_defaut_y}").strip().upper()
+    dev_libre = st.sidebar.selectbox("Devise de cotation :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1, key=f"yl_dev_{sym_defaut_y}")
+    sec_libre = st.sidebar.text_input("Secteur", value=sec_defaut_y, key=f"yl_sec_{sym_defaut_y}")
+    cible_libre = st.sidebar.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=cible_auto, step=1.0, key=f"yl_cib_{sym_defaut_y}")
+    div_libre = st.sidebar.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=div_auto, step=0.1, key=f"yl_div_{sym_defaut_y}")
+    payout_libre = st.sidebar.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=payout_auto, step=0.05, key=f"yl_pay_{sym_defaut_y}")
+    liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+    mois_def_y = info_connue_y.get("mois_div", ["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"])
+    mois_libre = st.sidebar.multiselect("Mois de versement :", liste_mois_possibles, default=mois_def_y, key=f"yl_mois_{sym_defaut_y}")
 
-        if st.form_submit_button("🚀 Valider & Ajouter cette Action", type="primary"):
-            if nom_libre and sym_libre:
-                test_p, _, _, _ = recuperer_donnees(sym_libre)
-                if test_p is None:
-                    st.error(f"❌ Ticker `{sym_libre}` introuvable sur Yahoo Finance.")
-                else:
-                    nouvel_act_l = {
-                        "symbole": sym_libre,
-                        "prix_cible": cible_libre,
-                        "secteur": sec_libre,
-                        "div_eur": div_libre,
-                        "payout_ratio": payout_libre,
-                        "croissance_5a": "+5.0%",
-                        "mois_div": mois_libre,
-                        "devise": dev_libre,
-                    }
-                    st.session_state["watchlist"][nom_libre] = nouvel_act_l
-                    WATCHLIST_DEFAUT[nom_libre] = nouvel_act_l
-                    if qte_libre_pf > 0:
-                        st.session_state["portefeuille"][nom_libre] = {"qte": int(qte_libre_pf), "pru": float(pru_libre_pf)}
-                        st.session_state[f"qte_{nom_libre}"] = int(qte_libre_pf)
-                        st.session_state[f"pru_{nom_libre}"] = float(pru_libre_pf)
-                    sauvegarder_dans_cloud()
-                    st.rerun()
+    st.sidebar.markdown("---")
+    st.sidebar.caption("💼 **Optionnel : Ajouter aussi dans mon Portefeuille**")
+    qte_libre_pf = st.sidebar.number_input("Quantité détenue (0 = Radar seul)", min_value=0, value=0, step=1, key=f"yl_qte_{sym_defaut_y}")
+    pru_libre_pf = st.sidebar.number_input(f"Mon PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5, key=f"yl_pru_{sym_defaut_y}")
+
+    if st.sidebar.button("🚀 Valider & Ajouter cette Action", type="primary", use_container_width=True):
+        sym_final = sym_libre or sym_defaut_y or requete_yahoo.upper()
+        nom_final = nom_libre or nom_defaut_y or sym_final
+        if not sym_final:
+            st.sidebar.error("⚠️ Veuillez saisir un nom ou un ticker Yahoo.")
+        else:
+            test_p, _, _, _ = recuperer_donnees(sym_final)
+            if test_p is None:
+                st.sidebar.error(f"❌ Ticker `{sym_final}` introuvable sur Yahoo Finance. Vérifiez le suffixe (ex: `.PA` pour Paris).")
+            else:
+                nouvel_act_l = {
+                    "symbole": sym_final,
+                    "prix_cible": cible_libre,
+                    "secteur": sec_libre,
+                    "div_eur": div_libre,
+                    "payout_ratio": payout_libre,
+                    "croissance_5a": info_connue_y.get("croissance_5a", "+5.0%"),
+                    "mois_div": mois_libre,
+                    "devise": dev_libre,
+                }
+                st.session_state["watchlist"][nom_final] = nouvel_act_l
+                WATCHLIST_DEFAUT[nom_final] = nouvel_act_l
+                if qte_libre_pf > 0:
+                    st.session_state["portefeuille"][nom_final] = {"qte": int(qte_libre_pf), "pru": float(pru_libre_pf)}
+                    st.session_state[f"qte_{nom_final}"] = int(qte_libre_pf)
+                    st.session_state[f"pru_{nom_final}"] = float(pru_libre_pf)
+                sauvegarder_dans_cloud()
+                st.toast(f"✅ {nom_final} ({sym_final}) ajoutée avec succès !")
+                st.rerun()
 
 with st.sidebar.expander("🗑️ Supprimer une action du radar"):
     if WATCHLIST:
@@ -2770,7 +2813,7 @@ with onglet_ia:
     quota_utilise = st.session_state.get("quota_ia_utilise", 0)
     quota_restant = max(0, quota_ia_max - quota_utilise)
 
-    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k != "Espèces" and k in WATCHLIST_DEFAUT)
+    nb_lignes_actions = sum(1 for k in portefeuille_utilisateur if k not in ("Espèces", "_historique_ventes") and k in WATCHLIST_DEFAUT)
     poids_max_ligne = 0.0
     nom_max_ligne = "Aucune"
     if valeur_totale_portefeuille > 0 and lignes_triees:
@@ -2814,12 +2857,26 @@ with onglet_ia:
     texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
     etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
 
+    # --- SYNTHÈSE DES PLUS-VALUES ACTÉES POUR LE COACH IA ---
+    hist_ventes_ia = st.session_state.get("historique_ventes", [])
+    total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
+    total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
+    total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
+    perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
+    nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
+    texte_bilan_ventes_flash = (
+        f" Vos arbitrages ont permis d'acter <b>{total_pv_actee_ia:+,.2f} €</b> de plus-values réelles "
+        f"(performance d'extraction de <b>{perf_extraction_ia:+.2f}%</b> sur {len(hist_ventes_ia)} vente(s))."
+        if hist_ventes_ia else " Aucune vente actée enregistrée pour le moment."
+    )
+
     html_phrase_flash = f"""
     <div class="ia-flash">
-        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}%) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois), tandis que les meilleures opportunités DCA du moment sont {texte_opps_moment}.
+        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille actif de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}% latent) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois).{texte_bilan_ventes_flash} Les meilleures opportunités DCA du moment sont {texte_opps_moment}.
     </div>
     """
     afficher_html(html_phrase_flash)
+
     # ==========================================================================
     # SYNTHÈSE CROISÉE 360° DES OPPORTUNITÉS DU MOMENT (RADAR + TECH + DIV + PF)
     # ==========================================================================
@@ -2829,107 +2886,105 @@ with onglet_ia:
 
     synthese_opportunites = []
     for d1 in donnees_t1:
-         clef_actif = d1["Actif"]
-         nom_b = d1["NomBrut"]
-         d2 = map_t2_ia.get(clef_actif, {})
-         d3 = map_t3_ia.get(clef_actif, {})
-         d4 = map_t4_ia.get(clef_actif, {})
+        clef_actif = d1["Actif"]
+        nom_b = d1["NomBrut"]
+        d2 = map_t2_ia.get(clef_actif, {})
+        d3 = map_t3_ia.get(clef_actif, {})
+        d4 = map_t4_ia.get(clef_actif, {})
 
-         info_w = WATCHLIST_DEFAUT.get(nom_b, {})
-         devise_a = info_w.get("devise", "EUR")
-         sym_d = "$" if devise_a == "USD" else "€"
-         facteur_d = (1.0 / TAUX_USD_EUR) if devise_a == "USD" else 1.0
+        info_w = WATCHLIST_DEFAUT.get(nom_b, {})
+        devise_a = info_w.get("devise", "EUR")
+        sym_d = "$" if devise_a == "USD" else "€"
+        facteur_d = (1.0 / TAUX_USD_EUR) if devise_a == "USD" else 1.0
 
-         try:
-             prix_f = float(str(d1["Prix"]).split()[0])
-         except Exception:
-             prix_f = float(prix_temps_reel.get(nom_b, 50.0))
+        try:
+            prix_f = float(str(d1["Prix"]).split()[0])
+        except Exception:
+            prix_f = float(prix_temps_reel.get(nom_b, 50.0))
 
-         try:
-             sup_f = float(str(d4.get("Support 30J", f"{prix_f*0.95}")).split()[0])
-             res_f = float(str(d4.get("Résistance 30J", f"{prix_f*1.05}")).split()[0])
-         except Exception:
-             sup_f, res_f = prix_f * 0.95, prix_f * 1.05
+        try:
+            sup_f = float(str(d4.get("Support 30J", f"{prix_f*0.95}")).split()[0])
+            res_f = float(str(d4.get("Résistance 30J", f"{prix_f*1.05}")).split()[0])
+        except Exception:
+            sup_f, res_f = prix_f * 0.95, prix_f * 1.05
 
-         amp_30 = max(0.01, res_f - sup_f)
-         pos_canal_30 = max(0.0, min(100.0, ((prix_f - sup_f) / amp_30) * 100.0))
-         stoch_f = float(d1.get("Stoch", 50.0))
-         score_timing_ct = int(round(100.0 - (0.55 * pos_canal_30 + 0.45 * stoch_f)))
-         score_timing_ct = max(10, min(98, score_timing_ct))
+        amp_30 = max(0.01, res_f - sup_f)
+        pos_canal_30 = max(0.0, min(100.0, ((prix_f - sup_f) / amp_30) * 100.0))
+        stoch_f = float(d1.get("Stoch", 50.0))
+        score_timing_ct = int(round(100.0 - (0.55 * pos_canal_30 + 0.45 * stoch_f)))
+        score_timing_ct = max(10, min(98, score_timing_ct))
 
-         ecart_3a = float(d2.get("EcartNum", 0.0))
-         try:
-             rend_f = float(str(d3.get("Rendement", "3.0%")).replace("%", "").strip())
-         except Exception:
-             rend_f = 3.0
-         try:
-             payout_f = float(str(d3.get("Payout", "55%")).replace("%", "").strip())
-         except Exception:
-             payout_f = 55.0
+        ecart_3a = float(d2.get("EcartNum", 0.0))
+        try:
+            rend_f = float(str(d3.get("Rendement", "3.0%")).replace("%", "").strip())
+        except Exception:
+            rend_f = 3.0
+        try:
+            payout_f = float(str(d3.get("Payout", "55%")).replace("%", "").strip())
+        except Exception:
+            payout_f = 55.0
 
-         # Analyse par rapport au Portefeuille de l'utilisateur
-         pos_pf = portefeuille_utilisateur.get(nom_b)
-         bonus_pf = 0
-         est_sous_pru = False
-         if pos_pf and float(pos_pf.get("qte", 0)) > 0:
-             q_pf = int(pos_pf["qte"])
-             pru_pf = float(pos_pf["pru"])
-             val_l_eur = q_pf * prix_f * facteur_d
-             poids_pf = (val_l_eur / valeur_totale_portefeuille * 100.0) if valeur_totale_portefeuille > 0 else 0.0
-             ecart_pru_pct = ((prix_f - pru_pf) / pru_pf * 100.0) if pru_pf > 0 else 0.0
+        pos_pf = portefeuille_utilisateur.get(nom_b)
+        bonus_pf = 0
+        est_sous_pru = False
+        if pos_pf and isinstance(pos_pf, dict) and float(pos_pf.get("qte", 0)) > 0:
+            q_pf = int(pos_pf["qte"])
+            pru_pf = float(pos_pf["pru"])
+            val_l_eur = q_pf * prix_f * facteur_d
+            poids_pf = (val_l_eur / valeur_totale_portefeuille * 100.0) if valeur_totale_portefeuille > 0 else 0.0
+            ecart_pru_pct = ((prix_f - pru_pf) / pru_pf * 100.0) if pru_pf > 0 else 0.0
 
-             if prix_f < pru_pf and poids_pf < 25.0:
-                 est_sous_pru = True
-                 bonus_pf = 8
-                 badge_pf = f"<span class='b-green'>📉 Sous votre PRU ({pru_pf:.2f} {sym_d} | {ecart_pru_pct:+.1f}%)</span>"
-                 conseil_pf = f"Idéal pour <b>abaisser votre PRU</b> (Poids actuel : {poids_pf:.1f}%)"
-             elif poids_pf >= 28.0:
-                 bonus_pf = -12
-                 badge_pf = f"<span class='b-yellow'>⚖️ Ligne forte ({poids_pf:.1f}% du PF)</span>"
-                 conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} — Évitez de surpondérer davantage"
-             else:
-                 bonus_pf = 4
-                 badge_pf = f"<span class='b-blue'>💼 En portefeuille ({q_pf} act. | {poids_pf:.1f}%)</span>"
-                 conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} ({ecart_pru_pct:+.1f}%) — Renforcement sain"
-         else:
-             bonus_pf = 6
-             badge_pf = "<span class='b-purple'>✨ Absente du portefeuille</span>"
-             conseil_pf = "Opportunité d'<b>ouverture de ligne</b> (Diversification)"
+            if prix_f < pru_pf and poids_pf < 25.0:
+                est_sous_pru = True
+                bonus_pf = 8
+                badge_pf = f"<span class='b-green'>📉 Sous votre PRU ({pru_pf:.2f} {sym_d} | {ecart_pru_pct:+.1f}%)</span>"
+                conseil_pf = f"Idéal pour <b>abaisser votre PRU</b> (Poids actuel : {poids_pf:.1f}%)"
+            elif poids_pf >= 28.0:
+                bonus_pf = -12
+                badge_pf = f"<span class='b-yellow'>⚖️ Ligne forte ({poids_pf:.1f}% du PF)</span>"
+                conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} — Évitez de surpondérer davantage"
+            else:
+                bonus_pf = 4
+                badge_pf = f"<span class='b-blue'>💼 En portefeuille ({q_pf} act. | {poids_pf:.1f}%)</span>"
+                conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} ({ecart_pru_pct:+.1f}%) — Renforcement sain"
+        else:
+            bonus_pf = 6
+            badge_pf = "<span class='b-purple'>✨ Absente du portefeuille</span>"
+            conseil_pf = "Opportunité d'<b>ouverture de ligne</b> (Diversification)"
 
-         # Calcul du Score de Convergence 360° (/100)
-         pts_radar = float(d1["Score"]) * 0.40
-         pts_timing = float(score_timing_ct) * 0.25
-         pts_value = (20.0 if ecart_3a <= -10 else (15.0 if ecart_3a < 0 else (8.0 if ecart_3a <= 5 else 2.0)))
-         pts_div = min(15.0, (rend_f * 1.8) + (5.0 if payout_f <= 65 else 1.5))
-         score_conv = int(round(min(99.0, max(12.0, pts_radar + pts_timing + pts_value + pts_div + bonus_pf))))
+        pts_radar = float(d1["Score"]) * 0.40
+        pts_timing = float(score_timing_ct) * 0.25
+        pts_value = (20.0 if ecart_3a <= -10 else (15.0 if ecart_3a < 0 else (8.0 if ecart_3a <= 5 else 2.0)))
+        pts_div = min(15.0, (rend_f * 1.8) + (5.0 if payout_f <= 65 else 1.5))
+        score_conv = int(round(min(99.0, max(12.0, pts_radar + pts_timing + pts_value + pts_div + bonus_pf))))
 
-         ordre_limite_ideal = max(sup_f, min(prix_f, sup_f + 0.25 * amp_30))
+        ordre_limite_ideal = max(sup_f, min(prix_f, sup_f + 0.25 * amp_30))
 
-         synthese_opportunites.append({
-             "Nom": nom_b,
-             "Actif": clef_actif,
-             "Prix": d1["Prix"],
-             "Cible": d1["Prix Cible"],
-             "EcartCible": d1["Écart Cible (%)"],
-             "ScoreRadar": d1["Score"],
-             "ScoreTiming": score_timing_ct,
-             "ScoreConv": score_conv,
-             "RSI": d1["RSI"],
-             "Stoch": int(stoch_f),
-             "Ecart3A": d2.get("Écart %", "0.0%"),
-             "Ecart3ANum": ecart_3a,
-             "StatutValue": d2.get("Statut Value", "Neutre"),
-             "Rendement": d3.get("Rendement", "N/A"),
-             "RendNum": rend_f,
-             "Payout": d3.get("Payout", "N/A"),
-             "PayoutNum": payout_f,
-             "Support": d4.get("Support 30J", "N/A"),
-             "OrdreLimite": f"{ordre_limite_ideal:.2f} {sym_d}",
-             "BadgePF": badge_pf,
-             "ConseilPF": conseil_pf,
-             "EstSousPRU": est_sous_pru,
-             "EnPortefeuille": bool(pos_pf and float(pos_pf.get("qte", 0)) > 0),
-         })
+        synthese_opportunites.append({
+            "Nom": nom_b,
+            "Actif": clef_actif,
+            "Prix": d1["Prix"],
+            "Cible": d1["Prix Cible"],
+            "EcartCible": d1["Écart Cible (%)"],
+            "ScoreRadar": d1["Score"],
+            "ScoreTiming": score_timing_ct,
+            "ScoreConv": score_conv,
+            "RSI": d1["RSI"],
+            "Stoch": int(stoch_f),
+            "Ecart3A": d2.get("Écart %", "0.0%"),
+            "Ecart3ANum": ecart_3a,
+            "StatutValue": d2.get("Statut Value", "Neutre"),
+            "Rendement": d3.get("Rendement", "N/A"),
+            "RendNum": rend_f,
+            "Payout": d3.get("Payout", "N/A"),
+            "PayoutNum": payout_f,
+            "Support": d4.get("Support 30J", "N/A"),
+            "OrdreLimite": f"{ordre_limite_ideal:.2f} {sym_d}",
+            "BadgePF": badge_pf,
+            "ConseilPF": conseil_pf,
+            "EstSousPRU": est_sous_pru,
+            "EnPortefeuille": bool(pos_pf and isinstance(pos_pf, dict) and float(pos_pf.get("qte", 0)) > 0),
+        })
 
     synthese_opportunites.sort(key=lambda x: x["ScoreConv"], reverse=True)
 
@@ -2947,23 +3002,21 @@ with onglet_ia:
             b_val_c = "b-green" if opp["Ecart3ANum"] < 0 else "b-neutral"
             b_tim_c = "b-green" if opp["ScoreTiming"] >= 65 else ("b-blue" if opp["ScoreTiming"] >= 48 else "b-yellow")
 
-            # Calcul dynamique de l'impact PRU si l'action est en portefeuille
             nom_o = opp["Nom"]
             pos_p = portefeuille_utilisateur.get(nom_o)
-            conseil_pru_dynamique = opp['ConseilPF']
-           
-            if pos_p and float(pos_p.get("qte", 0)) > 0:
+            conseil_pru_dynamique = opp["ConseilPF"]
+
+            if pos_p and isinstance(pos_p, dict) and float(pos_p.get("qte", 0)) > 0:
                 q_actuelle = float(pos_p["qte"])
                 pru_actuel = float(pos_p["pru"])
-                # Simule un achat de 1 part ou du budget DCA unitaire
                 try:
                     prix_act_f = float(str(opp["Prix"]).split()[0])
                 except Exception:
                     prix_act_f = pru_actuel
-               
+
                 nouveau_pru_simule = ((q_actuelle * pru_actuel) + (1 * prix_act_f)) / (q_actuelle + 1)
                 sym_dev_p = "$" if "$" in opp["Prix"] else "€"
-               
+
                 if prix_act_f < pru_actuel:
                     conseil_pru_dynamique = f"Idéal pour abaisser votre PRU : <b>{pru_actuel:.2f} ➔ {nouveau_pru_simule:.2f} {sym_dev_p}</b>"
                 else:
@@ -2993,8 +3046,6 @@ with onglet_ia:
         html_podium += "</div>"
         afficher_html(html_podium)
 
-
-        # Les 4 boussoles thématiques rapides
         opp_moyennage = next((x for x in synthese_opportunites if x["EstSousPRU"]), None)
         opp_value_timing = sorted(synthese_opportunites, key=lambda x: (x["Ecart3ANum"] - x["ScoreTiming"] * 0.3))[0]
         opp_rendement = sorted([x for x in synthese_opportunites if x["PayoutNum"] <= 75], key=lambda x: x["RendNum"], reverse=True)
@@ -3060,211 +3111,6 @@ with onglet_ia:
             html_mat += "</tbody></table>"
             afficher_html(html_mat)
 
-    def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
-        if question_utilisateur:
-            for sans_acc, avec_acc in [
-                ("opportunite", "opportunité"), ("strategie", "stratégie"),
-                ("securite", "sécurité"), ("equilibre", "équilibre"),
-                ("repartition", "répartition"), ("sante", "santé"),
-                ("impot", "impôt"), ("fiscalite", "fiscalité"),
-                (" general", " général"), (" etre ", " être "),
-                ("achat", "achat"), ("renforcer", "renforcer"),
-            ]:
-                question_utilisateur = question_utilisateur.replace(sans_acc, avec_acc).replace(sans_acc.capitalize(), avec_acc.capitalize())
-        plus_value_glob = valeur_totale_portefeuille - cout_total_achat
-        pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
-        rente_mens_nette = dividendes_nets_totaux_eur / 12.0
-
-        top_3_lignes = [
-            f"**{l['nom_act']}** ({l['val_eur']:,.0f} €, soit {(l['val_eur']/valeur_totale_portefeuille*100 if valeur_totale_portefeuille>0 else 0):.1f}% du portefeuille, PV : `{l['pv_eur']:+,.0f} €`)"
-            for l in lignes_triees if not l["est_especes"]
-        ][:3]
-        top_3_radar = [
-            f"**{d['Actif']}** (Score `{d['Score']}/100` — {d['Décision']}, Cours : {d['Prix']}, Cible : {d['Prix Cible']}, RSI : {d['RSI']})"
-            for d in sorted(donnees_t1, key=lambda x: x["Score"], reverse=True)[:3]
-        ]
-
-        if code_audit == "AUDIT_1":
-            return f"""### 🔍 Audit Complet 360° & Optimisation Fiscale
-
-#### 1. Bilan Patrimonial & Performance Globale
-* **Valorisation Totale :** Votre portefeuille s'élève à **{valeur_totale_portefeuille:,.2f} €** pour un capital investi de **{cout_total_achat:,.2f} €**, soit une performance latente de **{plus_value_glob:+,.2f} € ({pv_pct_glob:+.2f}%)**.
-* **Score de Santé Global :** **{note_sante_pf}/100** avec **{nb_lignes_actions} ligne(s) active(s)** répartie(s) sur **{len(repartition_secteurs)} secteur(s)**.
-* **Vos Piliers Principaux (par poids décroissant) :** {', '.join(top_3_lignes) if top_3_lignes else 'Aucune ligne enregistrée'}.
-
-#### 2. Analyse de Concentration & PRU
-* **Concentration Maximale :** Votre première ligne (**{nom_max_ligne}**) pèse **{poids_max_ligne:.1f}%** de votre patrimoine. {'✅ Excellente maîtrise du risque (< 30%).' if poids_max_ligne <= 30 else '⚠️ Attention : cette ligne dépasse le seuil prudentiel de 30%. Privilégiez le renforcement de vos lignes secondaires lors de vos prochains DCA.'}
-* **Qualité des Points d'Entrée (PRU) :** Les lignes affichant une moins-value latente mais un **Payout Ratio sain (< 65%)** constituent vos meilleures opportunités de moyennage à la baisse pour booster votre rendement sur coût d'achat (*Yield on Cost*).
-
-#### 3. Bilan Fiscal PEA (EUR) vs CTO (USD)
-* **Exposition Devises :** **{exposition_eur:,.0f} € en zone Euro (PEA)** contre **{exposition_usd:,.0f} € en Dollars US (CTO)**.
-* **Efficience Fiscale des Dividendes :** Vos actions produisent **{dividendes_bruts_totaux_eur:,.2f} € brut/an**, soit **{dividendes_nets_totaux_eur:,.2f} € net/an ({rente_mens_nette:.2f} € net/mois)**. En logeant vos valeurs européennes de rendement sur PEA, vous économisez **100 % d'impôt** tant que les dividendes sont réinvestis dans l'enveloppe.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        elif code_audit == "AUDIT_2":
-            achats_txt = "\n".join(
-                f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
-                for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0
-            )
-            if not achats_txt:
-                achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
-            return f"""### 🛒 Plan d'Action DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
-
-#### 1. Lecture de la Météo des Marchés
-* **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
-* **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les 1 ou 2 meilleures valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
-
-#### 2. Top 3 des Signaux Techniques du Jour
-* {chr(10).join('* ' + s for s in top_3_radar)}
-
-#### 3. Répartition Condensée de votre Enveloppe de {BUDGET_MENSUEL:.0f} € (Max 2 lignes)
-{achats_txt}
-* **Total investi ce mois-ci :** **{montant_investi_dca:.2f} €** (Liquidités restantes pour le mois suivant : **{budget_courant:.2f} €**)
-* **Nouveaux dividendes annuels acquis :** **+{montant_tot_div_dca:.2f} € / an**.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        elif code_audit == "AUDIT_3":
-            return f"""### 🌍 Arbitrage Stratégique : PEA (EUR) vs Actions US ($)
-
-#### 1. Analyse du Taux de Change EUR/USD
-* **Parité actuelle :** **1 € = {TAUX_USD_EUR:.4f} $** (soit **1 $ = {1/TAUX_USD_EUR:.4f} €**).
-* **Impact Devises :** {'L Euro est actuellement solide face au Dollar (> 1.08 $), ce qui offre un point d entrée avantageux pour convertir des Euros vers des actifs américains en CTO.' if TAUX_USD_EUR >= 1.08 else 'Le Dollar est actuellement fort face à l Euro : privilégiez en priorité le renforcement de vos pépites européennes en PEA pour éviter d acheter du Dollar au plus haut.'}
-
-#### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
-* **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
-* **Poche Accélérateur US (Microsoft, Apple, Realty Income, Coca-Cola...) :** Apporte une **croissance séculaire à 2 chiffres** et des versements trimestriels ou mensuels qui lissent votre calendrier de rente.
-* **Recommandation d'équilibre :** Visez une répartition cible de **75 % à 85 % sur votre PEA** (jusqu'au plafond de 150 000 € de versements) et **15 % à 25 % sur les géants US** lors des replis de leur RSI sous 40.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        elif code_audit == "AUDIT_4":
-            choc_20 = valeur_totale_portefeuille * 0.80
-            return f"""### 🛡️ Stress-Test, Gestion des Risques & Diversification
-
-#### 1. Simulation de Krach Boursier (-20 % sur les marchés)
-* **Valorisation après choc de -20 % :** Votre portefeuille passerait temporairement de **{valeur_totale_portefeuille:,.0f} €** à **{choc_20:,.0f} €** (soit un repli latent de `-{valeur_totale_portefeuille * 0.20:,.0f} €`).
-* **Résilience de votre Rente Passive :** Même en cas de baisse de 20 % des cours boursiers, **votre rente de dividendes ({dividendes_bruts_totaux_eur:,.2f} €/an) dépend du nombre d'actions détenues** et non des fluctuations quotidiennes du marché ! Mieux encore : votre DCA mensuel de **{BUDGET_MENSUEL:.0f} €** achètera **25 % d'actions en plus** pendant la baisse.
-
-#### 2. Diagnostic de Concentration Sectorielle
-* **Ligne numéro 1 :** **{nom_max_ligne}** représente **{poids_max_ligne:.1f}%** du portefeuille.
-* **Nombre de secteurs couverts :** **{len(repartition_secteurs)} secteur(s)**.
-* **Pistes de sécurisation :** Assurez-vous qu'aucun secteur cyclique (Banque, Énergie, Luxe) ne dépasse **35 %** du total. Renforcez les secteurs défensifs (**Santé via Sanofi / J&J**, **Gaz industriels via Air Liquide**, **Consommation de base**) pour amortir la volatilité (ATR).
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        elif code_audit == "AUDIT_5":
-            manque_100 = max(0.0, (100.0 * 12) - dividendes_nets_totaux_eur)
-            cap_requis_100 = manque_100 / 0.055
-            return f"""### 💵 Optimisation de la Rente & Accélération Boule de Neige
-
-#### 1. Trajectoire Actuelle de vos Revenus Passifs
-* **Rente Annuelle Actuelle :** **{dividendes_bruts_totaux_eur:,.2f} € brut / an** (**{dividendes_nets_totaux_eur:,.2f} € net / an**).
-* **Revenu Mensuel Lissé :** **{rente_mens_nette:,.2f} € net / mois** (couvrant déjà **{taux_couverture_dca:.1f}%** de votre effort d'épargne DCA annuel).
-
-#### 2. Feuille de Route vers le Palier des 100 € / mois (1 200 € / an)
-* **Écart restant à combler :** Il vous manque **{manque_100:,.2f} € de dividendes annuels** pour franchir le cap symbolique des **100 € / mois**.
-* **Capital additionnel nécessaire (à 5,5 % de rendement moyen) :** Environ **{cap_requis_100:,.0f} €**, soit environ **{max(1, int(cap_requis_100 / max(1, BUDGET_MENSUEL + rente_mens_nette)))} mois** avec votre DCA de **{BUDGET_MENSUEL:.0f} €/mois** et le réinvestissement intégral de vos dividendes.
-
-#### 3. Comment lisser vos 12 mois de versements
-* **Action concrète :** En Europe, beaucoup de sociétés paient en **Mai/Juin**. Pour encaisser des dividendes chaque mois de l'année, appuyez-vous sur **TotalEnergies** (Jan/Avr/Juil/Oct), **Pernod Ricard / Vinci** (Avr/Juil/Nov), ou des valeurs trimestrielles/mensuelles comme **Realty Income** et **Microsoft**.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        q_low = question_utilisateur.strip().lower()
-        focus_actions = []
-        for d in donnees_t1:
-            nom_b = d["NomBrut"]
-            if nom_b.lower() in q_low:
-                info_w = WATCHLIST_DEFAUT.get(nom_b, {})
-                pos_pf = portefeuille_utilisateur.get(nom_b)
-                txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
-                focus_actions.append(
-                    f"* **{d['Actif']}** : Cours actuel **{d['Prix']}** | Prix Cible : **{d['Prix Cible']}** ({d['Écart Cible (%)']}) | "
-                    f"RSI : **{d['RSI']}** | Stochastique : **{d['Stoch']}%** | Signal EMA 2/12 : **{d['EMA 2/12']}** | "
-                    f"Rendement : **{(info_w.get('div_eur',0)/ max(0.01, prix_temps_reel.get(nom_b, 1))*100):.2f}%** | "
-                    f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
-                )
-
-        # CAS 1 : L'utilisateur a mentionné une ou plusieurs actions précises
-        if focus_actions:
-            bloc_focus = "\n".join(focus_actions)
-            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0
-
-**Votre question :** *« {question_utilisateur} »*
-
-#### 1. Analyse Technique & Fondamentale sur mesure
-{bloc_focus}
-
-#### 2. Stratégie adaptée à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
-- **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
-- **Timing d'exécution :** Si le RSI dépasse 65, patientez sur un repli technique avant de passer votre ordre.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        # CAS 2 : Question sur le PRU ou le moyennage à la baisse
-        elif any(m in q_low for m in ["pru", "moyenner", "baisse", "perte", "moins-value", "renforcer"]):
-            lignes_pru = []
-            for nom_p, data_p in portefeuille_utilisateur.items():
-                qte_p = float(data_p.get("qte", 0))
-                pru_p = float(data_p.get("pru", 0))
-                cours_p = float(prix_temps_reel.get(nom_p, 0))
-                if qte_p > 0 and pru_p > 0 and cours_p > 0 and cours_p < pru_p:
-                    ecart_p = ((cours_p - pru_p) / pru_p) * 100
-                    lignes_pru.append(f"* **{nom_p}** : Cours actuel **{cours_p:.2f} €** sous votre PRU de **{pru_p:.2f} €** (**{ecart_p:+.1f}%**)")
-            txt_pru = "\n".join(lignes_pru) if lignes_pru else "* Aucune ligne de votre portefeuille n'est actuellement sous son PRU !"
-            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Diagnostic PRU
-
-**Votre question :** *« {question_utilisateur} »*
-
-#### 1. Lignes de votre portefeuille actuellement sous votre PRU
-{txt_pru}
-
-#### 2. Règle d'or pour moyenner à la baisse
-- Ne renforcez une ligne sous son PRU que si son **RSI est inférieur à 50** et que le **Signal EMA 2/12** montre des signes de stabilisation, afin d'abaisser votre prix de revient sans surpondérer une chute libre.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        # CAS 3 : Question sur les dividendes ou la rente passive
-        elif any(m in q_low for m in ["dividende", "rente", "rendement", "passif", "revenu"]):
-            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Stratégie Dividendes & Rente
-
-**Votre question :** *« {question_utilisateur} »*
-
-#### 1. Optimisation de votre Rente sur un portefeuille de {valeur_totale_portefeuille:,.0f} €
-- **Sécurité du dividende :** Ciblez en priorité les valeurs de votre radar affichant un **rendement supérieur à 4%** combiné à un **Payout Ratio inférieur à 65%** pour garantir la pérennité des versements.
-- **Effet boule de neige :** Réinvestissez vos dividendes perçus en priorité sur vos lignes en décote (sous leur Prix Cible ou sous votre PRU) pour accélérer la croissance de votre rente mensuelle.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        # CAS 4 : Question sur le prochain achat DCA ou les opportunités générales
-        elif any(m in q_low for m in ["dca", "acheter", "achat", "opportunité", "investir", "conseil", "quoi", "portefeuille", "analyse"]):
-            bloc_defaut = "\n".join(focus_actions) if focus_actions else "* Consultez le **Podium de Convergence 360°** juste au-dessus pour visualiser vos 3 meilleures opportunités DCA en temps réel."
-            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Allocation DCA
-
-**Votre question :** *« {question_utilisateur} »*
-
-#### 1. Priorités d'investissement du moment
-{bloc_defaut}
-
-#### 2. Recommandation Stratégique ({valeur_totale_portefeuille:,.0f} €)
-- **Discipline DCA :** Allouez votre enveloppe mensuelle en priorité sur les valeurs du Podium affichant un **Score ≥ 65/100** et situées sous votre **PRU** ou votre **Prix Cible**.
-
-*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
-
-        # CAS 5 : Saisie non reconnue
-        else:
-            return f"""### 🧠 Coach IA 2.0 — Précisez votre question
-
-Je n'ai détecté aucun nom d'action ni thème financier précis dans votre saisie : **« {question_utilisateur} »**.
-
-💡 **Exemples de questions que vous pouvez me poser :**
-- 📊 **Sur une ou plusieurs actions :** *« Que faire sur BNP Paribas et Air Liquide ? »*
-- 📉 **Sur vos prix de revient :** *« Quelles actions renforcer pour baisser mon PRU ? »*
-- 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
-- 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
-
     @st.cache_data(ttl=3600)
     def lister_modeles_gemini_actifs(cle_api):
         modeles = []
@@ -3281,6 +3127,192 @@ Je n'ai détecté aucun nom d'action ni thème financier précis dans votre sais
         except Exception:
             pass
         return modeles
+
+    def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
+        if question_utilisateur:
+            for s_a, a_a in [
+                ("opportunite", "opportunité"), ("strategie", "stratégie"),
+                ("securite", "sécurité"), ("equilibre", "équilibre"),
+                ("repartition", "répartition"), ("sante", "santé"),
+                ("impot", "impôt"), ("fiscalite", "fiscalité"),
+            ]:
+                question_utilisateur = question_utilisateur.replace(s_a, a_a).replace(s_a.capitalize(), a_a.capitalize())
+
+        plus_value_glob = valeur_totale_portefeuille - cout_total_achat
+        pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
+        rente_mens_nette = dividendes_nets_totaux_eur / 12.0
+
+        top_3_lignes = [
+            f"**{l['nom_act']}** ({l['val_eur']:,.0f} €, soit {(l['val_eur']/valeur_totale_portefeuille*100 if valeur_totale_portefeuille>0 else 0):.1f}% du portefeuille, PV : `{l['pv_eur']:+,.0f} €`)"
+            for l in lignes_triees if not l["est_especes"]
+        ][:3]
+        top_3_radar = [
+            f"**{d['Actif']}** (Score `{d['Score']}/100` — {d['Décision']}, Cours : {d['Prix']}, Cible : {d['Prix Cible']}, RSI : {d['RSI']})"
+            for d in sorted(donnees_t1, key=lambda x: x["Score"], reverse=True)[:3]
+        ]
+
+        if hist_ventes_ia:
+            lignes_v_recap = "\n".join(
+                f"* **{v['date']} — {v['action']}** (x{v['qte']}) : Vendu à **{v['prix_vente']:.2f} {v['devise']}** vs PRU **{v['pru']:.2f} {v['devise']}** ➔ Plus/Moins-Value actée : **`{v['plus_value_eur']:+,.2f} € ({v['perf_pct']:+.2f}%)`**"
+                for v in hist_ventes_ia[:10]
+            )
+            bloc_recap_pv_md = f"""#### 💰 Bilan de vos Arbitrages & Plus/Moins-Values Actées (Réalisées)
+- **Total Plus/Moins-Values Nettes Actées :** **`{total_pv_actee_ia:+,.2f} €`** extraits sur **{len(hist_ventes_ia)} arbitrage(s)**.
+- **Performance d'Extraction Réelle :** **`{perf_extraction_ia:+.2f}%`** (calculée sur **{total_cout_vendu_ia:,.2f} €** de capital initial vendu, pour **{total_vol_vendu_ia:,.2f} €** encaissés net).
+- **Taux de Réussite (Win Rate) :** **{nb_ventes_gagnantes_ia} vente(s) gagnante(s) sur {len(hist_ventes_ia)}** ({(nb_ventes_gagnantes_ia/len(hist_ventes_ia)*100):.0f}% de réussite).
+- **Dernières opérations actées :**
+{lignes_v_recap}"""
+        else:
+            bloc_recap_pv_md = """#### 💰 Bilan de vos Arbitrages & Plus/Moins-Values Actées (Réalisées)
+- *Aucune vente actée n'est enregistrée dans l'onglet 5 pour le moment. Dès que vous enregistrerez une vente, votre Coach IA analysera ici votre taux de réussite et votre performance réelle extraite.*"""
+
+        if code_audit == "AUDIT_1":
+            return f"""### 🔍 Audit Complet 360°, Plus-Values Actées & Optimisation Fiscale
+
+#### 1. Bilan Patrimonial & Performance Globale
+- **Valorisation Active :** Votre portefeuille s'élève à **{valeur_totale_portefeuille:,.2f} €** pour un capital investi de **{cout_total_achat:,.2f} €**, soit une performance latente de **{plus_value_glob:+,.2f} € ({pv_pct_glob:+.2f}%)**.
+- **Score de Santé Global :** **{note_sante_pf}/100** avec **{nb_lignes_actions} ligne(s) active(s)** répartie(s) sur **{len(repartition_secteurs)} secteur(s)**.
+- **Vos Piliers Principaux :** {', '.join(top_3_lignes) if top_3_lignes else 'Aucune ligne enregistrée'}.
+
+{bloc_recap_pv_md}
+
+#### 3. Analyse de Concentration & PRU
+- **Concentration Maximale :** Votre première ligne (**{nom_max_ligne}**) pèse **{poids_max_ligne:.1f}%** de votre patrimoine. {'✅ Excellente maîtrise du risque (< 30%).' if poids_max_ligne <= 30 else '⚠️ Attention : cette ligne dépasse le seuil prudentiel de 30%. Privilégiez le renforcement de vos lignes secondaires lors de vos prochains DCA.'}
+
+#### 4. Bilan Fiscal PEA (EUR) vs CTO (USD)
+- **Exposition Devises :** **{exposition_eur:,.0f} € en zone Euro (PEA)** contre **{exposition_usd:,.0f} € en Dollars US (CTO)**.
+- **Efficience Fiscale des Dividendes :** Vos actions produisent **{dividendes_bruts_totaux_eur:,.2f} € brut/an**, soit **{dividendes_nets_totaux_eur:,.2f} € net/an ({rente_mens_nette:.2f} € net/mois)**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_2":
+            achats_txt = "\n".join(
+                f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
+                for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0
+            )
+            if not achats_txt:
+                achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
+            return f"""### 🛒 Plan d'Action DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
+
+#### 1. Lecture de la Météo des Marchés
+- **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
+- **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les 1 ou 2 meilleures valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
+
+#### 2. Top 3 des Signaux Techniques du Jour
+{chr(10).join('* ' + s for s in top_3_radar)}
+
+#### 3. Répartition Condensée de votre Enveloppe de {BUDGET_MENSUEL:.0f} € (Max 2 lignes)
+{achats_txt}
+- **Total investi ce mois-ci :** **{montant_investi_dca:.2f} €** (Liquidités restantes : **{budget_courant:.2f} €**)
+- **Nouveaux dividendes annuels acquis :** **+{montant_tot_div_dca:.2f} € / an**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_3":
+            return f"""### 🌍 Arbitrage Stratégique : PEA (EUR) vs Actions US ($)
+
+#### 1. Analyse du Taux de Change EUR/USD
+- **Parité actuelle :** **1 € = {TAUX_USD_EUR:.4f} $** (soit **1 $ = {1/TAUX_USD_EUR:.4f} €**).
+- **Impact Devises :** {'L Euro est actuellement solide face au Dollar (> 1.08 $), ce qui offre un point d entrée avantageux pour convertir des Euros vers des actifs américains en CTO.' if TAUX_USD_EUR >= 1.08 else 'Le Dollar est actuellement fort face à l Euro : privilégiez en priorité le renforcement de vos pépites européennes en PEA.'}
+
+#### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
+- **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
+- **Poche Accélérateur US (Microsoft, Apple, Realty Income, Coca-Cola...) :** Apporte une **croissance séculaire** et des versements trimestriels ou mensuels qui lissent votre calendrier de rente.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_4":
+            choc_20 = valeur_totale_portefeuille * 0.80
+            return f"""### 🛡️ Stress-Test, Gestion des Risques & Diversification
+
+#### 1. Simulation de Krach Boursier (-20 % sur les marchés)
+- **Valorisation après choc de -20 % :** Votre portefeuille passerait temporairement de **{valeur_totale_portefeuille:,.0f} €** à **{choc_20:,.0f} €** (soit un repli latent de `-{valeur_totale_portefeuille * 0.20:,.0f} €`).
+- **Résilience de votre Rente Passive :** Même en cas de baisse de 20 % des cours boursiers, **votre rente de dividendes ({dividendes_bruts_totaux_eur:,.2f} €/an) dépend du nombre d'actions détenues** et non des fluctuations quotidiennes du marché !
+
+#### 2. Diagnostic de Concentration Sectorielle
+- **Ligne numéro 1 :** **{nom_max_ligne}** représente **{poids_max_ligne:.1f}%** du portefeuille sur **{len(repartition_secteurs)} secteur(s)**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_5":
+            manque_100 = max(0.0, (100.0 * 12) - dividendes_nets_totaux_eur)
+            cap_requis_100 = manque_100 / 0.055
+            return f"""### 💵 Optimisation de la Rente & Accélération Boule de Neige
+
+#### 1. Trajectoire Actuelle de vos Revenus Passifs
+- **Rente Annuelle Actuelle :** **{dividendes_bruts_totaux_eur:,.2f} € brut / an** (**{dividendes_nets_totaux_eur:,.2f} € net / an**).
+- **Revenu Mensuel Lissé :** **{rente_mens_nette:,.2f} € net / mois** (couvrant déjà **{taux_couverture_dca:.1f}%** de votre effort d'épargne DCA annuel).
+
+#### 2. Feuille de Route vers le Palier des 100 € / mois (1 200 € / an)
+- **Écart restant à combler :** Il vous manque **{manque_100:,.2f} € de dividendes annuels** pour franchir le cap symbolique des **100 € / mois** (soit environ **{cap_requis_100:,.0f} €** à investir à 5,5 % de rendement).
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_6":
+            perf_globale_cumulee = plus_value_glob + total_pv_actee_ia
+            return f"""### 💰 Audit Complet de vos Arbitrages & Plus/Moins-Values Actées
+
+{bloc_recap_pv_md}
+
+#### 📊 Comparaison Performance Latente vs Performance Actée
+- **Plus/Moins-Value Latente (Portefeuille actif) :** **`{plus_value_glob:+,.2f} € ({pv_pct_glob:+.2f}%)`**
+- **Plus/Moins-Value Réalisée (Extraite par vos ventes) :** **`{total_pv_actee_ia:+,.2f} € ({perf_extraction_ia:+.2f}%)`**
+- **Création de Valeur Totale Cumulée (Latent + Acté) :** **`{perf_globale_cumulee:+,.2f} €`**
+
+#### 🎯 Recommandation du Coach sur vos Arbitrages
+- **Enveloppe PEA :** Les plus-values actées au sein du PEA ne subissent **aucune imposition immédiate** tant que le cash reste dans l'enveloppe, ce qui vous permet de réallouer 100 % du produit de cession (`{total_vol_vendu_ia:,.2f} €`) sur vos meilleures opportunités DCA du moment ({texte_opps_moment}).
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        q_low = question_utilisateur.strip().lower()
+        if any(m in q_low for m in ["vente", "vendu", "actée", "actee", "arbitrage", "plus-value", "moins-value", "réalisé"]):
+            return f"""### 🧠 Réponse de votre Coach IA 2.0 — Bilan des Plus/Moins-Values Actées
+
+**Votre question :** *« {question_utilisateur} »*
+
+{bloc_recap_pv_md}
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        focus_actions = []
+        for d in donnees_t1:
+            nom_b = d["NomBrut"]
+            if nom_b.lower() in q_low:
+                info_w = WATCHLIST_DEFAUT.get(nom_b, {})
+                pos_pf = portefeuille_utilisateur.get(nom_b)
+                txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if (pos_pf and isinstance(pos_pf, dict)) else "Non détenue actuellement en portefeuille"
+                focus_actions.append(
+                    f"* **{d['Actif']}** : Cours actuel **{d['Prix']}** | Prix Cible : **{d['Prix Cible']}** ({d['Écart Cible (%)']}) | "
+                    f"RSI : **{d['RSI']}** | Stochastique : **{d['Stoch']}%** | Signal EMA 2/12 : **{d['EMA 2/12']}** | "
+                    f"Rendement : **{(info_w.get('div_eur',0)/ max(0.01, prix_temps_reel.get(nom_b, 1))*100):.2f}%** | "
+                    f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
+                )
+
+        if focus_actions:
+            bloc_focus = "\n".join(focus_actions)
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Analyse Technique & Fondamentale sur mesure
+{bloc_focus}
+
+#### 2. Stratégie adaptée à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
+- **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        else:
+            return f"""### 🧠 Synthèse Globale de votre Coach IA 2.0
+
+**Votre question :** *« {question_utilisateur} »*
+
+- **Portefeuille Actif :** **{valeur_totale_portefeuille:,.2f} €** (Plus-value latente : **{plus_value_glob:+,.2f} € / {pv_pct_glob:+.2f}%**).
+- **Rente Annuelle :** **{dividendes_nets_totaux_eur:,.2f} € net/an** ({rente_mens_nette:.2f} € net/mois).
+
+{bloc_recap_pv_md}
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
     def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
@@ -3312,13 +3344,26 @@ Je n'ai détecté aucun nom d'action ni thème financier précis dans votre sais
         ]
 
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
+        resume_ventes_ia = [
+            f"- {v['date']} ({v['mois_annee']}) : Vente de {v['qte']} {v['action']} à {v['prix_vente']} {v['devise']} "
+            f"(PRU {v['pru']} {v['devise']}) -> Plus/Moins-value actée : {v['plus_value_eur']:+.2f} € ({v['perf_pct']:+.2f}%)"
+            for v in hist_ventes_ia[:15]
+        ]
+        bloc_ventes_prompt = (
+            f"Total Plus/Moins-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} vente(s), {nb_ventes_gagnantes_ia} gagnante(s), Cash total encaissé : {total_vol_vendu_ia:.2f} €).\n"
+            + "\n".join(resume_ventes_ia)
+            if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
+        )
+
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
-- Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_glob:+.2f} €)
+- Valorisation totale active : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value latente : {plus_value_glob:+.2f} €)
 - Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
 - Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois (condensée sur 1 à 2 lignes max)
+- Bilan des Plus-Values ou Moins-Values Actées (Réalisées) & Arbitrages :
+{bloc_ventes_prompt}
 - Détail des lignes du portefeuille (triées par poids décroissant) :
 {chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
 - Signaux techniques et fondamentaux du Radar Boursy aujourd'hui :
@@ -3326,28 +3371,20 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 
 Mission demandée par l'utilisateur : {question_utilisateur}
 
-Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
+Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, un récapitulatif dédié aux performances de ses plus-values ou moins-values actées, ses points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
         modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
-        priorite_modeles = [
-            "gemini-3-flash-preview",
-            "gemini-3.0-flash-preview",
-            "gemini-flash-latest",
+        priorite_modeles = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.5-pro"]
+        modeles_propres = [
+            m for m in modeles_candidats
+            if not any(ex in m for ex in ["tts", "audio", "image", "vision", "embedding", "bis", "exp"])
         ]
-        modeles_propres = sorted(
-            [
-                m for m in modeles_candidats
-                if not any(ex in m for ex in ["1.5", "2.0", "2.5-flash", "tts", "audio", "image", "vision", "embedding", "bis"])
-            ],
-            key=lambda x: (0 if "3" in x else (1 if "latest" in x else 2))
-        )
         modeles_ordonnes = []
-        for m_prio in modeles_propres + priorite_modeles + modeles_candidats:
+        for m_prio in priorite_modeles + modeles_propres + modeles_candidats:
             if m_prio not in modeles_ordonnes:
                 modeles_ordonnes.append(m_prio)
 
-        erreurs_ia = []
-        for mod in modeles_ordonnes[:12]:
+        for mod in modeles_ordonnes[:8]:
             try:
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={urllib.parse.quote(cle_gemini)}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
@@ -3361,26 +3398,12 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
                     texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     if texte_rep:
                         return texte_rep
-            except urllib.error.HTTPError as e_http:
-                detail_err = e_http.read().decode("utf-8", errors="ignore")
-                try:
-                    msg_court = json.loads(detail_err).get("error", {}).get("message", detail_err[:140])
-                except Exception:
-                    msg_court = detail_err[:140]
-                erreurs_ia.append(f"[{mod} -> HTTP {e_http.code}: {msg_court}]")
+            except Exception:
                 continue
-            except Exception as e_gen:
-                erreurs_ia.append(f"[{mod} -> {str(e_gen)}]")
-                continue
-
-        if erreurs_ia:
-            return f"> ⚠️ **Diagnostic API Gemini :** `Modèles détectés: {modeles_candidats[:6]} | Erreur: {erreurs_ia[0]}`\n\n" + generer_audit_expert_hybride(question_utilisateur, code_audit)
 
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
-
     st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
-
     col_ia1, col_ia2, col_ia3 = st.columns(3)
     prompt_choisi = None
     code_audit_choisi = ""
@@ -3389,7 +3412,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", use_container_width=True):
         titre_audit = "Audit Complet 360° & Fiscalité"
         code_audit_choisi = "AUDIT_1"
-        prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
+        prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, récapitulatif de mes plus-values ou moins-values actées, analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
     if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
         titre_audit = "Plan d'Action DCA du Mois"
         code_audit_choisi = "AUDIT_2"
@@ -3399,7 +3422,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         code_audit_choisi = "AUDIT_3"
         prompt_choisi = "Analyse la pertinence d'arbitrer ou de renforcer mes valeurs européennes de rendement en PEA face aux géants américains en CTO compte tenu de la parité EUR/USD actuelle et de mes lignes."
 
-    col_ia4, col_ia5 = st.columns(2)
+    col_ia4, col_ia5, col_ia6 = st.columns(3)
     if col_ia4.button("🛡️ 4. Stress-Test, Risques & Diversification", use_container_width=True):
         titre_audit = "Stress-Test, Risques & Diversification"
         code_audit_choisi = "AUDIT_4"
@@ -3408,13 +3431,17 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         titre_audit = "Optimisation de la Rente & Calendrier"
         code_audit_choisi = "AUDIT_5"
         prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et propose une stratégie pour accélérer mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
+    if col_ia6.button("💰 6. Bilan de mes Plus/Moins-Values Actées", use_container_width=True):
+        titre_audit = "Bilan de mes Arbitrages & Plus-Values Actées"
+        code_audit_choisi = "AUDIT_6"
+        prompt_choisi = "Fais-moi un récapitulatif complet et détaillé des performances de mes plus-values ou moins-values actées (réalisées), analyse mon taux de réussite (win rate), ma performance d'extraction réelle et conseille-moi sur le réinvestissement du cash encaissé."
 
     st.markdown("---")
     col_q_input, col_q_btn, col_q_clear = st.columns([4, 1.3, 0.8])
     with col_q_input:
         question_libre = st.text_input(
             "💬 Posez une question personnalisée à votre Coach IA 2.0 :",
-            placeholder="Ex: Compte tenu de mon PRU sur Rubis...",
+            placeholder="Ex: Fais-moi un bilan de mes plus-values actées et de mon PRU sur Rubis...",
             label_visibility="collapsed",
         )
     with col_q_btn:
@@ -3433,7 +3460,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         if quota_restant <= 0:
             st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez à l'offre Boursy Pro pour disposer de 15 audits par jour !")
         else:
-            with st.spinner("🧠 Le Coach IA 2.0 analyse la météo des marchés, votre portefeuille et les indicateurs techniques en direct..."):
+            with st.spinner("🧠 Le Coach IA 2.0 analyse votre portefeuille, vos plus-values actées et les indicateurs techniques en direct..."):
                 reponse_texte = appeler_gemini_coach(prompt_choisi, code_audit_choisi)
                 st.session_state["quota_ia_utilise"] = quota_utilise + 1
                 st.session_state["reponse_ia_coach"] = reponse_texte
@@ -3455,161 +3482,214 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
                 st.markdown(item_h["reponse"])
                 st.markdown("---")
 
-# Footer & Mentions Légales
-st.markdown("---")
-with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales d'Utilisation (Non-CIF)"):
-    st.caption(
-        "**Avertissement légal :** La plateforme Boursy (`boursy.streamlit.app`) est un outil logiciel d'analyse statistique, "
-        "technique et patrimoniale à vocation strictement pédagogique. Les scores algorithmiques, indicateurs (RSI, Stochastique, Bollinger, MACD, EMA) "
-        "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
-        "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
-    )
-afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
+
 # ------------------------------------------------------------------------------
-# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (RÉALISÉES)
+# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (STYLE ARGON + CALENDRIER 12M)
 # ------------------------------------------------------------------------------
 with onglet_ventes:
     st.subheader("💰 Journal des Arbitrages & Plus-Values Actées (Réalisées)")
-    st.caption("Enregistrez vos ventes d'actions pour suivre les plus-values réellement extraites du marché, mois par mois.")
+    st.caption("Enregistrez vos ventes d'actions : la quantité vendue est automatiquement déduite de votre portefeuille et vos gains/pertes actés sont calculés mois par mois.")
 
-    # --- FORMULAIRE DE SAISIE D'UNE VENTE ---
     actions_vendables = [
         k for k, v in portefeuille_utilisateur.items()
-        if k != "Espèces" and float(v.get("qte", 0)) > 0
+        if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
     ]
 
-    with st.expander("➕ Enregistrer une nouvelle vente ou un arbitrage", expanded=True):
+    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction automatique du portefeuille)", expanded=True):
         if not actions_vendables:
             st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
         else:
+            action_vendue = st.selectbox("1️⃣ Choisissez l'action vendue :", actions_vendables, key="sel_action_vente")
+
+            pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
+            qte_detenue = int(pos_actuelle_v.get("qte", 1))
+            pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
+            info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
+            dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
+            cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
+
+            st.markdown(
+                f"<div style='background:rgba(52,152,219,0.08); border-left:4px solid #3498db; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:0.9em;'>"
+                f"📌 En portefeuille : <b>{qte_detenue} action(s) {action_vendue}</b> | Votre PRU : <b>{pru_actuel:.2f} {dev_v}</b> | Cours actuel : <b>{cours_actuel_v:.2f} {dev_v}</b>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
             with st.form("form_saisie_vente"):
-                col_v1, col_v2, col_v3 = st.columns(3)
+                col_v1, col_v2, col_v3, col_v4 = st.columns(4)
                 with col_v1:
-                    action_vendue = st.selectbox("Action concernée :", actions_vendables)
-               
-                pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
-                qte_detenue = int(pos_actuelle_v.get("qte", 1))
-                pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
-                info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
-                dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
-                cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
-
+                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(1, qte_detenue), step=1)
                 with col_v2:
-                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(5, qte_detenue), step=1)
+                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=float(round(cours_actuel_v, 2)), step=0.5)
                 with col_v3:
-                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=round(cours_actuel_v, 2), step=0.5)
-
-                col_v4, col_v5 = st.columns(2)
+                    frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5)
                 with col_v4:
-                    date_vente = st.date_input("Date de la transaction :", value=datetime.now())
-                with col_v5:
-                    crediter_especes = st.checkbox("Créditer automatiquement le produit de la vente dans ma poche Espèces (€)", value=True)
+                    date_vente = st.date_input("Date de la vente :", value=datetime.now())
 
-                if st.form_submit_button("🚀 Valider & Enregistrer cette Vente", type="primary"):
-                    facteur_v = (1.0 / TAUX_USD_EUR) if dev_v == "USD" else 1.0
-                   
-                    # Calculs financiers en Euros
-                    montant_vente_eur = qte_a_vendre * prix_vente_saisi * facteur_v
+                if st.form_submit_button("🚀 Valider la vente & Déduire du portefeuille", type="primary", use_container_width=True):
+                    facteur_v = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
+
+                    montant_vente_brut_eur = (qte_a_vendre * prix_vente_saisi * facteur_v)
+                    montant_vente_net_eur = montant_vente_brut_eur - frais_vente_eur
                     cout_initial_eur = qte_a_vendre * pru_actuel * facteur_v
-                    plus_value_eur = montant_vente_eur - cout_initial_eur
+                    plus_value_eur = montant_vente_net_eur - cout_initial_eur
                     perf_vente_pct = (plus_value_eur / cout_initial_eur * 100.0) if cout_initial_eur > 0 else 0.0
 
-                    # Enregistrement dans l'historique des ventes
                     nouvelle_vente = {
                         "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                         "date": date_vente.strftime("%Y-%m-%d"),
+                        "annee": date_vente.strftime("%Y"),
+                        "mois_num": int(date_vente.strftime("%m")),
                         "mois_annee": date_vente.strftime("%Y-%m"),
                         "action": action_vendue,
                         "qte": int(qte_a_vendre),
                         "pru": float(pru_actuel),
                         "prix_vente": float(prix_vente_saisi),
+                        "frais_eur": float(frais_vente_eur),
                         "devise": dev_v,
-                        "montant_eur": round(montant_vente_eur, 2),
+                        "montant_eur": round(montant_vente_net_eur, 2),
+                        "cout_initial_eur": round(cout_initial_eur, 2),
                         "plus_value_eur": round(plus_value_eur, 2),
                         "perf_pct": round(perf_vente_pct, 2),
                     }
                     st.session_state["historique_ventes"].insert(0, nouvelle_vente)
 
-                    # Mise à jour du portefeuille (soustraction de la quantité vendue)
-                    nouvelle_qte = qte_detenue - qte_a_vendre
-                    if nouvelle_qte <= 0:
-                        if action_vendue in st.session_state["portefeuille"]:
-                            del st.session_state["portefeuille"][action_vendue]
-                    else:
-                        st.session_state["portefeuille"][action_vendue]["qte"] = nouvelle_qte
-
-                    # Optionnel : Créditer les espèces
-                    if crediter_especes:
-                        actuel_esp = float(st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0))
-                        nouveau_esp = actuel_esp + montant_vente_eur
-                        if "Espèces" not in st.session_state["portefeuille"]:
-                            st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": round(nouveau_esp, 2)}
-                        else:
-                            st.session_state["portefeuille"]["Espèces"]["pru"] = round(nouveau_esp, 2)
-                        st.session_state["pru_Espèces"] = round(nouveau_esp, 2)
-
-                    sauvegarder_dans_cloud()
-                    st.success(f"✅ Vente de {qte_a_vendre} {action_vendue} enregistrée avec succès ! Plus-value actée : {plus_value_eur:+,.2f} €")
+                    nouvelle_qte = max(0, qte_detenue - int(qte_a_vendre))
+                    st.session_state["_vente_en_attente"] = {
+                        "action": action_vendue,
+                        "nouvelle_qte": nouvelle_qte,
+                    }
+                    st.toast(f"✅ Vente de {qte_a_vendre} {action_vendue} actée ({plus_value_eur:+,.2f} €) !")
                     st.rerun()
 
-    # --- CALCULS & KPI DES VENTES RÉALISÉES ---
     historique_v = st.session_state.get("historique_ventes", [])
-   
-    if not historique_v:
-        st.info("💡 Aucune vente enregistrée pour le moment. Utilisez le formulaire ci-dessus dès que vous réalisez un arbitrage.")
-    else:
-        total_pv_actee = sum(v["plus_value_eur"] for v in historique_v)
-        total_montant_vendu = sum(v["montant_eur"] for v in historique_v)
-        total_cout_initial = total_montant_vendu - total_pv_actee
-        perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
-       
-        nb_gagnantes = sum(1 for v in historique_v if v["plus_value_eur"] >= 0)
-        win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
 
+    if not historique_v:
+        st.info("💡 Aucune vente enregistrée pour le moment. Utilisez le guichet ci-dessus lorsque vous vendez tout ou partie d'une ligne.")
+    else:
+        total_pv_actee = sum(float(v.get("plus_value_eur", 0.0)) for v in historique_v)
+        total_montant_vendu = sum(float(v.get("montant_eur", 0.0)) for v in historique_v)
+        total_cout_initial = sum(float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - float(v.get("plus_value_eur", 0.0)))) for v in historique_v)
+        perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
+
+        nb_gagnantes = sum(1 for v in historique_v if float(v.get("plus_value_eur", 0.0)) >= 0)
+        win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
         c_pv_act = "#2ecc71" if total_pv_actee >= 0 else "#e74c3c"
 
         html_kpi_ventes = f"""
         <div class="argon-grid">
             <div class="argon-card">
-                <div class="argon-title">💰 Total Plus-Values Actées</div>
+                <div class="argon-title">💰 Total Plus/Moins-Values Actées</div>
                 <div class="argon-val" style="color:{c_pv_act};">{total_pv_actee:+,.2f} €</div>
-                <div class="argon-sub">Gains réels sécurisés en cash</div>
+                <div class="argon-sub">Gains nets réellement extraits</div>
             </div>
             <div class="argon-card">
-                <div class="argon-title">📈 Performance Réelle Extraite</div>
+                <div class="argon-title">📈 Performance d'Extraction Réelle</div>
                 <div class="argon-val" style="color:{c_pv_act};">{perf_globale_actee_pct:+.2f}%</div>
-                <div class="argon-sub">Sur un volume vendu de {total_montant_vendu:,.0f} €</div>
+                <div class="argon-sub">Sur {total_cout_initial:,.0f} € de capital initial vendu</div>
             </div>
             <div class="argon-card">
                 <div class="argon-title">🎯 Taux de Réussite (Win Rate)</div>
                 <div class="argon-val" style="color:#3498db;">{win_rate:.0f}%</div>
-                <div class="argon-sub">{nb_gagnantes} / {len(historique_v)} vente(s) en positif</div>
+                <div class="argon-sub">{nb_gagnantes} gagnante(s) / {len(historique_v)} vente(s)</div>
             </div>
             <div class="argon-card">
-                <div class="argon-title">📊 Nombre d'Arbitrages</div>
-                <div class="argon-val" style="color:#9b59b6;">{len(historique_v)}</div>
-                <div class="argon-sub">Transactions clôturées</div>
+                <div class="argon-title">💵 Cash Total Encaissé</div>
+                <div class="argon-val" style="color:#9b59b6;">{total_montant_vendu:,.2f} €</div>
+                <div class="argon-sub">À reporter selon vos besoins en Espèces</div>
             </div>
         </div>
         """
         afficher_html(html_kpi_ventes)
 
-        # --- TABLEAU MENSUEL DES PLUS-VALUES ACTÉES ---
-        st.markdown("#### 📅 Bilan Mensuel des Plus-Values Réalisées")
-       
-        # Agrégation mois par mois
+        annees_dispo = sorted(list({str(v.get("date", "2026"))[:4] for v in historique_v}), reverse=True)
+        if not annees_dispo:
+            annees_dispo = [str(datetime.now().year)]
+
+        col_an_t, col_an_sel = st.columns([3, 1])
+        with col_an_t:
+            st.markdown("#### 🗓️ Calendrier 12 Mois des Plus & Moins-Values Actées")
+        with col_an_sel:
+            annee_choisie_v = st.selectbox("Année affichée :", annees_dispo, key="sel_annee_cal_ventes")
+
+        mois_noms_12 = [
+            (1, "Janvier"), (2, "Février"), (3, "Mars"), (4, "Avril"),
+            (5, "Mai"), (6, "Juin"), (7, "Juillet"), (8, "Août"),
+            (9, "Septembre"), (10, "Octobre"), (11, "Novembre"), (12, "Décembre")
+        ]
+        pv_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+        cout_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+        pills_par_mois_12 = {m_idx: [] for m_idx, _ in mois_noms_12}
+
+        for v in historique_v:
+            date_s = str(v.get("date", ""))
+            if date_s.startswith(str(annee_choisie_v)):
+                try:
+                    m_num = int(date_s.split("-")[1])
+                except Exception:
+                    m_num = 1
+                pv_v = float(v.get("plus_value_eur", 0.0))
+                cout_v = float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - pv_v))
+                pv_par_mois_12[m_num] += pv_v
+                cout_par_mois_12[m_num] += cout_v
+                pills_par_mois_12[m_num].append((v["action"], v["qte"], pv_v))
+
+        html_cal_ventes = "<div class='cal-grid'>"
+        for m_idx, m_label in mois_noms_12:
+            tot_m = pv_par_mois_12[m_idx]
+            cout_m = cout_par_mois_12[m_idx]
+            perf_m = (tot_m / cout_m * 100.0) if cout_m > 0 else 0.0
+            liste_p = pills_par_mois_12[m_idx]
+
+            if liste_p:
+                classe_c = "cal-card-active"
+                c_tot = "#2ecc71" if tot_m >= 0 else "#e74c3c"
+                icone_m = "🟢" if tot_m >= 0 else "🔴"
+                pills_str = "".join(
+                    f"<span class='cal-pill'><b>{act_p}</b> (x{q_p}) : <span style='color:{'#2ecc71' if pv_p>=0 else '#e74c3c'}; font-weight:800;'>{pv_p:+.1f} €</span></span>"
+                    for act_p, q_p, pv_p in liste_p
+                )
+                perf_badge = f"<span style='font-size:0.76em; font-weight:800; color:{c_tot};'>({perf_m:+.1f}%)</span>"
+            else:
+                classe_c = "cal-card"
+                c_tot = "rgba(128,128,128,0.45)"
+                icone_m = "⚪"
+                pills_str = "<span style='font-size:0.82em; opacity:0.45; font-style:italic;'>Aucune vente ce mois</span>"
+                perf_badge = ""
+
+            html_cal_ventes += f"""
+            <div class="{classe_c}">
+                <div>
+                    <div class="cal-month">
+                        <span>{m_idx:02d}. {m_label} {annee_choisie_v}</span>
+                        <span style="font-size:0.85em;">{icone_m}</span>
+                    </div>
+                    <div style="margin-bottom:10px;">{pills_str}</div>
+                </div>
+                <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px;">
+                    <span style="font-size:0.76em; opacity:0.75; margin-right:4px;">Acté :</span>
+                    <span class="cal-total" style="color:{c_tot};">{tot_m:+,.2f} €</span> {perf_badge}
+                </div>
+            </div>
+            """
+        html_cal_ventes += "</div>"
+        afficher_html(html_cal_ventes)
+
+        st.markdown("#### 📊 Tableau Récapitulatif d'Extraction de Performance Mois par Mois")
         agregation_mois = {}
         for v in historique_v:
-            m_key = v["mois_annee"]  # Format "YYYY-MM"
+            m_key = v.get("mois_annee", str(v.get("date", ""))[:7])
             if m_key not in agregation_mois:
                 agregation_mois[m_key] = {"nb_ventes": 0, "montant_total": 0.0, "cout_total": 0.0, "pv_totale": 0.0}
+            pv_val = float(v.get("plus_value_eur", 0.0))
+            mt_val = float(v.get("montant_eur", 0.0))
+            ct_val = float(v.get("cout_initial_eur", mt_val - pv_val))
             agregation_mois[m_key]["nb_ventes"] += 1
-            agregation_mois[m_key]["montant_total"] += v["montant_eur"]
-            agregation_mois[m_key]["cout_total"] += (v["montant_eur"] - v["plus_value_eur"])
-            agregation_mois[m_key]["pv_totale"] += v["plus_value_eur"]
+            agregation_mois[m_key]["montant_total"] += mt_val
+            agregation_mois[m_key]["cout_total"] += ct_val
+            agregation_mois[m_key]["pv_totale"] += pv_val
 
-        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Arbitrages</th><th>Volume Vendu (€)</th><th>Capital Initial (€)</th><th>Plus-Value Actée (€)</th><th>Performance (%)</th></tr></thead><tbody>"
-       
+        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Ventes Actées</th><th>Capital Initial Vendu (€)</th><th>Total Encaissé Net (€)</th><th>Plus/Moins-Value Actée (€)</th><th>Performance Extraite (%)</th></tr></thead><tbody>"
         for m_k in sorted(agregation_mois.keys(), reverse=True):
             d_m = agregation_mois[m_k]
             p_m_pct = (d_m["pv_totale"] / d_m["cout_total"] * 100.0) if d_m["cout_total"] > 0 else 0.0
@@ -3620,8 +3700,8 @@ with onglet_ventes:
             <tr>
                 <td class='r-name'>📅 {m_k}</td>
                 <td><b>{d_m['nb_ventes']}</b> vente(s)</td>
-                <td>{d_m['montant_total']:,.2f} €</td>
                 <td>{d_m['cout_total']:,.2f} €</td>
+                <td><b>{d_m['montant_total']:,.2f} €</b></td>
                 <td><span class='{b_m}'>{d_m['pv_totale']:+,.2f} €</span></td>
                 <td style='color:{c_m_col}; font-weight:800;'>{p_m_pct:+.2f}%</td>
             </tr>
@@ -3629,19 +3709,29 @@ with onglet_ventes:
         html_t_mois += "</tbody></table>"
         afficher_html(html_t_mois)
 
-        # --- HISTORIQUE DÉTAILLÉ & SUPPRESSION ---
-        with st.expander("📋 Historique détaillé de chaque vente & Suppression", expanded=False):
+        with st.expander("📋 Historique détaillé de chaque vente & Annulation", expanded=False):
             for idx_h, item_h in enumerate(historique_v):
                 col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
                 with col_h1:
-                    st.markdown(f"**{item_h['action']}** — {item_h['qte']} act. vendues à {item_h['prix_vente']} {item_h['devise']} (PRU : {item_h['pru']})")
-                    st.caption(f"Date : {item_h['date']} | Montant : {item_h['montant_eur']:,.2f} €")
+                    st.markdown(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
+                    st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} €")
                 with col_h2:
-                    col_pv_s = "#2ecc71" if item_h['plus_value_eur'] >= 0 else "#e74c3c"
-                    st.markdown(f"Plus-value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.1f}%)</span>", unsafe_allow_html=True)
+                    col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
+                    st.markdown(f"Plus-value actée : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
                 with col_h3:
-                    if st.button("🗑️ Supprimer", key=f"suppr_vente_{item_h['id']}"):
+                    if st.button("🗑️ Supprimer", key=f"suppr_vente_{item_h['id']}_{idx_h}"):
                         st.session_state["historique_ventes"].pop(idx_h)
                         sauvegarder_dans_cloud()
                         st.rerun()
                 st.markdown("---")
+
+# Footer & Mentions Légales
+st.markdown("---")
+with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales d'Utilisation (Non-CIF)"):
+    st.caption(
+        "**Avertissement légal :** La plateforme Boursy (`boursy.streamlit.app`) est un outil logiciel d'analyse statistique, "
+        "technique et patrimoniale à vocation strictement pédagogique. Les scores algorithmiques, indicateurs (RSI, Stochastique, Bollinger, MACD, EMA) "
+        "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
+        "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
+    )
+afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
