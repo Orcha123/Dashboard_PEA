@@ -3299,8 +3299,8 @@ Je n'ai détecté aucun nom d'action ni thème financier précis dans votre sais
 - 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
 - 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
 
-    @st.cache_data(ttl=3600)
-    def lister_modeles_gemini_actifs(cle_api):
+@st.cache_data(ttl=3600)
+def lister_modeles_gemini_actifs(cle_api):
         modeles = []
         try:
             url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(cle_api)}"
@@ -3381,7 +3381,7 @@ Mission demandée par l'utilisateur : {question_utilisateur}
 
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
-        modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
+    modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
         priorite_modeles = [
             "gemini-3-flash-preview",
             "gemini-3.0-flash-preview",
