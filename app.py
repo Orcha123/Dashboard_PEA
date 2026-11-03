@@ -3484,18 +3484,142 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (STYLE ARGON + CALENDRIER 12M)
+# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (SYNCHRO DIRECTE PORTEFEUILLE)
 # ------------------------------------------------------------------------------
 with onglet_ventes:
     st.subheader("💰 Journal des Arbitrages & Plus-Values Actées (Réalisées)")
-    st.caption("Enregistrez vos ventes d'actions : la quantité vendue est automatiquement déduite de votre portefeuille et vos gains/pertes actés sont calculés mois par mois.")
+    st.caption("Enregistrez vos ventes d'actions : les titres vendus sont immédiatement déduits de votre portefeuille et le cash net peut être crédité automatiquement dans votre poche Espèces.")
+
+    def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
+        qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
+        prix_vente = float(st.session_state.get(f"input_prix_v_{act_v}", pru_v))
+        frais_v = float(st.session_state.get(f"input_frais_v_{act_v}", 0.0))
+        date_v = st.session_state.get(f"input_date_v_{act_v}", datetime.now().date())
+        crediter_esp = bool(st.session_state.get(f"input_cred_esp_{act_v}", True))
+
+        facteur_v = (1.0 / TAUX_USD_EUR) if dev_sym_v == "$" else 1.0
+        montant_brut_eur = qte_vendue * prix_vente * facteur_v
+        montant_net_eur = round(montant_brut_eur - frais_v, 2)
+        cout_init_eur = round(qte_vendue * pru_v * facteur_v, 2)
+        pv_eur = round(montant_net_eur - cout_init_eur, 2)
+        perf_pct = round((pv_eur / cout_init_eur * 100.0) if cout_init_eur > 0 else 0.0, 2)
+
+        nouvelle_vente = {
+            "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+            "date": date_v.strftime("%Y-%m-%d"),
+            "annee": date_v.strftime("%Y"),
+            "mois_num": int(date_v.strftime("%m")),
+            "mois_annee": date_v.strftime("%Y-%m"),
+            "action": act_v,
+            "qte": qte_vendue,
+            "pru": float(pru_v),
+            "prix_vente": float(prix_vente),
+            "frais_eur": float(frais_v),
+            "devise": dev_sym_v,
+            "montant_eur": montant_net_eur,
+            "cout_initial_eur": cout_init_eur,
+            "plus_value_eur": pv_eur,
+            "perf_pct": perf_pct,
+            "credite_especes": crediter_esp,
+        }
+        st.session_state["historique_ventes"].insert(0, nouvelle_vente)
+
+        # 1. Déduction immédiate des actions dans le widget de l'Onglet 2 et dans le portefeuille
+        nouvelle_qte = max(0, int(qte_det_v) - qte_vendue)
+        st.session_state[f"qte_{act_v}"] = nouvelle_qte
+        if nouvelle_qte <= 0:
+            st.session_state["portefeuille"].pop(act_v, None)
+        else:
+            if act_v in st.session_state["portefeuille"] and isinstance(st.session_state["portefeuille"][act_v], dict):
+                st.session_state["portefeuille"][act_v]["qte"] = nouvelle_qte
+            else:
+                st.session_state["portefeuille"][act_v] = {"qte": nouvelle_qte, "pru": float(pru_v)}
+
+        # 2. Crédit automatique de la poche Espèces (Liquidités) dans l'Onglet 2
+        if crediter_esp:
+            esp_actuel = float(st.session_state.get("pru_Espèces", st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0)))
+            nouveau_esp = round(max(0.0, esp_actuel + montant_net_eur), 2)
+            st.session_state["pru_Espèces"] = nouveau_esp
+            st.session_state["qte_Espèces"] = 1 if nouveau_esp > 0 else 0
+            if nouveau_esp > 0:
+                st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouveau_esp}
+
+        # 3. Sauvegarde Cloud immédiate
+        sauvegarder_dans_cloud()
+        st.session_state["_derniere_notif_vente"] = (
+            f"✅ Vente actée : -{qte_vendue} {act_v} (Reste en portefeuille : {nouvelle_qte}) | "
+            f"Plus/Moins-Value actée : {pv_eur:+,.2f} € ({perf_pct:+.2f}%)"
+            + (f" | +{montant_net_eur:,.2f} € crédités dans votre poche Espèces !" if crediter_esp else " | Déduit sans ajout aux Espèces.")
+        )
+
+    def annuler_vente_portefeuille(idx_v):
+        hist = st.session_state.get("historique_ventes", [])
+        if 0 <= idx_v < len(hist):
+            v_suppr = hist.pop(idx_v)
+            act_s = v_suppr.get("action", "")
+            qte_s = int(v_suppr.get("qte", 0))
+            pru_s = float(v_suppr.get("pru", 0.0))
+            mt_s = float(v_suppr.get("montant_eur", 0.0))
+            avait_credite_esp = bool(v_suppr.get("credite_especes", False))
+
+            if act_s and qte_s > 0:
+                qte_actuelle = int(st.session_state.get(f"qte_{act_s}", st.session_state["portefeuille"].get(act_s, {}).get("qte", 0)))
+                qte_restauree = qte_actuelle + qte_s
+                pru_rest = float(st.session_state.get(f"pru_{act_s}", pru_s))
+                st.session_state[f"qte_{act_s}"] = qte_restauree
+                st.session_state[f"pru_{act_s}"] = pru_rest
+                st.session_state["portefeuille"][act_s] = {"qte": qte_restauree, "pru": pru_rest}
+
+            if avait_credite_esp and mt_s > 0:
+                esp_act = float(st.session_state.get("pru_Espèces", st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0)))
+                nouv_esp = round(max(0.0, esp_act - mt_s), 2)
+                st.session_state["pru_Espèces"] = nouv_esp
+                if nouv_esp > 0:
+                    st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouv_esp}
+                else:
+                    st.session_state["portefeuille"].pop("Espèces", None)
+                    st.session_state["qte_Espèces"] = 0
+
+            sauvegarder_dans_cloud()
+            st.session_state["_derniere_notif_vente"] = f"🔄 Vente annulée : +{qte_s} action(s) {act_s} restaurée(s) dans votre portefeuille."
+
+    if st.session_state.get("_derniere_notif_vente"):
+        st.success(st.session_state.pop("_derniere_notif_vente"))
+
+    # --- BANDEAU DE CONTRÔLE EN DIRECT (ACTIONS vs ESPÈCES vs TOTAL) ---
+    esp_dispo_actuel = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
+    val_actions_seules = max(0.0, valeur_totale_portefeuille - esp_dispo_actuel)
+
+    html_bar_synchro = f"""
+    <div class="meteo-bar" style="margin-bottom: 16px;">
+        <div class="meteo-item" style="border-left-color:#3498db;">
+            <div>
+                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">📈 VALORISATION ACTIONS SEULES</div>
+                <div style="font-size:1.05em; font-weight:900;">{val_actions_seules:,.2f} €</div>
+            </div>
+        </div>
+        <div class="meteo-item" style="border-left-color:#2ecc71;">
+            <div>
+                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 POCHE ESPÈCES (LIQUIDITÉS)</div>
+                <div style="font-size:1.05em; font-weight:900; color:#2ecc71;">{esp_dispo_actuel:,.2f} €</div>
+            </div>
+        </div>
+        <div class="meteo-item" style="border-left-color:#9b59b6;">
+            <div>
+                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💼 PATRIMOINE TOTAL (ACTIONS + ESPÈCES)</div>
+                <div style="font-size:1.05em; font-weight:900;">{valeur_totale_portefeuille:,.2f} € <span style="font-size:0.82em; opacity:0.8;">(PV Latente : {plus_value_globale:+,.2f} €)</span></div>
+            </div>
+        </div>
+    </div>
+    """
+    afficher_html(html_bar_synchro)
 
     actions_vendables = [
         k for k, v in portefeuille_utilisateur.items()
         if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
     ]
 
-    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction automatique du portefeuille)", expanded=True):
+    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction Actions & Crédit Espèces automatiques)", expanded=True):
         if not actions_vendables:
             st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
         else:
@@ -3515,52 +3639,46 @@ with onglet_ventes:
                 unsafe_allow_html=True
             )
 
-            with st.form("form_saisie_vente"):
-                col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-                with col_v1:
-                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(1, qte_detenue), step=1)
-                with col_v2:
-                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=float(round(cours_actuel_v, 2)), step=0.5)
-                with col_v3:
-                    frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5)
-                with col_v4:
-                    date_vente = st.date_input("Date de la vente :", value=datetime.now())
+            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+            with col_v1:
+                qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(1, qte_detenue), step=1, key=f"input_qte_v_{action_vendue}")
+            with col_v2:
+                prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=float(round(cours_actuel_v, 2)), step=0.5, key=f"input_prix_v_{action_vendue}")
+            with col_v3:
+                frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5, key=f"input_frais_v_{action_vendue}")
+            with col_v4:
+                date_vente = st.date_input("Date de la vente :", value=datetime.now(), key=f"input_date_v_{action_vendue}")
 
-                if st.form_submit_button("🚀 Valider la vente & Déduire du portefeuille", type="primary", use_container_width=True):
-                    facteur_v = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
+            crediter_especes_chk = st.checkbox(
+                "💶 Créditer automatiquement le montant net encaissé dans ma poche Espèces (Liquidités)",
+                value=True,
+                key=f"input_cred_esp_{action_vendue}",
+            )
 
-                    montant_vente_brut_eur = (qte_a_vendre * prix_vente_saisi * facteur_v)
-                    montant_vente_net_eur = montant_vente_brut_eur - frais_vente_eur
-                    cout_initial_eur = qte_a_vendre * pru_actuel * facteur_v
-                    plus_value_eur = montant_vente_net_eur - cout_initial_eur
-                    perf_vente_pct = (plus_value_eur / cout_initial_eur * 100.0) if cout_initial_eur > 0 else 0.0
+            # Aperçu en direct avant validation
+            facteur_apercu = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
+            net_apercu_eur = round((qte_a_vendre * prix_vente_saisi * facteur_apercu) - frais_vente_eur, 2)
+            cout_apercu_eur = round(qte_a_vendre * pru_actuel * facteur_apercu, 2)
+            pv_apercu_eur = round(net_apercu_eur - cout_apercu_eur, 2)
+            perf_apercu_pct = (pv_apercu_eur / cout_apercu_eur * 100.0) if cout_apercu_eur > 0 else 0.0
+            c_apercu = "#2ecc71" if pv_apercu_eur >= 0 else "#e74c3c"
 
-                    nouvelle_vente = {
-                        "id": datetime.now().strftime("%Y%m%d%H%M%S"),
-                        "date": date_vente.strftime("%Y-%m-%d"),
-                        "annee": date_vente.strftime("%Y"),
-                        "mois_num": int(date_vente.strftime("%m")),
-                        "mois_annee": date_vente.strftime("%Y-%m"),
-                        "action": action_vendue,
-                        "qte": int(qte_a_vendre),
-                        "pru": float(pru_actuel),
-                        "prix_vente": float(prix_vente_saisi),
-                        "frais_eur": float(frais_vente_eur),
-                        "devise": dev_v,
-                        "montant_eur": round(montant_vente_net_eur, 2),
-                        "cout_initial_eur": round(cout_initial_eur, 2),
-                        "plus_value_eur": round(plus_value_eur, 2),
-                        "perf_pct": round(perf_vente_pct, 2),
-                    }
-                    st.session_state["historique_ventes"].insert(0, nouvelle_vente)
+            st.markdown(
+                f"<div style='background:rgba(46,204,113,0.07); border:1px dashed rgba(46,204,113,0.4); padding:10px 14px; border-radius:8px; margin:8px 0 12px 0; font-size:0.88em;'>"
+                f"🔎 <b>Aperçu avant validation :</b> Il vous restera <b>{qte_detenue - qte_a_vendre} action(s) {action_vendue}</b> en portefeuille | "
+                f"Cash net généré : <b>+{net_apercu_eur:,.2f} €</b> | "
+                f"Plus/Moins-Value actée : <span style='color:{c_apercu}; font-weight:800;'>{pv_apercu_eur:+,.2f} € ({perf_apercu_pct:+.2f}%)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-                    nouvelle_qte = max(0, qte_detenue - int(qte_a_vendre))
-                    st.session_state["_vente_en_attente"] = {
-                        "action": action_vendue,
-                        "nouvelle_qte": nouvelle_qte,
-                    }
-                    st.toast(f"✅ Vente de {qte_a_vendre} {action_vendue} actée ({plus_value_eur:+,.2f} €) !")
-                    st.rerun()
+            st.button(
+                "🚀 Valider la vente & Mettre à jour mon Portefeuille",
+                type="primary",
+                use_container_width=True,
+                on_click=executer_vente_portefeuille,
+                args=(action_vendue, qte_detenue, pru_actuel, dev_v),
+            )
 
     historique_v = st.session_state.get("historique_ventes", [])
 
@@ -3596,7 +3714,7 @@ with onglet_ventes:
             <div class="argon-card">
                 <div class="argon-title">💵 Cash Total Encaissé</div>
                 <div class="argon-val" style="color:#9b59b6;">{total_montant_vendu:,.2f} €</div>
-                <div class="argon-sub">À reporter selon vos besoins en Espèces</div>
+                <div class="argon-sub">Poche Espèces actuelle : <b>{esp_dispo_actuel:,.2f} €</b></div>
             </div>
         </div>
         """
@@ -3709,20 +3827,24 @@ with onglet_ventes:
         html_t_mois += "</tbody></table>"
         afficher_html(html_t_mois)
 
-        with st.expander("📋 Historique détaillé de chaque vente & Annulation", expanded=False):
+        with st.expander("📋 Historique détaillé de chaque vente & Annulation (Restauration)", expanded=False):
             for idx_h, item_h in enumerate(historique_v):
                 col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
                 with col_h1:
+                    badge_esp = "💶 Crédité en Espèces" if item_h.get("credite_especes") else "📤 Hors Espèces"
                     st.markdown(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
-                    st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} €")
+                    st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} € ({badge_esp})")
                 with col_h2:
                     col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
                     st.markdown(f"Plus-value actée : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
                 with col_h3:
-                    if st.button("🗑️ Supprimer", key=f"suppr_vente_{item_h['id']}_{idx_h}"):
-                        st.session_state["historique_ventes"].pop(idx_h)
-                        sauvegarder_dans_cloud()
-                        st.rerun()
+                    st.button(
+                        "🗑️ Annuler",
+                        key=f"suppr_vente_{item_h['id']}_{idx_h}",
+                        on_click=annuler_vente_portefeuille,
+                        args=(idx_h,),
+                        use_container_width=True,
+                    )
                 st.markdown("---")
 
 # Footer & Mentions Légales
@@ -3732,6 +3854,9 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "**Avertissement légal :** La plateforme Boursy (`boursy.streamlit.app`) est un outil logiciel d'analyse statistique, "
         "technique et patrimoniale à vocation strictement pédagogique. Les scores algorithmiques, indicateurs (RSI, Stochastique, Bollinger, MACD, EMA) "
         "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
+        "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
+    )
+afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
