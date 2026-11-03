@@ -675,64 +675,35 @@ def recuperer_donnees(symbole):
     except Exception:
         return None, None, None, None
 @st.cache_data(ttl=1800)
-@st.cache_data(ttl=1800)
 def rechercher_actions_yahoo_live(requete):
-    """Recherche n'importe quelle action sur Yahoo Finance (avec fallback catalogue local)."""
+    """Recherche n'importe quelle action sur Yahoo Finance par nom ou ticker."""
     if not requete or len(requete.strip()) < 2:
         return []
-    q_clean = requete.strip()
-    q_low = q_clean.lower()
+    q_enc = urllib.parse.quote(requete.strip())
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     resultats = []
-    symboles_vus = set()
-
-    # 1. Recherche instantanée dans le Méga-Catalogue local (+100 valeurs)
-    for lib_cat, (sym_c, dev_c, sec_c) in CATALOGUE_ACTIONS.items():
-        nom_c = lib_cat.rsplit(" (", 1)[0]
-        if q_low in nom_c.lower() or q_low in sym_c.lower() or q_low in sec_c.lower():
-            resultats.append({
-                "label": f"⭐ {nom_c} ({sym_c} — Catalogue | {dev_c})",
-                "nom": nom_c,
-                "symbole": sym_c,
-                "devise": dev_c,
-                "secteur": sec_c,
-            })
-            symboles_vus.add(sym_c.upper())
-
-    # 2. Recherche en direct sur Yahoo Finance (query2 puis query1 en secours)
-    q_enc = urllib.parse.quote(q_clean)
-    headers_yahoo = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-    }
-    for host_y in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
-        url = f"https://{host_y}/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
-        req = urllib.request.Request(url, headers=headers_yahoo)
-        try:
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("quotes", []):
-                    q_type = item.get("quoteType", "")
-                    sym = str(item.get("symbol", "")).strip().upper()
-                    if q_type in ("EQUITY", "ETF") and sym and sym not in symboles_vus:
-                        nom_long = item.get("shortname") or item.get("longname") or sym
-                        bourse = item.get("exchDisp") or item.get("exchange") or ""
-                        secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
-                        est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
-                        dev_y = "EUR" if est_eur else "USD"
-                        resultats.append({
-                            "label": f"{nom_long} ({sym} — {bourse} | {dev_y})",
-                            "nom": nom_long,
-                            "symbole": sym,
-                            "devise": dev_y,
-                            "secteur": secteur_y,
-                        })
-                        symboles_vus.add(sym)
-            if resultats:
-                break
-        except Exception:
-            continue
-
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for item in data.get("quotes", []):
+                q_type = item.get("quoteType", "")
+                if q_type in ("EQUITY", "ETF"):
+                    sym = item.get("symbol", "")
+                    nom_long = item.get("shortname") or item.get("longname") or sym
+                    bourse = item.get("exchDisp") or item.get("exchange") or ""
+                    secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
+                    est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
+                    dev_y = "EUR" if est_eur else "USD"
+                    resultats.append({
+                        "label": f"{nom_long} ({sym} — {bourse} | {dev_y})",
+                        "nom": nom_long,
+                        "symbole": sym,
+                        "devise": dev_y,
+                        "secteur": secteur_y,
+                    })
+    except Exception:
+        pass
     return resultats
 
 mode_ajout = st.sidebar.radio(
@@ -799,51 +770,41 @@ if mode_ajout == "📚 Catalogue (+100 valeurs)":
                 sauvegarder_dans_cloud()
                 st.rerun()
 else:
-    requete_yahoo = st.sidebar.text_input("🌐 Ticker Yahoo ou Nom (ex: MC.PA, AAPL, Total)", value="", key="input_req_yahoo").strip()
+    requete_yahoo = st.sidebar.text_input("🌐 Tapez un nom ou ticker (ex: Novo Nordisk, Ferrari, Dassault, O...)").strip()
     resultats_yahoo = rechercher_actions_yahoo_live(requete_yahoo) if len(requete_yahoo) >= 2 else []
 
-    nom_defaut_y = requete_yahoo
-    sym_defaut_y = requete_yahoo.upper()
-    dev_defaut_y = "EUR"
-    sec_defaut_y = "Action Internationale"
-
+    nom_defaut_y, sym_defaut_y, dev_defaut_y, sec_defaut_y = "", requete_yahoo.upper(), "EUR", "Action Internationale"
     if resultats_yahoo:
-        choix_res_y = st.sidebar.selectbox("Résultats trouvés :", [r["label"] for r in resultats_yahoo], key="sel_res_yahoo_actif")
+        choix_res_y = st.sidebar.selectbox("Résultats Yahoo Finance :", [r["label"] for r in resultats_yahoo])
         item_y = next((r for r in resultats_yahoo if r["label"] == choix_res_y), resultats_yahoo[0])
         nom_defaut_y = item_y["nom"]
         sym_defaut_y = item_y["symbole"]
         dev_defaut_y = item_y["devise"]
         sec_defaut_y = item_y["secteur"]
 
-    info_connue_y = WATCHLIST_DEFAUT.get(nom_defaut_y, {})
     prix_detecte, _, _, _ = recuperer_donnees(sym_defaut_y) if sym_defaut_y else (None, None, None, None)
-    cible_auto = float(info_connue_y.get("prix_cible", round(prix_detecte * 0.95, 2) if prix_detecte else 100.0))
-    div_auto = float(info_connue_y.get("div_eur", round(cible_auto * 0.035, 2)))
-    payout_auto = float(info_connue_y.get("payout_ratio", 0.50))
+    cible_auto = round(prix_detecte * 0.95, 2) if prix_detecte else 100.0
 
     with st.sidebar.form("form_ticker_libre"):
         if prix_detecte:
-            st.success(f"⚡ Cours en direct : **{prix_detecte:.2f} {dev_defaut_y}**")
+            st.success(f"⚡ Cours en direct détecté : **{prix_detecte:.2f} {dev_defaut_y}**")
         nom_libre = st.text_input("Nom de l'action", value=nom_defaut_y).strip()
-        sym_libre = st.text_input("Ticker Yahoo exact", value=sym_defaut_y).strip().upper()
-        dev_libre = st.selectbox("Devise :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1)
+        sym_libre = st.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y).strip().upper()
+        dev_libre = st.selectbox("Devise de cotation :", ["EUR", "USD"], index=0 if dev_defaut_y == "EUR" else 1)
         sec_libre = st.text_input("Secteur", value=sec_defaut_y)
-        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=cible_auto, step=1.0)
-        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=div_auto, step=0.1)
-        payout_libre = st.number_input("Payout Ratio", min_value=0.0, max_value=2.0, value=payout_auto, step=0.05)
+        cible_libre = st.number_input(f"Prix cible ({dev_libre})", min_value=0.0, value=float(cible_auto), step=1.0)
+        div_libre = st.number_input(f"Dividende annuel ({dev_libre})", min_value=0.0, value=float(round(cible_auto * 0.035, 2)), step=0.1)
+        payout_libre = st.number_input("Payout Ratio (ex: 0.50)", min_value=0.0, max_value=2.0, value=0.50, step=0.05)
         liste_mois_possibles = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
-        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=info_connue_y.get("mois_div", ["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"]))
+        mois_libre = st.multiselect("Mois de versement :", liste_mois_possibles, default=["Mai"] if dev_libre == "EUR" else ["Mar", "Juin", "Sep", "Déc"])
 
         st.markdown("---")
-        st.caption("💼 **Optionnel : Portefeuille**")
-        qte_libre_pf = st.number_input("Quantité détenue", min_value=0, value=0, step=1)
-        pru_libre_pf = st.number_input(f"PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5)
+        st.caption("💼 **Optionnel : Ajouter aussi dans mon Portefeuille**")
+        qte_libre_pf = st.number_input("Quantité détenue (0 = Radar seul)", min_value=0, value=0, step=1)
+        pru_libre_pf = st.number_input(f"Mon PRU unitaire ({dev_libre})", min_value=0.0, value=float(prix_detecte if prix_detecte else cible_auto), step=0.5)
 
-        if st.form_submit_button("🚀 Valider & Ajouter", type="primary"):
-            nom_final = nom_libre if nom_libre else sym_libre
-            if not sym_libre:
-                st.error("⚠️ Veuillez saisir un ticker Yahoo valide.")
-            else:
+        if st.form_submit_button("🚀 Valider & Ajouter cette Action", type="primary"):
+            if nom_libre and sym_libre:
                 test_p, _, _, _ = recuperer_donnees(sym_libre)
                 if test_p is None:
                     st.error(f"❌ Ticker `{sym_libre}` introuvable sur Yahoo Finance.")
@@ -854,18 +815,17 @@ else:
                         "secteur": sec_libre,
                         "div_eur": div_libre,
                         "payout_ratio": payout_libre,
-                        "croissance_5a": info_connue_y.get("croissance_5a", "+5.0%"),
+                        "croissance_5a": "+5.0%",
                         "mois_div": mois_libre,
                         "devise": dev_libre,
                     }
-                    st.session_state["watchlist"][nom_final] = nouvel_act_l
-                    WATCHLIST_DEFAUT[nom_final] = nouvel_act_l
+                    st.session_state["watchlist"][nom_libre] = nouvel_act_l
+                    WATCHLIST_DEFAUT[nom_libre] = nouvel_act_l
                     if qte_libre_pf > 0:
-                        st.session_state["portefeuille"][nom_final] = {"qte": int(qte_libre_pf), "pru": float(pru_libre_pf)}
-                        st.session_state[f"qte_{nom_final}"] = int(qte_libre_pf)
-                        st.session_state[f"pru_{nom_final}"] = float(pru_libre_pf)
+                        st.session_state["portefeuille"][nom_libre] = {"qte": int(qte_libre_pf), "pru": float(pru_libre_pf)}
+                        st.session_state[f"qte_{nom_libre}"] = int(qte_libre_pf)
+                        st.session_state[f"pru_{nom_libre}"] = float(pru_libre_pf)
                     sauvegarder_dans_cloud()
-                    st.toast(f"✅ {nom_final} ajoutée avec succès !")
                     st.rerun()
 
 with st.sidebar.expander("🗑️ Supprimer une action du radar"):
@@ -3141,9 +3101,10 @@ with onglet_ia:
                 ("securite", "sécurité"), ("equilibre", "équilibre"),
                 ("repartition", "répartition"), ("sante", "santé"),
                 ("impot", "impôt"), ("fiscalite", "fiscalité"),
+                (" general", " général"), (" etre ", " être "),
+                ("achat", "achat"), ("renforcer", "renforcer"),
             ]:
                 question_utilisateur = question_utilisateur.replace(sans_acc, avec_acc).replace(sans_acc.capitalize(), avec_acc.capitalize())
-        
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
         rente_mens_nette = dividendes_nets_totaux_eur / 12.0
@@ -3152,64 +3113,194 @@ with onglet_ia:
             f"**{l['nom_act']}** ({l['val_eur']:,.0f} €, soit {(l['val_eur']/valeur_totale_portefeuille*100 if valeur_totale_portefeuille>0 else 0):.1f}% du portefeuille, PV : `{l['pv_eur']:+,.0f} €`)"
             for l in lignes_triees if not l["est_especes"]
         ][:3]
-        
         top_3_radar = [
             f"**{d['Actif']}** (Score `{d['Score']}/100` — {d['Décision']}, Cours : {d['Prix']}, Cible : {d['Prix Cible']}, RSI : {d['RSI']})"
             for d in sorted(donnees_t1, key=lambda x: x["Score"], reverse=True)[:3]
         ]
 
-        if hist_ventes_ia:
-            lignes_v_recap = "\n".join(
-                f"* **{v['date']} — {v['action']}** (x{v['qte']}) : Vendu à **{v['prix_vente']:.2f} {v['devise']}** vs PRU **{v['pru']:.2f} {v['devise']}** ➔ Plus/Moins-Value : **`{v['plus_value_eur']:+,.2f} € ({v['perf_pct']:+.2f}%)`**"
-                for v in hist_ventes_ia[:10]
-            )
-            bloc_recap_pv_md = f"""#### 💰 Bilan de vos Arbitrages & Plus/Moins-Values Actées
-- **Total Plus/Moins-Values Nettes Actées :** **`{total_pv_actee_ia:+,.2f} €`** sur **{len(hist_ventes_ia)} arbitrage(s)**.
-- **Performance d'Extraction Réelle :** **`{perf_extraction_ia:+.2f}%`** (sur {total_cout_vendu_ia:,.0f} € de capital initial vendu).
-- **Taux de Réussite :** **{nb_ventes_gagnantes_ia} gagnante(s) sur {len(hist_ventes_ia)}**.
-- **Dernières opérations :**
-{lignes_v_recap}"""
-        else:
-            bloc_recap_pv_md = """#### 💰 Bilan de vos Arbitrages & Plus/Moins-Values Actées
-- *Aucune vente actée enregistrée pour le moment.*"""
-
         if code_audit == "AUDIT_1":
-            return f"""### 🔍 Audit Complet 360°, Plus-Values Actées & Fiscalité
-- **Valorisation Active :** **{valeur_totale_portefeuille:,.2f} €** (Plus-value latente : **{plus_value_glob:+,.2f} € / {pv_pct_glob:+.2f}%**).
-- **Score de Santé :** **{note_sante_pf}/100** ({nb_lignes_actions} lignes).
+            return f"""### 🔍 Audit Complet 360° & Optimisation Fiscale
 
-{bloc_recap_pv_md}
+#### 1. Bilan Patrimonial & Performance Globale
+* **Valorisation Totale :** Votre portefeuille s'élève à **{valeur_totale_portefeuille:,.2f} €** pour un capital investi de **{cout_total_achat:,.2f} €**, soit une performance latente de **{plus_value_glob:+,.2f} € ({pv_pct_glob:+.2f}%)**.
+* **Score de Santé Global :** **{note_sante_pf}/100** avec **{nb_lignes_actions} ligne(s) active(s)** répartie(s) sur **{len(repartition_secteurs)} secteur(s)**.
+* **Vos Piliers Principaux (par poids décroissant) :** {', '.join(top_3_lignes) if top_3_lignes else 'Aucune ligne enregistrée'}.
 
-*⚖️ Rappel : Analyse pédagogique non-CIF.*"""
+#### 2. Analyse de Concentration & PRU
+* **Concentration Maximale :** Votre première ligne (**{nom_max_ligne}**) pèse **{poids_max_ligne:.1f}%** de votre patrimoine. {'✅ Excellente maîtrise du risque (< 30%).' if poids_max_ligne <= 30 else '⚠️ Attention : cette ligne dépasse le seuil prudentiel de 30%. Privilégiez le renforcement de vos lignes secondaires lors de vos prochains DCA.'}
+* **Qualité des Points d'Entrée (PRU) :** Les lignes affichant une moins-value latente mais un **Payout Ratio sain (< 65%)** constituent vos meilleures opportunités de moyennage à la baisse pour booster votre rendement sur coût d'achat (*Yield on Cost*).
+
+#### 3. Bilan Fiscal PEA (EUR) vs CTO (USD)
+* **Exposition Devises :** **{exposition_eur:,.0f} € en zone Euro (PEA)** contre **{exposition_usd:,.0f} € en Dollars US (CTO)**.
+* **Efficience Fiscale des Dividendes :** Vos actions produisent **{dividendes_bruts_totaux_eur:,.2f} € brut/an**, soit **{dividendes_nets_totaux_eur:,.2f} € net/an ({rente_mens_nette:.2f} € net/mois)**. En logeant vos valeurs européennes de rendement sur PEA, vous économisez **100 % d'impôt** tant que les dividendes sont réinvestis dans l'enveloppe.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
         elif code_audit == "AUDIT_2":
             achats_txt = "\n".join(
-                f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**)"
+                f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
                 for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0
             )
             if not achats_txt:
-                achats_txt = "* Aucune valeur ne valide les critères d'achat DCA aujourd'hui."
-            return f"""### 🛒 Plan d'Action DCA du Mois ({BUDGET_MENSUEL:.0f} €)
-- **VIX :** {vix_val:.1f} ({etat_vix})
-- **Répartition conseillée :**
+                achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
+            return f"""### 🛒 Plan d'Action DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
+
+#### 1. Lecture de la Météo des Marchés
+* **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
+* **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les 1 ou 2 meilleures valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
+
+#### 2. Top 3 des Signaux Techniques du Jour
+* {chr(10).join('* ' + s for s in top_3_radar)}
+
+#### 3. Répartition Condensée de votre Enveloppe de {BUDGET_MENSUEL:.0f} € (Max 2 lignes)
 {achats_txt}
+* **Total investi ce mois-ci :** **{montant_investi_dca:.2f} €** (Liquidités restantes pour le mois suivant : **{budget_courant:.2f} €**)
+* **Nouveaux dividendes annuels acquis :** **+{montant_tot_div_dca:.2f} € / an**.
 
-*⚖️ Rappel : Analyse pédagogique non-CIF.*"""
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
-        elif code_audit == "AUDIT_6":
-            return f"""### 💰 Bilan de vos Arbitrages & Plus-Values Actées
-{bloc_recap_pv_md}
+        elif code_audit == "AUDIT_3":
+            return f"""### 🌍 Arbitrage Stratégique : PEA (EUR) vs Actions US ($)
 
-*⚖️ Rappel : Analyse pédagogique non-CIF.*"""
+#### 1. Analyse du Taux de Change EUR/USD
+* **Parité actuelle :** **1 € = {TAUX_USD_EUR:.4f} $** (soit **1 $ = {1/TAUX_USD_EUR:.4f} €**).
+* **Impact Devises :** {'L Euro est actuellement solide face au Dollar (> 1.08 $), ce qui offre un point d entrée avantageux pour convertir des Euros vers des actifs américains en CTO.' if TAUX_USD_EUR >= 1.08 else 'Le Dollar est actuellement fort face à l Euro : privilégiez en priorité le renforcement de vos pépites européennes en PEA pour éviter d acheter du Dollar au plus haut.'}
 
+#### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
+* **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
+* **Poche Accélérateur US (Microsoft, Apple, Realty Income, Coca-Cola...) :** Apporte une **croissance séculaire à 2 chiffres** et des versements trimestriels ou mensuels qui lissent votre calendrier de rente.
+* **Recommandation d'équilibre :** Visez une répartition cible de **75 % à 85 % sur votre PEA** (jusqu'au plafond de 150 000 € de versements) et **15 % à 25 % sur les géants US** lors des replis de leur RSI sous 40.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_4":
+            choc_20 = valeur_totale_portefeuille * 0.80
+            return f"""### 🛡️ Stress-Test, Gestion des Risques & Diversification
+
+#### 1. Simulation de Krach Boursier (-20 % sur les marchés)
+* **Valorisation après choc de -20 % :** Votre portefeuille passerait temporairement de **{valeur_totale_portefeuille:,.0f} €** à **{choc_20:,.0f} €** (soit un repli latent de `-{valeur_totale_portefeuille * 0.20:,.0f} €`).
+* **Résilience de votre Rente Passive :** Même en cas de baisse de 20 % des cours boursiers, **votre rente de dividendes ({dividendes_bruts_totaux_eur:,.2f} €/an) dépend du nombre d'actions détenues** et non des fluctuations quotidiennes du marché ! Mieux encore : votre DCA mensuel de **{BUDGET_MENSUEL:.0f} €** achètera **25 % d'actions en plus** pendant la baisse.
+
+#### 2. Diagnostic de Concentration Sectorielle
+* **Ligne numéro 1 :** **{nom_max_ligne}** représente **{poids_max_ligne:.1f}%** du portefeuille.
+* **Nombre de secteurs couverts :** **{len(repartition_secteurs)} secteur(s)**.
+* **Pistes de sécurisation :** Assurez-vous qu'aucun secteur cyclique (Banque, Énergie, Luxe) ne dépasse **35 %** du total. Renforcez les secteurs défensifs (**Santé via Sanofi / J&J**, **Gaz industriels via Air Liquide**, **Consommation de base**) pour amortir la volatilité (ATR).
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        elif code_audit == "AUDIT_5":
+            manque_100 = max(0.0, (100.0 * 12) - dividendes_nets_totaux_eur)
+            cap_requis_100 = manque_100 / 0.055
+            return f"""### 💵 Optimisation de la Rente & Accélération Boule de Neige
+
+#### 1. Trajectoire Actuelle de vos Revenus Passifs
+* **Rente Annuelle Actuelle :** **{dividendes_bruts_totaux_eur:,.2f} € brut / an** (**{dividendes_nets_totaux_eur:,.2f} € net / an**).
+* **Revenu Mensuel Lissé :** **{rente_mens_nette:,.2f} € net / mois** (couvrant déjà **{taux_couverture_dca:.1f}%** de votre effort d'épargne DCA annuel).
+
+#### 2. Feuille de Route vers le Palier des 100 € / mois (1 200 € / an)
+* **Écart restant à combler :** Il vous manque **{manque_100:,.2f} € de dividendes annuels** pour franchir le cap symbolique des **100 € / mois**.
+* **Capital additionnel nécessaire (à 5,5 % de rendement moyen) :** Environ **{cap_requis_100:,.0f} €**, soit environ **{max(1, int(cap_requis_100 / max(1, BUDGET_MENSUEL + rente_mens_nette)))} mois** avec votre DCA de **{BUDGET_MENSUEL:.0f} €/mois** et le réinvestissement intégral de vos dividendes.
+
+#### 3. Comment lisser vos 12 mois de versements
+* **Action concrète :** En Europe, beaucoup de sociétés paient en **Mai/Juin**. Pour encaisser des dividendes chaque mois de l'année, appuyez-vous sur **TotalEnergies** (Jan/Avr/Juil/Oct), **Pernod Ricard / Vinci** (Avr/Juil/Nov), ou des valeurs trimestrielles/mensuelles comme **Realty Income** et **Microsoft**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        q_low = question_utilisateur.strip().lower()
+        focus_actions = []
+        for d in donnees_t1:
+            nom_b = d["NomBrut"]
+            if nom_b.lower() in q_low:
+                info_w = WATCHLIST_DEFAUT.get(nom_b, {})
+                pos_pf = portefeuille_utilisateur.get(nom_b)
+                txt_pf = f"Détenue en portefeuille (**{pos_pf['qte']} actions** avec un PRU de **{pos_pf['pru']}**)" if pos_pf else "Non détenue actuellement en portefeuille"
+                focus_actions.append(
+                    f"* **{d['Actif']}** : Cours actuel **{d['Prix']}** | Prix Cible : **{d['Prix Cible']}** ({d['Écart Cible (%)']}) | "
+                    f"RSI : **{d['RSI']}** | Stochastique : **{d['Stoch']}%** | Signal EMA 2/12 : **{d['EMA 2/12']}** | "
+                    f"Rendement : **{(info_w.get('div_eur',0)/ max(0.01, prix_temps_reel.get(nom_b, 1))*100):.2f}%** | "
+                    f"Score Algo : **{d['Score']}/100 ({d['Décision']})** — *{txt_pf}*."
+                )
+
+        # CAS 1 : L'utilisateur a mentionné une ou plusieurs actions précises
+        if focus_actions:
+            bloc_focus = "\n".join(focus_actions)
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Analyse Technique & Fondamentale sur mesure
+{bloc_focus}
+
+#### 2. Stratégie adaptée à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
+- **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
+- **Timing d'exécution :** Si le RSI dépasse 65, patientez sur un repli technique avant de passer votre ordre.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 2 : Question sur le PRU ou le moyennage à la baisse
+        elif any(m in q_low for m in ["pru", "moyenner", "baisse", "perte", "moins-value", "renforcer"]):
+            lignes_pru = []
+            for nom_p, data_p in portefeuille_utilisateur.items():
+                qte_p = float(data_p.get("qte", 0))
+                pru_p = float(data_p.get("pru", 0))
+                cours_p = float(prix_temps_reel.get(nom_p, 0))
+                if qte_p > 0 and pru_p > 0 and cours_p > 0 and cours_p < pru_p:
+                    ecart_p = ((cours_p - pru_p) / pru_p) * 100
+                    lignes_pru.append(f"* **{nom_p}** : Cours actuel **{cours_p:.2f} €** sous votre PRU de **{pru_p:.2f} €** (**{ecart_p:+.1f}%**)")
+            txt_pru = "\n".join(lignes_pru) if lignes_pru else "* Aucune ligne de votre portefeuille n'est actuellement sous son PRU !"
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Diagnostic PRU
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Lignes de votre portefeuille actuellement sous votre PRU
+{txt_pru}
+
+#### 2. Règle d'or pour moyenner à la baisse
+- Ne renforcez une ligne sous son PRU que si son **RSI est inférieur à 50** et que le **Signal EMA 2/12** montre des signes de stabilisation, afin d'abaisser votre prix de revient sans surpondérer une chute libre.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 3 : Question sur les dividendes ou la rente passive
+        elif any(m in q_low for m in ["dividende", "rente", "rendement", "passif", "revenu"]):
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Stratégie Dividendes & Rente
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Optimisation de votre Rente sur un portefeuille de {valeur_totale_portefeuille:,.0f} €
+- **Sécurité du dividende :** Ciblez en priorité les valeurs de votre radar affichant un **rendement supérieur à 4%** combiné à un **Payout Ratio inférieur à 65%** pour garantir la pérennité des versements.
+- **Effet boule de neige :** Réinvestissez vos dividendes perçus en priorité sur vos lignes en décote (sous leur Prix Cible ou sous votre PRU) pour accélérer la croissance de votre rente mensuelle.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 4 : Question sur le prochain achat DCA ou les opportunités générales
+        elif any(m in q_low for m in ["dca", "acheter", "achat", "opportunité", "investir", "conseil", "quoi", "portefeuille", "analyse"]):
+            bloc_defaut = "\n".join(focus_actions) if focus_actions else "* Consultez le **Podium de Convergence 360°** juste au-dessus pour visualiser vos 3 meilleures opportunités DCA en temps réel."
+            return f"""### 🧠 Réponse Personnalisée de votre Coach IA 2.0 — Allocation DCA
+
+**Votre question :** *« {question_utilisateur} »*
+
+#### 1. Priorités d'investissement du moment
+{bloc_defaut}
+
+#### 2. Recommandation Stratégique ({valeur_totale_portefeuille:,.0f} €)
+- **Discipline DCA :** Allouez votre enveloppe mensuelle en priorité sur les valeurs du Podium affichant un **Score ≥ 65/100** et situées sous votre **PRU** ou votre **Prix Cible**.
+
+*⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
+
+        # CAS 5 : Saisie non reconnue
         else:
-            return f"""### 🧠 Synthèse Globale de votre Coach IA
-- **Portefeuille Actif :** **{valeur_totale_portefeuille:,.2f} €** (Plus-value : **{plus_value_glob:+,.2f} €**).
-- **Rente Annuelle :** **{dividendes_nets_totaux_eur:,.2f} € net/an** ({rente_mens_nette:.2f} € net/mois).
+            return f"""### 🧠 Coach IA 2.0 — Précisez votre question
 
-{bloc_recap_pv_md}
+Je n'ai détecté aucun nom d'action ni thème financier précis dans votre saisie : **« {question_utilisateur} »**.
 
-*⚖️ Rappel : Analyse pédagogique non-CIF.*"""
+💡 **Exemples de questions que vous pouvez me poser :**
+- 📊 **Sur une ou plusieurs actions :** *« Que faire sur BNP Paribas et Air Liquide ? »*
+- 📉 **Sur vos prix de revient :** *« Quelles actions renforcer pour baisser mon PRU ? »*
+- 💰 **Sur votre rente :** *« Comment optimiser mes dividendes ? »*
+- 🚀 **Sur votre DCA :** *« Quelles sont les meilleures opportunités à acheter en DCA ? »*"""
+
+@st.cache_data(ttl=3600)
+def lister_modeles_gemini_actifs(cle_api):
         modeles = []
         try:
             url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(cle_api)}"
@@ -3224,23 +3315,8 @@ with onglet_ia:
         except Exception:
             pass
         return modeles
-@st.cache_data(ttl=3600)
-def lister_modeles_gemini_actifs(cle_api):
-    modeles = []
-    try:
-        url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={urllib.parse.quote(cle_api)}"
-        req_list = urllib.request.Request(url_list, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req_list, timeout=8) as resp_l:
-            data_l = json.loads(resp_l.read().decode("utf-8"))
-            for m_info in data_l.get("models", []):
-                methodes = m_info.get("supportedGenerationMethods", [])
-                nom_m = m_info.get("name", "").replace("models/", "")
-                if "generateContent" in methodes and "gemini" in nom_m:
-                    modeles.append(nom_m)
-    except Exception:
-        pass
-    return modeles
-    def appeler_gemini_coach(question_utilisateur, code_audit=""):
+
+def appeler_gemini_coach(question_utilisateur, code_audit=""):
         cle_gemini = ""
         if hasattr(st, "secrets"):
             for nom_secret in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
@@ -3270,25 +3346,31 @@ def lister_modeles_gemini_actifs(cle_api):
         ]
 
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
+        hist_ventes_ia = st.session_state.get("historique_ventes", [])
+        total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
+        total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
+        total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
+        perf_extraction_ia = (total_pv_actee_ia / total_cout_vendu_ia * 100.0) if total_cout_vendu_ia > 0 else 0.0
+        nb_ventes_gagnantes_ia = sum(1 for v in hist_ventes_ia if float(v.get("plus_value_eur", 0.0)) >= 0)
+    
         resume_ventes_ia = [
             f"- {v['date']} ({v['mois_annee']}) : Vente de {v['qte']} {v['action']} à {v['prix_vente']} {v['devise']} "
-            f"(PRU {v['pru']} {v['devise']}) -> Plus/Moins-value actée : {v['plus_value_eur']:+.2f} € ({v['perf_pct']:+.2f}%)"
+            f"(PRU {v['pru']} {v['devise']}) -> Plus-value actée : {v['plus_value_eur']:+.2f} € ({v['perf_pct']:+.2f}%)"
             for v in hist_ventes_ia[:15]
         ]
         bloc_ventes_prompt = (
-        f"Total Plus/Moins-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} vente(s), {nb_ventes_gagnantes_ia} gagnantes).\n"
-        + "\n".join(resume_ventes_ia)
-        if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
-    )
-
+            f"Total Plus-Values Actées : {total_pv_actee_ia:+.2f} € (Performance d'extraction réelle : {perf_extraction_ia:+.2f}% sur {len(hist_ventes_ia)} ventes, {nb_ventes_gagnantes_ia} gagnantes).\n"
+            + "\n".join(resume_ventes_ia)
+            if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
+        )
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
-- Valorisation totale active : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value latente : {plus_value_glob:+.2f} €)
+- Valorisation totale : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value : {plus_value_glob:+.2f} €)
 - Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
 - Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois (condensée sur 1 à 2 lignes max)
-- Bilan des Plus-Values ou Moins-Values Actées (Réalisées) & Arbitrages :
+- Bilan des Plus-Values Actées (Réalisées) & Arbitrages :
 {bloc_ventes_prompt}
 - Détail des lignes du portefeuille (triées par poids décroissant) :
 {chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
@@ -3297,21 +3379,27 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 
 Mission demandée par l'utilisateur : {question_utilisateur}
 
-Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, un récapitulatif dédié aux performances de ses plus-values ou moins-values actées, ses points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
+Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
-        modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
-        priorite_modeles = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.5-pro"]
-        modeles_propres = [
+    modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
+    priorite_modeles = [
+        "gemini-3-flash-preview",
+        "gemini-3.0-flash-preview",
+        "gemini-flash-latest",
+    ]
+    modeles_propres = sorted(
+        [
             m for m in modeles_candidats
-            if not any(ex in m for ex in ["tts", "audio", "image", "vision", "embedding", "bis", "exp"])
-        ]
-        modeles_ordonnes = []
-        for m_prio in priorite_modeles + modeles_propres + modeles_candidats:
-            if m_prio not in modeles_ordonnes:
-                modeles_ordonnes.append(m_prio)
-
+            if not any(ex in m for ex in ["1.5", "2.0", "2.5-flash", "tts", "audio", "image", "vision", "embedding", "bis"])
+        ],
+        key=lambda x: (0 if "3" in x else (1 if "latest" in x else 2))
+    )
+    modeles_ordonnes = []
+    for m_prio in modeles_propres + priorite_modeles + modeles_candidats:
+        if m_prio not in modeles_ordonnes:
+            modeles_ordonnes.append(m_prio)
         erreurs_ia = []
-        for mod in modeles_ordonnes[:8]:
+        for mod in modeles_ordonnes[:12]:
             try:
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={urllib.parse.quote(cle_gemini)}"
                 payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
@@ -3325,13 +3413,26 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
                     texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     if texte_rep:
                         return texte_rep
+            except urllib.error.HTTPError as e_http:
+                detail_err = e_http.read().decode("utf-8", errors="ignore")
+                try:
+                    msg_court = json.loads(detail_err).get("error", {}).get("message", detail_err[:140])
+                except Exception:
+                    msg_court = detail_err[:140]
+                erreurs_ia.append(f"[{mod} -> HTTP {e_http.code}: {msg_court}]")
+                continue
             except Exception as e_gen:
                 erreurs_ia.append(f"[{mod} -> {str(e_gen)}]")
                 continue
 
+        if erreurs_ia:
+            return f"> ⚠️ **Diagnostic API Gemini :** `Modèles détectés: {modeles_candidats[:6]} | Erreur: {erreurs_ia[0]}`\n\n" + generer_audit_expert_hybride(question_utilisateur, code_audit)
+
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
+
     st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
+
     col_ia1, col_ia2, col_ia3 = st.columns(3)
     prompt_choisi = None
     code_audit_choisi = ""
@@ -3340,7 +3441,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", use_container_width=True):
         titre_audit = "Audit Complet 360° & Fiscalité"
         code_audit_choisi = "AUDIT_1"
-        prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, récapitulatif de mes plus-values ou moins-values actées, analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
+        prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, exposition PEA (EUR) vs CTO (USD), analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
     if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", use_container_width=True):
         titre_audit = "Plan d'Action DCA du Mois"
         code_audit_choisi = "AUDIT_2"
@@ -3350,7 +3451,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         code_audit_choisi = "AUDIT_3"
         prompt_choisi = "Analyse la pertinence d'arbitrer ou de renforcer mes valeurs européennes de rendement en PEA face aux géants américains en CTO compte tenu de la parité EUR/USD actuelle et de mes lignes."
 
-    col_ia4, col_ia5, col_ia6 = st.columns(3)
+    col_ia4, col_ia5 = st.columns(2)
     if col_ia4.button("🛡️ 4. Stress-Test, Risques & Diversification", use_container_width=True):
         titre_audit = "Stress-Test, Risques & Diversification"
         code_audit_choisi = "AUDIT_4"
@@ -3359,17 +3460,13 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         titre_audit = "Optimisation de la Rente & Calendrier"
         code_audit_choisi = "AUDIT_5"
         prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et propose une stratégie pour accélérer mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
-    if col_ia6.button("💰 6. Bilan de mes Plus/Moins-Values Actées", use_container_width=True):
-        titre_audit = "Bilan de mes Arbitrages & Plus-Values Actées"
-        code_audit_choisi = "AUDIT_6"
-        prompt_choisi = "Fais-moi un récapitulatif complet et détaillé des performances de mes plus-values ou moins-values actées (réalisées), analyse mon taux de réussite (win rate), ma performance d'extraction réelle et conseille-moi sur le réinvestissement du cash encaissé."
 
     st.markdown("---")
     col_q_input, col_q_btn, col_q_clear = st.columns([4, 1.3, 0.8])
     with col_q_input:
         question_libre = st.text_input(
             "💬 Posez une question personnalisée à votre Coach IA 2.0 :",
-            placeholder="Ex: Fais-moi un bilan de mes plus-values actées et de mon PRU sur Rubis...",
+            placeholder="Ex: Compte tenu de mon PRU sur Rubis...",
             label_visibility="collapsed",
         )
     with col_q_btn:
@@ -3388,7 +3485,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         if quota_restant <= 0:
             st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez à l'offre Boursy Pro pour disposer de 15 audits par jour !")
         else:
-            with st.spinner("🧠 Le Coach IA 2.0 analyse votre portefeuille, vos plus-values actées et les indicateurs techniques en direct..."):
+            with st.spinner("🧠 Le Coach IA 2.0 analyse la météo des marchés, votre portefeuille et les indicateurs techniques en direct..."):
                 reponse_texte = appeler_gemini_coach(prompt_choisi, code_audit_choisi)
                 st.session_state["quota_ia_utilise"] = quota_utilise + 1
                 st.session_state["reponse_ia_coach"] = reponse_texte
@@ -3408,7 +3505,18 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             for idx_h, item_h in enumerate(st.session_state["historique_chat_ia"]):
                 st.markdown(f"#### {idx_h + 1}. {item_h['titre']} *(à {item_h['heure']})*")
                 st.markdown(item_h["reponse"])
-                st.markdown("---") 
+                st.markdown("---")
+
+# Footer & Mentions Légales
+st.markdown("---")
+with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales d'Utilisation (Non-CIF)"):
+    st.caption(
+        "**Avertissement légal :** La plateforme Boursy (`boursy.streamlit.app`) est un outil logiciel d'analyse statistique, "
+        "technique et patrimoniale à vocation strictement pédagogique. Les scores algorithmiques, indicateurs (RSI, Stochastique, Bollinger, MACD, EMA) "
+        "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
+        "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
+    )
+afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
 # ------------------------------------------------------------------------------
 # ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (STYLE ARGON + CALENDRIER 12M)
 # ------------------------------------------------------------------------------
