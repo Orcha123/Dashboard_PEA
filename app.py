@@ -3363,7 +3363,7 @@ Je n'ai détecté aucun nom d'action ni thème financier précis dans votre sais
         + "\n".join(resume_ventes_ia)
         if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
     )
-        prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
+    prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
