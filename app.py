@@ -4288,6 +4288,354 @@ with onglet_ventes:
                     )
                 st.markdown("---")
 
+# ==============================================================================
+# STATION GRAPHIQUE PRO 360° (PLACÉE EN FIN DE FICHIER — S'AFFICHE DANS L'ONGLET 1)
+# ==============================================================================
+with onglet_radar:
+    try:
+        st.markdown("---")
+        st.subheader("📈 Station Graphique Interactive 360° (Canal 3A, EMA 2/12, Supports & TradingView)")
+        st.caption("Sélectionnez n'importe quelle valeur de votre radar pour visualiser ses courbes EMA 2/12, son couloir de régression linéaire à 3 ans, ses supports/résistances 30J et votre PRU.")
+
+        pf_sg_dict = st.session_state.get("portefeuille", {})
+        wl_sg_dict = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+        liste_t1_sg = globals().get("donnees_t1", [])
+        hist_prix_sg = globals().get("historiques_prix", {})
+
+        col_sg_filtre, col_sg_act, col_sg_hor, col_sg_mode = st.columns([1.3, 2.0, 1.3, 1.6])
+
+        with col_sg_filtre:
+            filtre_station = st.selectbox(
+                "Filtrer la liste :",
+                ["🌐 Tout le Radar", "💼 Mon Portefeuille", "🔥 Top Scores (≥ 60)"],
+                key="sg360_filtre_liste",
+            )
+
+        map_t1_sg = {d["NomBrut"]: d for d in liste_t1_sg if isinstance(d, dict) and "NomBrut" in d}
+        toutes_actions_sg = sorted([k for k in wl_sg_dict.keys() if k not in ("Espèces", "_historique_ventes")])
+        if not toutes_actions_sg:
+            toutes_actions_sg = sorted(list(WATCHLIST_DEFAUT.keys()))
+
+        if filtre_station == "💼 Mon Portefeuille":
+            actions_dispo_sg = [
+                k for k in toutes_actions_sg
+                if k in pf_sg_dict and isinstance(pf_sg_dict.get(k), dict) and float(pf_sg_dict[k].get("qte", 0)) > 0
+            ]
+            if not actions_dispo_sg:
+                actions_dispo_sg = toutes_actions_sg
+        elif filtre_station == "🔥 Top Scores (≥ 60)":
+            actions_dispo_sg = [k for k in toutes_actions_sg if int(map_t1_sg.get(k, {}).get("Score", 0)) >= 60]
+            if not actions_dispo_sg:
+                actions_dispo_sg = toutes_actions_sg
+        else:
+            actions_dispo_sg = toutes_actions_sg
+
+        labels_actions_sg = []
+        map_label_vers_nom = {}
+        for nom_a_sg in actions_dispo_sg:
+            sc_sg = map_t1_sg.get(nom_a_sg, {}).get("Score", 50)
+            pr_sg = map_t1_sg.get(nom_a_sg, {}).get("Prix", "")
+            lbl_sg = f"{nom_a_sg} — {pr_sg} (Score {sc_sg}/100)" if pr_sg else f"{nom_a_sg} (Score {sc_sg}/100)"
+            labels_actions_sg.append(lbl_sg)
+            map_label_vers_nom[lbl_sg] = nom_a_sg
+
+        with col_sg_act:
+            choix_label_sg = st.selectbox("🎯 Action à analyser :", labels_actions_sg, key="sg360_choix_action")
+            action_sg = map_label_vers_nom.get(choix_label_sg, actions_dispo_sg[0])
+
+        with col_sg_hor:
+            horizon_sg = st.selectbox(
+                "🕒 Horizon :",
+                ["3 Mois (65 séances)", "6 Mois (130 séances)", "1 An (252 séances)", "3 Ans (Canal complet)"],
+                index=2,
+                key="sg360_choix_horizon",
+            )
+
+        with col_sg_mode:
+            moteur_sg = st.radio(
+                "Moteur d'affichage :",
+                ["📊 Boursy Quant", "🕯️ TradingView"],
+                horizontal=True,
+                key="sg360_choix_moteur",
+            )
+
+        info_sg = wl_sg_dict.get(action_sg, WATCHLIST_DEFAUT.get(action_sg, {}))
+        sym_sg = info_sg.get("symbole", "MC.PA")
+        dev_sg = "$" if info_sg.get("devise") == "USD" else "€"
+        cible_sg = float(info_sg.get("prix_cible", 100.0))
+
+        pos_pf_sg = pf_sg_dict.get(action_sg, {})
+        en_pf_sg = isinstance(pos_pf_sg, dict) and float(pos_pf_sg.get("qte", 0)) > 0
+        pru_sg = float(pos_pf_sg.get("pru", 0.0)) if en_pf_sg else 0.0
+        qte_sg = int(pos_pf_sg.get("qte", 0)) if en_pf_sg else 0
+
+        _, closes_sg_full, highs_sg_full, lows_sg_full = recuperer_donnees(sym_sg)
+        if not closes_sg_full or len(closes_sg_full) < 20:
+            closes_sg_full = hist_prix_sg.get(action_sg, [cible_sg] * 60)
+            highs_sg_full = [c * 1.01 for c in closes_sg_full]
+            lows_sg_full = [c * 0.99 for c in closes_sg_full]
+
+        arr_c_full = np.array(closes_sg_full, dtype=float)
+        n_full = len(arr_c_full)
+        x_full = np.arange(n_full)
+
+        if n_full >= 2:
+            pente_3a, intercept_3a = np.polyfit(x_full, arr_c_full, 1)
+            droite_reg_full = pente_3a * x_full + intercept_3a
+            ecart_type_3a = float(np.std(arr_c_full - droite_reg_full))
+        else:
+            droite_reg_full = arr_c_full.copy()
+            ecart_type_3a = float(arr_c_full[-1] * 0.05)
+
+        canal_haut_full = droite_reg_full + ecart_type_3a
+        canal_bas_full = np.maximum(0.01, droite_reg_full - ecart_type_3a)
+
+        s_c_full = pd.Series(arr_c_full)
+        ema_rapide_full = s_c_full.ewm(span=10, adjust=False).mean().values
+        ema_lente_full = s_c_full.ewm(span=50, adjust=False).mean().values
+
+        fenetre_sr = min(30, n_full)
+        sup_30j_sg = float(np.min(lows_sg_full[-fenetre_sr:])) if lows_sg_full else float(np.min(arr_c_full[-fenetre_sr:]))
+        res_30j_sg = float(np.max(highs_sg_full[-fenetre_sr:])) if highs_sg_full else float(np.max(arr_c_full[-fenetre_sr:]))
+        cours_act_sg = float(arr_c_full[-1])
+        fair_val_act = float(droite_reg_full[-1])
+        ecart_fv_pct = ((cours_act_sg - fair_val_act) / fair_val_act * 100.0) if fair_val_act > 0 else 0.0
+
+        amp_sr_sg = max(0.01, res_30j_sg - sup_30j_sg)
+        pos_canal_30j = max(0.0, min(100.0, ((cours_act_sg - sup_30j_sg) / amp_sr_sg) * 100.0))
+        signal_ema_sg = "🟢 Haussier (EMA 2 > 12)" if ema_rapide_full[-1] >= ema_lente_full[-1] else "🔴 Baissier (EMA 2 < 12)"
+        c_ema_sg = "#2ecc71" if ema_rapide_full[-1] >= ema_lente_full[-1] else "#e74c3c"
+        c_fv_sg = "#2ecc71" if ecart_fv_pct <= 0 else "#f39c12"
+
+        txt_pru_card = (
+            f"<div class='argon-val' style='color:{'#2ecc71' if cours_act_sg >= pru_sg else '#3498db'};'>{pru_sg:.2f} {dev_sg}</div>"
+            f"<div class='argon-sub'>{qte_sg} titre(s) | Écart : {((cours_act_sg - pru_sg)/pru_sg*100):+.1f}%</div>"
+            if en_pf_sg and pru_sg > 0
+            else f"<div class='argon-val' style='color:#9b59b6;'>Hors PF</div><div class='argon-sub'>Cible : <b>{cible_sg:.2f} {dev_sg}</b></div>"
+        )
+
+        html_kpi_station = f"""
+        <div class="argon-grid" style="margin-top: 6px; margin-bottom: 14px;">
+            <div class="argon-card" style="border-top: 3px solid #3498db;">
+                <div class="argon-title">🏷️ Cours Live ({sym_sg})</div>
+                <div class="argon-val">{cours_act_sg:.2f} {dev_sg}</div>
+                <div class="argon-sub">Objectif Cible : <b>{cible_sg:.2f} {dev_sg}</b></div>
+            </div>
+            <div class="argon-card" style="border-top: 3px solid {c_ema_sg};">
+                <div class="argon-title">⚡ Croisement EMA 2 / 12</div>
+                <div class="argon-val" style="color:{c_ema_sg}; font-size:1.15em;">{ema_rapide_full[-1]:.2f} / {ema_lente_full[-1]:.2f}</div>
+                <div class="argon-sub"><b>{signal_ema_sg}</b></div>
+            </div>
+            <div class="argon-card" style="border-top: 3px solid #2ecc71;">
+                <div class="argon-title">🟢 Support / 🔴 Résistance 30J</div>
+                <div class="argon-val" style="font-size:1.15em;"><span style="color:#2ecc71;">{sup_30j_sg:.2f}</span> — <span style="color:#e74c3c;">{res_30j_sg:.2f} {dev_sg}</span></div>
+                <div class="argon-sub">Position dans le couloir 30J : <b>{pos_canal_30j:.0f}%</b></div>
+            </div>
+            <div class="argon-card" style="border-top: 3px solid {c_fv_sg};">
+                <div class="argon-title">📐 Canal Régression 3 Ans</div>
+                <div class="argon-val" style="color:{c_fv_sg}; font-size:1.15em;">{ecart_fv_pct:+.1f}% vs Fair Value</div>
+                <div class="argon-sub">Tunnel : <b>{canal_bas_full[-1]:.1f}</b> ➔ <b>{canal_haut_full[-1]:.1f} {dev_sg}</b></div>
+            </div>
+            <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                <div class="argon-title">💼 Votre PRU / Cible</div>
+                {txt_pru_card}
+            </div>
+        </div>
+        """
+        afficher_html(html_kpi_station)
+
+        if "Boursy Quant" in moteur_sg:
+            col_chk1, col_chk2, col_chk3, col_chk4, col_chk5 = st.columns(5)
+            aff_canal_3a = col_chk1.checkbox("📐 Canal 3 Ans (±1σ)", value=True, key="chk_sg360_c3a")
+            aff_ema = col_chk2.checkbox("⚡ Courbes EMA 2 & 12", value=True, key="chk_sg360_ema")
+            aff_sr30 = col_chk3.checkbox("🟢/🔴 Support & Résist. 30J", value=True, key="chk_sg360_sr")
+            aff_cible = col_chk4.checkbox("🎯 Prix Cible", value=True, key="chk_sg360_cib")
+            aff_pru = col_chk5.checkbox("💼 Mon PRU", value=en_pf_sg, disabled=not en_pf_sg, key="chk_sg360_pru")
+
+            map_nb_j_sg = {
+                "3 Mois (65 séances)": 65,
+                "6 Mois (130 séances)": 130,
+                "1 An (252 séances)": 252,
+                "3 Ans (Canal complet)": n_full,
+            }
+            nb_j_sg = min(n_full, map_nb_j_sg.get(horizon_sg, 252))
+            pas_sg = 2 if nb_j_sg > 350 else 1
+
+            dates_sg = pd.bdate_range(end=datetime.now(), periods=nb_j_sg)
+            lignes_vega_sg = []
+
+            for i_s in range(0, nb_j_sg, pas_sg):
+                idx_f = n_full - nb_j_sg + i_s
+                d_iso = dates_sg[i_s].strftime("%Y-%m-%d")
+                d_fr = dates_sg[i_s].strftime("%d/%m/%Y")
+
+                row_sg = {
+                    "Date": d_iso,
+                    "DateFR": d_fr,
+                    "Cours": round(float(arr_c_full[idx_f]), 2),
+                    "EMA_2": round(float(ema_rapide_full[idx_f]), 2),
+                    "EMA_12": round(float(ema_lente_full[idx_f]), 2),
+                    "FairValue_3A": round(float(droite_reg_full[idx_f]), 2),
+                    "Canal_Haut": round(float(canal_haut_full[idx_f]), 2),
+                    "Canal_Bas": round(float(canal_bas_full[idx_f]), 2),
+                    "Support_30J": round(sup_30j_sg, 2),
+                    "Resistance_30J": round(res_30j_sg, 2),
+                    "Prix_Cible": round(cible_sg, 2),
+                }
+                if en_pf_sg and pru_sg > 0:
+                    row_sg["Mon_PRU"] = round(pru_sg, 2)
+                lignes_vega_sg.append(row_sg)
+
+            df_sg = pd.DataFrame(lignes_vega_sg)
+            layers_sg = []
+
+            if aff_canal_3a:
+                layers_sg.append({
+                    "mark": {"type": "area", "opacity": 0.13, "color": "#3498db"},
+                    "encoding": {
+                        "x": {"field": "Date", "type": "temporal"},
+                        "y": {"field": "Canal_Bas", "type": "quantitative"},
+                        "y2": {"field": "Canal_Haut"},
+                    },
+                })
+                layers_sg.append({
+                    "mark": {"type": "line", "strokeDash": [6, 4], "strokeWidth": 1.6, "color": "#3498db", "opacity": 0.8},
+                    "encoding": {
+                        "x": {"field": "Date", "type": "temporal"},
+                        "y": {"field": "FairValue_3A", "type": "quantitative"},
+                    },
+                })
+
+            if aff_sr30:
+                layers_sg.append({
+                    "mark": {"type": "rule", "strokeDash": [4, 4], "strokeWidth": 1.8, "color": "#2ecc71"},
+                    "encoding": {"y": {"field": "Support_30J", "type": "quantitative"}},
+                })
+                layers_sg.append({
+                    "mark": {"type": "rule", "strokeDash": [4, 4], "strokeWidth": 1.8, "color": "#e74c3c"},
+                    "encoding": {"y": {"field": "Resistance_30J", "type": "quantitative"}},
+                })
+
+            if aff_cible:
+                layers_sg.append({
+                    "mark": {"type": "rule", "strokeDash": [2, 3], "strokeWidth": 1.8, "color": "#f39c12"},
+                    "encoding": {"y": {"field": "Prix_Cible", "type": "quantitative"}},
+                })
+
+            if aff_pru and en_pf_sg and pru_sg > 0:
+                layers_sg.append({
+                    "mark": {"type": "rule", "strokeWidth": 2.2, "color": "#9b59b6"},
+                    "encoding": {"y": {"field": "Mon_PRU", "type": "quantitative"}},
+                })
+
+            if aff_ema:
+                layers_sg.append({
+                    "mark": {"type": "line", "strokeWidth": 1.8, "color": "#f39c12", "opacity": 0.9},
+                    "encoding": {
+                        "x": {"field": "Date", "type": "temporal"},
+                        "y": {"field": "EMA_2", "type": "quantitative"},
+                    },
+                })
+                layers_sg.append({
+                    "mark": {"type": "line", "strokeWidth": 2.0, "color": "#e67e22", "strokeDash": [3, 2], "opacity": 0.9},
+                    "encoding": {
+                        "x": {"field": "Date", "type": "temporal"},
+                        "y": {"field": "EMA_12", "type": "quantitative"},
+                    },
+                })
+
+            layers_sg.append({
+                "mark": {"type": "line", "strokeWidth": 2.8, "color": "#10b981"},
+                "encoding": {
+                    "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%b %Y", "grid": False}},
+                    "y": {
+                        "field": "Cours",
+                        "type": "quantitative",
+                        "scale": {"zero": False, "padding": 20},
+                        "axis": {"title": f"Cours ({dev_sg})", "format": ",.1f"},
+                    },
+                    "tooltip": [
+                        {"field": "DateFR", "type": "nominal", "title": "📅 Séance"},
+                        {"field": "Cours", "type": "quantitative", "title": f"🏷️ Cours ({dev_sg})", "format": ",.2f"},
+                        {"field": "EMA_2", "type": "quantitative", "title": "⚡ EMA Rapide (2)", "format": ",.2f"},
+                        {"field": "EMA_12", "type": "quantitative", "title": "📈 EMA Lente (12)", "format": ",.2f"},
+                        {"field": "FairValue_3A", "type": "quantitative", "title": "📐 Fair Value 3A", "format": ",.2f"},
+                        {"field": "Support_30J", "type": "quantitative", "title": "🟢 Support 30J", "format": ",.2f"},
+                        {"field": "Resistance_30J", "type": "quantitative", "title": "🔴 Résistance 30J", "format": ",.2f"},
+                        {"field": "Prix_Cible", "type": "quantitative", "title": "🎯 Prix Cible", "format": ",.2f"},
+                    ],
+                },
+            })
+
+            spec_station_vega = {
+                "height": 390,
+                "layer": layers_sg,
+                "view": {"stroke": None},
+            }
+            st.vega_lite_chart(df_sg, spec_station_vega, use_container_width=True)
+
+            afficher_html(f"""
+            <div style="display:flex; flex-wrap:wrap; gap:14px; justify-content:center; font-size:0.80em; padding:8px 12px; background:rgba(128,128,128,0.04); border-radius:8px; margin-top:-6px;">
+                <span><b style="color:#10b981;">━━</b> Cours ({cours_act_sg:.2f} {dev_sg})</span>
+                <span><b style="color:#f39c12;">━━</b> EMA Rapide ({ema_rapide_full[-1]:.2f})</span>
+                <span><b style="color:#e67e22;">╍╍</b> EMA Lente ({ema_lente_full[-1]:.2f})</span>
+                <span><b style="color:#3498db;">▒▒</b> Canal Régression 3A ({canal_bas_full[-1]:.1f} - {canal_haut_full[-1]:.1f})</span>
+                <span><b style="color:#2ecc71;">┈┈</b> Support 30J ({sup_30j_sg:.2f})</span>
+                <span><b style="color:#e74c3c;">┈┈</b> Résistance 30J ({res_30j_sg:.2f})</span>
+                <span><b style="color:#f39c12;">┈┈</b> Cible ({cible_sg:.2f})</span>
+                {f'<span><b style="color:#9b59b6;">━━</b> Mon PRU ({pru_sg:.2f} {dev_sg})</span>' if (en_pf_sg and pru_sg > 0) else ''}
+            </div>
+            """)
+
+        else:
+            import streamlit.components.v1 as components
+
+            sym_up = sym_sg.upper().strip()
+            if sym_up.endswith(".PA") or sym_up.endswith(".AS") or sym_up.endswith(".BR") or sym_up.endswith(".LS"):
+                tv_symbol = "EURONEXT:" + sym_up.split(".")[0]
+            elif sym_up.endswith(".DE"):
+                tv_symbol = "XETR:" + sym_up.split(".")[0]
+            elif sym_up.endswith(".MI"):
+                tv_symbol = "MIL:" + sym_up.split(".")[0]
+            elif sym_up.endswith(".MC"):
+                tv_symbol = "BME:" + sym_up.split(".")[0]
+            elif sym_up.endswith(".L"):
+                tv_symbol = "LSE:" + sym_up.split(".")[0]
+            else:
+                tv_symbol = sym_up.split(".")[0]
+
+            tv_html = f"""
+            <div class="tradingview-widget-container" style="border-radius:12px; overflow:hidden; border:1px solid rgba(128,128,128,0.2);">
+              <div id="tv_chart_boursy" style="height:460px;"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+              <script type="text/javascript">
+              new TradingView.widget({{
+                "autosize": true,
+                "symbol": "{tv_symbol}",
+                "interval": "D",
+                "timezone": "Europe/Paris",
+                "theme": "dark",
+                "style": "1",
+                "locale": "fr",
+                "toolbar_bg": "#0f172a",
+                "enable_publishing": false,
+                "withdateranges": true,
+                "hide_side_toolbar": false,
+                "allow_symbol_change": true,
+                "studies": [
+                  "MASimple@tv-basicstudies",
+                  "RSI@tv-basicstudies"
+                ],
+                "container_id": "tv_chart_boursy"
+              }});
+              </script>
+            </div>
+            """
+            components.html(tv_html, height=475)
+            st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}**. Vos repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
+    except Exception as e_sg:
+        st.warning(f"Station graphique en cours d'initialisation ({e_sg})")
+
 # Footer & Mentions Légales
 st.markdown("---")
 with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales d'Utilisation (Non-CIF)"):
