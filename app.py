@@ -255,6 +255,8 @@ if "watchlist" not in st.session_state:
     st.session_state["watchlist"] = WATCHLIST_DEFAUT.copy()
 if "portefeuille" not in st.session_state:
     st.session_state["portefeuille"] = PORTEFEUILLE_DEFAUT.copy()
+if isinstance(st.session_state.get("portefeuille"), dict) and "_historique_ventes" in st.session_state["portefeuille"]:
+    st.session_state["historique_ventes"] = list(st.session_state["portefeuille"].get("_historique_ventes", []))
 if "budget_dca" not in st.session_state:
     st.session_state["budget_dca"] = 450.0
 if "est_abonne_pro" not in st.session_state:
@@ -291,26 +293,44 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
         st.session_state["qte_Espèces"] = 0
 
 def sauvegarder_dans_cloud():
-    if supabase and st.session_state["user"]:
-        try:
-            user_id_str = str(st.session_state["user"].id)
-            email_str = str(st.session_state["user"].email)
-            watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+        if supabase and st.session_state.get("user"):
+            try:
+                user_id_str = str(st.session_state["user"].id)
+                email_str = str(st.session_state["user"].email)
+                watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
 
-            est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
-            st.session_state["est_abonne_pro"] = est_pro_val
+                est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
+                st.session_state["est_abonne_pro"] = est_pro_val
 
-            payload = {
-    "user_id": user_id_str,
-    "email": email_str,
-    "budget_dca": float(st.session_state["budget_dca"]),
-    "watchlist": dict(watchlist_actuelle),
-    "portefeuille": dict(st.session_state["portefeuille"]),
-    "historique_ventes": list(st.session_state.get("historique_ventes", [])),
-    "est_abonne_pro": est_pro_val,
-    "updated_at": datetime.utcnow().isoformat()
-}
-            supabase.table("user_data").upsert(payload).execute()
+                hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
+
+                # Protection anti-écrasement à la reconnexion : on récupère les ventes déjà sur Supabase si la mémoire locale est vide
+                if not hist_ventes_actuel and not st.session_state.get("_ventes_videes_volontairement", False):
+                    try:
+                        res_ex = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
+                        if res_ex.data and len(res_ex.data) > 0:
+                            pf_ex = res_ex.data[0].get("portefeuille") or {}
+                            if isinstance(pf_ex, dict) and isinstance(pf_ex.get("_historique_ventes"), list):
+                                hist_ventes_actuel = pf_ex["_historique_ventes"]
+                                st.session_state["historique_ventes"] = hist_ventes_actuel
+                    except Exception:
+                        pass
+
+                pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
+                pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
+
+                payload = {
+                    "user_id": user_id_str,
+                    "email": email_str,
+                    "budget_dca": float(st.session_state.get("budget_dca", 450.0)),
+                    "watchlist": dict(watchlist_actuelle),
+                    "portefeuille": pf_a_sauver,
+                    "est_abonne_pro": est_pro_val,
+                    "updated_at": datetime.utcnow().isoformat()
+                }
+                supabase.table("user_data").upsert(payload).execute()
+            except Exception as e:
+                st.sidebar.error(f"Erreur Supabase : {e}")
 
             dict_prix = st.session_state.get("prix_temps_reel", {})
             taux_usd_eur = st.session_state.get("taux_change", 1.08)
@@ -3830,25 +3850,18 @@ with onglet_ventes:
     st.subheader("💰 Journal des Arbitrages & Calendrier 12 Mois des Plus-Values Actées")
     st.caption("Enregistrez vos cessions : vos actions sont immédiatement déduites du portefeuille, le cash net rejoint vos Espèces et vos plus/moins-values s'additionnent mois par mois dans le calendrier Argon.")
 
-    # --- AUTO-RÉCUPÉRATION DES VENTES APRÈS CONNEXION / RAFRAÎCHISSEMENT ---
-    if not st.session_state.get("historique_ventes"):
-        ventes_pf = st.session_state.get("portefeuille", {}).get("_historique_ventes", [])
-        if isinstance(ventes_pf, list) and len(ventes_pf) > 0:
-            st.session_state["historique_ventes"] = ventes_pf
-        elif st.session_state.get("user_email") and not st.session_state.get("_ventes_videes_volontairement", False):
+    # --- RECHARGEMENT AUTOMATIQUE DES VENTES DEPUIS SUPABASE À LA CONNEXION ---
+    if supabase and st.session_state.get("user"):
+        uid_connecte = str(st.session_state["user"].id)
+        if not st.session_state.get("historique_ventes") and not st.session_state.get("_ventes_videes_volontairement", False):
             try:
-                cli_v = init_supabase()
-                if cli_v:
-                    rep_v = cli_v.table("user_data").select("portefeuille").eq("email", st.session_state["user_email"]).execute()
-                    if rep_v.data and len(rep_v.data) > 0:
-                        pf_cloud = rep_v.data[0].get("portefeuille") or {}
-                        if isinstance(pf_cloud, dict) and isinstance(pf_cloud.get("_historique_ventes"), list):
-                            st.session_state["historique_ventes"] = pf_cloud["_historique_ventes"]
-                            st.session_state["portefeuille"]["_historique_ventes"] = pf_cloud["_historique_ventes"]
+                rep_v = supabase.table("user_data").select("portefeuille").eq("user_id", uid_connecte).execute()
+                if rep_v.data and len(rep_v.data) > 0:
+                    pf_cloud = rep_v.data[0].get("portefeuille") or {}
+                    if isinstance(pf_cloud, dict) and isinstance(pf_cloud.get("_historique_ventes"), list):
+                        st.session_state["historique_ventes"] = list(pf_cloud["_historique_ventes"])
             except Exception:
                 pass
-
-    def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
         qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
         prix_vente = float(st.session_state.get(f"input_prix_v_{act_v}", pru_v))
         frais_v = float(st.session_state.get(f"input_frais_v_{act_v}", 0.0))
