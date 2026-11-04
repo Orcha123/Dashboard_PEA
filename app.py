@@ -4289,7 +4289,7 @@ with onglet_ventes:
                 st.markdown("---")
 
 # ==============================================================================
-# STATION GRAPHIQUE PRO 360° (100% PYTHON NATIF & PANDAS — SANS NUMPY)
+# STATION GRAPHIQUE PRO 360° (HAUTEUR AGRANDIE & TRADINGVIEW PRÉ-CONFIGURÉ)
 # ==============================================================================
 with onglet_radar:
     try:
@@ -4376,7 +4376,6 @@ with onglet_radar:
             highs_sg_full = [c * 1.01 for c in closes_sg_full]
             lows_sg_full = [c * 0.99 for c in closes_sg_full]
 
-        # Calculs 100% Python natif (sans numpy)
         arr_c_full = [float(x) for x in closes_sg_full]
         n_full = len(arr_c_full)
 
@@ -4558,7 +4557,7 @@ with onglet_radar:
                     "y": {
                         "field": "Cours",
                         "type": "quantitative",
-                        "scale": {"zero": False, "padding": 20},
+                        "scale": {"zero": False, "padding": 25},
                         "axis": {"title": f"Cours ({dev_sg})", "format": ",.1f"},
                     },
                     "tooltip": [
@@ -4574,8 +4573,9 @@ with onglet_radar:
                 },
             })
 
+            # HAUTEUR AUGMENTÉE À 500 PX POUR UNE LISIBILITÉ PARFAITE
             spec_station_vega = {
-                "height": 390,
+                "height": 500,
                 "layer": layers_sg,
                 "view": {"stroke": None},
             }
@@ -4611,9 +4611,10 @@ with onglet_radar:
             else:
                 tv_symbol = sym_up.split(".")[0]
 
+            # TRADINGVIEW AVEC INDICATEURS PRÉ-CHARGÉS AUTOMATIQUEMENT (Moyennes mobiles & RSI)
             tv_html = f"""
             <div class="tradingview-widget-container" style="border-radius:12px; overflow:hidden; border:1px solid rgba(128,128,128,0.2);">
-              <div id="tv_chart_boursy" style="height:460px;"></div>
+              <div id="tv_chart_boursy" style="height:520px;"></div>
               <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
               <script type="text/javascript">
               new TradingView.widget({{
@@ -4630,16 +4631,18 @@ with onglet_radar:
                 "hide_side_toolbar": false,
                 "allow_symbol_change": true,
                 "studies": [
-                  "MASimple@tv-basicstudies",
-                  "RSI@tv-basicstudies"
+                  "Moving Average@tv-basicstudies",
+                  "Moving Average@tv-basicstudies",
+                  "RSI@tv-basicstudies",
+                  "MACD@tv-basicstudies"
                 ],
                 "container_id": "tv_chart_boursy"
               }});
               </script>
             </div>
             """
-            components.html(tv_html, height=475)
-            st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}**. Vos repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
+            components.html(tv_html, height=535)
+            st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
     except Exception as e_sg:
         st.warning(f"Station graphique en cours d'initialisation ({e_sg})")
 
