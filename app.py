@@ -3830,6 +3830,24 @@ with onglet_ventes:
     st.subheader("💰 Journal des Arbitrages & Calendrier 12 Mois des Plus-Values Actées")
     st.caption("Enregistrez vos cessions : vos actions sont immédiatement déduites du portefeuille, le cash net rejoint vos Espèces et vos plus/moins-values s'additionnent mois par mois dans le calendrier Argon.")
 
+    # --- AUTO-RÉCUPÉRATION DES VENTES APRÈS CONNEXION / RAFRAÎCHISSEMENT ---
+    if not st.session_state.get("historique_ventes"):
+        ventes_pf = st.session_state.get("portefeuille", {}).get("_historique_ventes", [])
+        if isinstance(ventes_pf, list) and len(ventes_pf) > 0:
+            st.session_state["historique_ventes"] = ventes_pf
+        elif st.session_state.get("user_email") and not st.session_state.get("_ventes_videes_volontairement", False):
+            try:
+                cli_v = init_supabase()
+                if cli_v:
+                    rep_v = cli_v.table("user_data").select("portefeuille").eq("email", st.session_state["user_email"]).execute()
+                    if rep_v.data and len(rep_v.data) > 0:
+                        pf_cloud = rep_v.data[0].get("portefeuille") or {}
+                        if isinstance(pf_cloud, dict) and isinstance(pf_cloud.get("_historique_ventes"), list):
+                            st.session_state["historique_ventes"] = pf_cloud["_historique_ventes"]
+                            st.session_state["portefeuille"]["_historique_ventes"] = pf_cloud["_historique_ventes"]
+            except Exception:
+                pass
+
     def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
         qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
         prix_vente = float(st.session_state.get(f"input_prix_v_{act_v}", pru_v))
@@ -3862,7 +3880,11 @@ with onglet_ventes:
             "perf_pct": perf_pct,
             "credite_especes": crediter_esp,
         }
+        if "historique_ventes" not in st.session_state or not isinstance(st.session_state["historique_ventes"], list):
+            st.session_state["historique_ventes"] = []
         st.session_state["historique_ventes"].insert(0, nouvelle_vente)
+        st.session_state["portefeuille"]["_historique_ventes"] = st.session_state["historique_ventes"]
+        st.session_state["_ventes_videes_volontairement"] = False
 
         # 1. Déduction immédiate des actions dans l'Onglet 2
         nouvelle_qte = max(0, int(qte_det_v) - qte_vendue)
@@ -3895,6 +3917,10 @@ with onglet_ventes:
         hist = st.session_state.get("historique_ventes", [])
         if 0 <= idx_v < len(hist):
             v_suppr = hist.pop(idx_v)
+            st.session_state["portefeuille"]["_historique_ventes"] = hist
+            if len(hist) == 0:
+                st.session_state["_ventes_videes_volontairement"] = True
+
             act_s = v_suppr.get("action", "")
             qte_s = int(v_suppr.get("qte", 0))
             pru_s = float(v_suppr.get("pru", 0.0))
@@ -3924,6 +3950,7 @@ with onglet_ventes:
 
     if st.session_state.get("_derniere_notif_vente"):
         st.success(st.session_state.pop("_derniere_notif_vente"))
+
 
     # --- BANDEAU DE CONTRÔLE EN DIRECT (ACTIONS vs ESPÈCES vs TOTAL) ---
     esp_dispo_actuel = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
