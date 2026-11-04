@@ -3864,6 +3864,8 @@ with onglet_ventes:
                         st.session_state["historique_ventes"] = list(pf_cloud["_historique_ventes"])
             except Exception:
                 pass
+    def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
+
         qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
         prix_vente = float(st.session_state.get(f"input_prix_v_{act_v}", pru_v))
         frais_v = float(st.session_state.get(f"input_frais_v_{act_v}", 0.0))
