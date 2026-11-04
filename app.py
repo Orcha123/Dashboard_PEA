@@ -3824,11 +3824,11 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 5 : ARBITRAGES, VENTES & PLUS-VALUES ACTÉES (SYNCHRO DIRECTE PORTEFEUILLE)
+# ONGLET 5 : ARBITRAGES, VENTES & CALENDRIER 12 MOIS ARGON DES PLUS-VALUES ACTÉES
 # ------------------------------------------------------------------------------
 with onglet_ventes:
-    st.subheader("💰 Journal des Arbitrages & Plus-Values Actées (Réalisées)")
-    st.caption("Enregistrez vos ventes d'actions : les titres vendus sont immédiatement déduits de votre portefeuille et le cash net peut être crédité automatiquement dans votre poche Espèces.")
+    st.subheader("💰 Journal des Arbitrages & Calendrier 12 Mois des Plus-Values Actées")
+    st.caption("Enregistrez vos cessions : vos actions sont immédiatement déduites du portefeuille, le cash net rejoint vos Espèces et vos plus/moins-values s'additionnent mois par mois dans le calendrier Argon.")
 
     def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
         qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
@@ -3864,7 +3864,7 @@ with onglet_ventes:
         }
         st.session_state["historique_ventes"].insert(0, nouvelle_vente)
 
-        # 1. Déduction immédiate des actions dans le widget de l'Onglet 2 et dans le portefeuille
+        # 1. Déduction immédiate des actions dans l'Onglet 2
         nouvelle_qte = max(0, int(qte_det_v) - qte_vendue)
         st.session_state[f"qte_{act_v}"] = nouvelle_qte
         if nouvelle_qte <= 0:
@@ -3875,7 +3875,7 @@ with onglet_ventes:
             else:
                 st.session_state["portefeuille"][act_v] = {"qte": nouvelle_qte, "pru": float(pru_v)}
 
-        # 2. Crédit automatique de la poche Espèces (Liquidités) dans l'Onglet 2
+        # 2. Crédit automatique de la poche Espèces
         if crediter_esp:
             esp_actuel = float(st.session_state.get("pru_Espèces", st.session_state["portefeuille"].get("Espèces", {}).get("pru", 0.0)))
             nouveau_esp = round(max(0.0, esp_actuel + montant_net_eur), 2)
@@ -3884,12 +3884,11 @@ with onglet_ventes:
             if nouveau_esp > 0:
                 st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouveau_esp}
 
-        # 3. Sauvegarde Cloud immédiate
         sauvegarder_dans_cloud()
         st.session_state["_derniere_notif_vente"] = (
-            f"✅ Vente actée : -{qte_vendue} {act_v} (Reste en portefeuille : {nouvelle_qte}) | "
+            f"✅ Vente actée : -{qte_vendue} {act_v} (Reste : {nouvelle_qte}) | "
             f"Plus/Moins-Value actée : {pv_eur:+,.2f} € ({perf_pct:+.2f}%)"
-            + (f" | +{montant_net_eur:,.2f} € crédités dans votre poche Espèces !" if crediter_esp else " | Déduit sans ajout aux Espèces.")
+            + (f" | +{montant_net_eur:,.2f} € crédités dans vos Espèces !" if crediter_esp else "")
         )
 
     def annuler_vente_portefeuille(idx_v):
@@ -3921,7 +3920,7 @@ with onglet_ventes:
                     st.session_state["qte_Espèces"] = 0
 
             sauvegarder_dans_cloud()
-            st.session_state["_derniere_notif_vente"] = f"🔄 Vente annulée : +{qte_s} action(s) {act_s} restaurée(s) dans votre portefeuille."
+            st.session_state["_derniere_notif_vente"] = f"🔄 Arbitrage annulé : +{qte_s} action(s) {act_s} restaurée(s) en portefeuille."
 
     if st.session_state.get("_derniere_notif_vente"):
         st.success(st.session_state.pop("_derniere_notif_vente"))
@@ -3940,7 +3939,7 @@ with onglet_ventes:
         </div>
         <div class="meteo-item" style="border-left-color:#2ecc71;">
             <div>
-                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 POCHE ESPÈCES (LIQUIDITÉS)</div>
+                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 POCHE ESPÈCES DISPONIBLE</div>
                 <div style="font-size:1.05em; font-weight:900; color:#2ecc71;">{esp_dispo_actuel:,.2f} €</div>
             </div>
         </div>
@@ -3954,12 +3953,13 @@ with onglet_ventes:
     """
     afficher_html(html_bar_synchro)
 
+    # --- GUICHET D'ENREGISTREMENT D'UNE VENTE ---
     actions_vendables = [
         k for k, v in portefeuille_utilisateur.items()
         if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
     ]
 
-    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction Actions & Crédit Espèces automatiques)", expanded=True):
+    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction Actions & Crédit Espèces automatiques)", expanded=not bool(st.session_state.get("historique_ventes"))):
         if not actions_vendables:
             st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
         else:
@@ -3976,7 +3976,7 @@ with onglet_ventes:
                 f"<div style='background:rgba(52,152,219,0.08); border-left:4px solid #3498db; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:0.9em;'>"
                 f"📌 En portefeuille : <b>{qte_detenue} action(s) {action_vendue}</b> | Votre PRU : <b>{pru_actuel:.2f} {dev_v}</b> | Cours actuel : <b>{cours_actuel_v:.2f} {dev_v}</b>"
                 f"</div>",
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
 
             col_v1, col_v2, col_v3, col_v4 = st.columns(4)
@@ -3995,7 +3995,6 @@ with onglet_ventes:
                 key=f"input_cred_esp_{action_vendue}",
             )
 
-            # Aperçu en direct avant validation
             facteur_apercu = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
             net_apercu_eur = round((qte_a_vendre * prix_vente_saisi * facteur_apercu) - frais_vente_eur, 2)
             cout_apercu_eur = round(qte_a_vendre * pru_actuel * facteur_apercu, 2)
@@ -4004,16 +4003,16 @@ with onglet_ventes:
             c_apercu = "#2ecc71" if pv_apercu_eur >= 0 else "#e74c3c"
 
             st.markdown(
-                f"<div style='background:rgba(46,204,113,0.07); border:1px dashed rgba(46,204,113,0.4); padding:10px 14px; border-radius:8px; margin:8px 0 12px 0; font-size:0.88em;'>"
-                f"🔎 <b>Aperçu avant validation :</b> Il vous restera <b>{qte_detenue - qte_a_vendre} action(s) {action_vendue}</b> en portefeuille | "
-                f"Cash net généré : <b>+{net_apercu_eur:,.2f} €</b> | "
+                f"<div style='background:rgba(128,128,128,0.05); border:1px dashed {c_apercu}; padding:10px 14px; border-radius:8px; margin:8px 0 12px 0; font-size:0.88em;'>"
+                f"🔎 <b>Aperçu de l'opération :</b> Reste après vente : <b>{qte_detenue - qte_a_vendre} titre(s) {action_vendue}</b> | "
+                f"Cash net encaissé : <b>+{net_apercu_eur:,.2f} €</b> | "
                 f"Plus/Moins-Value actée : <span style='color:{c_apercu}; font-weight:800;'>{pv_apercu_eur:+,.2f} € ({perf_apercu_pct:+.2f}%)</span>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
             st.button(
-                "🚀 Valider la vente & Mettre à jour mon Portefeuille",
+                "🚀 Valider la vente & Ajouter au Calendrier des Plus-Values",
                 type="primary",
                 use_container_width=True,
                 on_click=executer_vente_portefeuille,
@@ -4023,7 +4022,7 @@ with onglet_ventes:
     historique_v = st.session_state.get("historique_ventes", [])
 
     if not historique_v:
-        st.info("💡 Aucune vente enregistrée pour le moment. Utilisez le guichet ci-dessus lorsque vous vendez tout ou partie d'une ligne.")
+        st.info("💡 Aucune vente enregistrée pour le moment. Dès que vous validerez une vente ci-dessus, votre calendrier 12 mois Argon s'affichera automatiquement.")
     else:
         total_pv_actee = sum(float(v.get("plus_value_eur", 0.0)) for v in historique_v)
         total_montant_vendu = sum(float(v.get("montant_eur", 0.0)) for v in historique_v)
@@ -4031,28 +4030,30 @@ with onglet_ventes:
         perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
 
         nb_gagnantes = sum(1 for v in historique_v if float(v.get("plus_value_eur", 0.0)) >= 0)
+        nb_perdantes = len(historique_v) - nb_gagnantes
         win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
         c_pv_act = "#2ecc71" if total_pv_actee >= 0 else "#e74c3c"
 
+        # --- 4 CARTES KPI ARGON ---
         html_kpi_ventes = f"""
         <div class="argon-grid">
-            <div class="argon-card">
+            <div class="argon-card" style="border-top: 3px solid {c_pv_act};">
                 <div class="argon-title">💰 Total Plus/Moins-Values Actées</div>
                 <div class="argon-val" style="color:{c_pv_act};">{total_pv_actee:+,.2f} €</div>
-                <div class="argon-sub">Gains nets réellement extraits</div>
+                <div class="argon-sub">Solde net réalisé sur {len(historique_v)} opération(s)</div>
             </div>
-            <div class="argon-card">
+            <div class="argon-card" style="border-top: 3px solid #3498db;">
                 <div class="argon-title">📈 Performance d'Extraction Réelle</div>
                 <div class="argon-val" style="color:{c_pv_act};">{perf_globale_actee_pct:+.2f}%</div>
-                <div class="argon-sub">Sur {total_cout_initial:,.0f} € de capital initial vendu</div>
+                <div class="argon-sub">Sur {total_cout_initial:,.0f} € de capital initial cédé</div>
             </div>
-            <div class="argon-card">
+            <div class="argon-card" style="border-top: 3px solid #2ecc71;">
                 <div class="argon-title">🎯 Taux de Réussite (Win Rate)</div>
                 <div class="argon-val" style="color:#3498db;">{win_rate:.0f}%</div>
-                <div class="argon-sub">{nb_gagnantes} gagnante(s) / {len(historique_v)} vente(s)</div>
+                <div class="argon-sub"><span style="color:#2ecc71; font-weight:700;">{nb_gagnantes} gagnante(s)</span> / <span style="color:#e74c3c; font-weight:700;">{nb_perdantes} perdante(s)</span></div>
             </div>
-            <div class="argon-card">
-                <div class="argon-title">💵 Cash Total Encaissé</div>
+            <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                <div class="argon-title">💵 Cash Total Extrait (Cessions)</div>
                 <div class="argon-val" style="color:#9b59b6;">{total_montant_vendu:,.2f} €</div>
                 <div class="argon-sub">Poche Espèces actuelle : <b>{esp_dispo_actuel:,.2f} €</b></div>
             </div>
@@ -4060,79 +4061,135 @@ with onglet_ventes:
         """
         afficher_html(html_kpi_ventes)
 
-        annees_dispo = sorted(list({str(v.get("date", "2026"))[:4] for v in historique_v}), reverse=True)
+        # ======================================================================
+        # CALENDRIER 12 MOIS ARGON DES PLUS & MOINS-VALUES ACTÉES
+        # ======================================================================
+        annees_dispo = sorted(list({str(v.get("date", str(datetime.now().year)))[:4] for v in historique_v}), reverse=True)
         if not annees_dispo:
             annees_dispo = [str(datetime.now().year)]
+        options_filtre_annee = annees_dispo + (["Toutes les années (Cumul)"] if len(annees_dispo) > 1 else [])
 
-        col_an_t, col_an_sel = st.columns([3, 1])
+        col_an_t, col_an_sel = st.columns([2.8, 1.2])
         with col_an_t:
-            st.markdown("#### 🗓️ Calendrier 12 Mois des Plus & Moins-Values Actées")
+            st.markdown("#### 🗓️ Calendrier Mensuel des Plus & Moins-Values Actées (Style Argon)")
+            st.caption("Somme automatique mois par mois de toutes vos plus-values et moins-values réalisées selon la date de vente.")
         with col_an_sel:
-            annee_choisie_v = st.selectbox("Année affichée :", annees_dispo, key="sel_annee_cal_ventes")
+            annee_choisie_v = st.selectbox("Période affichée :", options_filtre_annee, key="sel_annee_cal_ventes")
 
         mois_noms_12 = [
             (1, "Janvier"), (2, "Février"), (3, "Mars"), (4, "Avril"),
             (5, "Mai"), (6, "Juin"), (7, "Juillet"), (8, "Août"),
-            (9, "Septembre"), (10, "Octobre"), (11, "Novembre"), (12, "Décembre")
+            (9, "Septembre"), (10, "Octobre"), (11, "Novembre"), (12, "Décembre"),
         ]
         pv_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
         cout_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+        encaisse_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
         pills_par_mois_12 = {m_idx: [] for m_idx, _ in mois_noms_12}
 
         for v in historique_v:
             date_s = str(v.get("date", ""))
-            if date_s.startswith(str(annee_choisie_v)):
+            if annee_choisie_v == "Toutes les années (Cumul)" or date_s.startswith(str(annee_choisie_v)):
                 try:
                     m_num = int(date_s.split("-")[1])
                 except Exception:
-                    m_num = 1
+                    m_num = int(v.get("mois_num", 1))
                 pv_v = float(v.get("plus_value_eur", 0.0))
-                cout_v = float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - pv_v))
+                mt_v = float(v.get("montant_eur", 0.0))
+                cout_v = float(v.get("cout_initial_eur", mt_v - pv_v))
                 pv_par_mois_12[m_num] += pv_v
                 cout_par_mois_12[m_num] += cout_v
-                pills_par_mois_12[m_num].append((v["action"], v["qte"], pv_v))
+                encaisse_par_mois_12[m_num] += mt_v
+                pills_par_mois_12[m_num].append((v["action"], v["qte"], pv_v, date_s[8:10] + "/" + date_s[5:7]))
 
+        max_abs_mois = max([abs(val) for val in pv_par_mois_12.values()] + [1.0])
+        total_periode_sel = sum(pv_par_mois_12.values())
+        nb_mois_verts = sum(1 for m_i in pv_par_mois_12 if pills_par_mois_12[m_i] and pv_par_mois_12[m_i] >= 0)
+        nb_mois_rouges = sum(1 for m_i in pv_par_mois_12 if pills_par_mois_12[m_i] and pv_par_mois_12[m_i] < 0)
+        meilleur_mois_idx = max(pv_par_mois_12, key=lambda k: pv_par_mois_12[k]) if any(pills_par_mois_12.values()) else None
+        txt_meilleur_mois = f"{dict(mois_noms_12)[meilleur_mois_idx]} ({pv_par_mois_12[meilleur_mois_idx]:+,.2f} €)" if (meilleur_mois_idx and pv_par_mois_12[meilleur_mois_idx] != 0) else "N/A"
+        c_tot_per = "#2ecc71" if total_periode_sel >= 0 else "#e74c3c"
+
+        # Bandeau synthèse du calendrier
+        html_resume_cal = f"""
+        <div class="meteo-bar" style="margin-bottom: 14px;">
+            <div class="meteo-item" style="border-left-color:{c_tot_per};">
+                <div>
+                    <div style="font-size:0.72em; font-weight:800; opacity:0.75;">📊 BILAN NET ({annee_choisie_v})</div>
+                    <div style="font-size:0.98em; font-weight:900; color:{c_tot_per};">{total_periode_sel:+,.2f} € actés</div>
+                </div>
+            </div>
+            <div class="meteo-item" style="border-left-color:#2ecc71;">
+                <div>
+                    <div style="font-size:0.72em; font-weight:800; opacity:0.75;">🟢 MOIS GAGNANTS VS 🔴 PERDANTS</div>
+                    <div style="font-size:0.95em; font-weight:800;"><span style="color:#2ecc71;">{nb_mois_verts} mois vert(s)</span> / <span style="color:#e74c3c;">{nb_mois_rouges} mois rouge(s)</span></div>
+                </div>
+            </div>
+            <div class="meteo-item" style="border-left-color:#f39c12;">
+                <div>
+                    <div style="font-size:0.72em; font-weight:800; opacity:0.75;">🏆 MEILLEUR MOIS D'EXTRACTION</div>
+                    <div style="font-size:0.95em; font-weight:800;">{txt_meilleur_mois}</div>
+                </div>
+            </div>
+        </div>
+        """
+        afficher_html(html_resume_cal)
+
+        # Grille des 12 mois style Argon
+        libelle_an_court = "" if annee_choisie_v == "Toutes les années (Cumul)" else str(annee_choisie_v)
         html_cal_ventes = "<div class='cal-grid'>"
         for m_idx, m_label in mois_noms_12:
             tot_m = pv_par_mois_12[m_idx]
             cout_m = cout_par_mois_12[m_idx]
+            enc_m = encaisse_par_mois_12[m_idx]
             perf_m = (tot_m / cout_m * 100.0) if cout_m > 0 else 0.0
             liste_p = pills_par_mois_12[m_idx]
+            pct_barre = min(100.0, max(6.0, (abs(tot_m) / max_abs_mois) * 100.0)) if liste_p else 0.0
 
             if liste_p:
                 classe_c = "cal-card-active"
                 c_tot = "#2ecc71" if tot_m >= 0 else "#e74c3c"
-                icone_m = "🟢" if tot_m >= 0 else "🔴"
+                bord_top = f"border-top: 3px solid {c_tot};"
+                badge_m = f"<span class='{'b-green' if tot_m >= 0 else 'b-red'}' style='font-size:0.72em; padding:2px 7px;'>{perf_m:+.1f}%</span>"
                 pills_str = "".join(
-                    f"<span class='cal-pill'><b>{act_p}</b> (x{q_p}) : <span style='color:{'#2ecc71' if pv_p>=0 else '#e74c3c'}; font-weight:800;'>{pv_p:+.1f} €</span></span>"
-                    for act_p, q_p, pv_p in liste_p
+                    f"<span class='cal-pill' style='border-left: 3px solid {'#2ecc71' if pv_p >= 0 else '#e74c3c'};'>"
+                    f"<b>{act_p}</b> (x{q_p}) : <span style='color:{'#2ecc71' if pv_p >= 0 else '#e74c3c'}; font-weight:800;'>{pv_p:+,.1f} €</span>"
+                    f"</span>"
+                    for act_p, q_p, pv_p, _ in liste_p
                 )
-                perf_badge = f"<span style='font-size:0.76em; font-weight:800; color:{c_tot};'>({perf_m:+.1f}%)</span>"
+                barre_html = f"<div class='score-bg' style='height:5px; margin:6px 0 4px 0;'><div style='width:{pct_barre:.0f}%; background:{c_tot}; height:100%;'></div></div>"
+                sous_info_m = f"<div style='font-size:0.72em; opacity:0.7; display:flex; justify-content:space-between;'><span>{len(liste_p)} vente(s)</span><span>Cash : {enc_m:,.0f} €</span></div>"
             else:
                 classe_c = "cal-card"
                 c_tot = "rgba(128,128,128,0.45)"
-                icone_m = "⚪"
-                pills_str = "<span style='font-size:0.82em; opacity:0.45; font-style:italic;'>Aucune vente ce mois</span>"
-                perf_badge = ""
+                bord_top = ""
+                badge_m = "<span style='font-size:0.75em; opacity:0.4;'>⚪</span>"
+                pills_str = "<span style='font-size:0.80em; opacity:0.42; font-style:italic;'>Aucune vente ce mois</span>"
+                barre_html = ""
+                sous_info_m = ""
 
             html_cal_ventes += f"""
-            <div class="{classe_c}">
+            <div class="{classe_c}" style="{bord_top}">
                 <div>
                     <div class="cal-month">
-                        <span>{m_idx:02d}. {m_label} {annee_choisie_v}</span>
-                        <span style="font-size:0.85em;">{icone_m}</span>
+                        <span>{m_idx:02d}. {m_label} {libelle_an_court}</span>
+                        {badge_m}
                     </div>
-                    <div style="margin-bottom:10px;">{pills_str}</div>
+                    <div style="margin-bottom:8px;">{pills_str}</div>
                 </div>
-                <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px;">
-                    <span style="font-size:0.76em; opacity:0.75; margin-right:4px;">Acté :</span>
-                    <span class="cal-total" style="color:{c_tot};">{tot_m:+,.2f} €</span> {perf_badge}
+                <div>
+                    {sous_info_m}
+                    {barre_html}
+                    <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px; margin-top:4px;">
+                        <span style="font-size:0.75em; opacity:0.75; margin-right:4px;">Net mois :</span>
+                        <span class="cal-total" style="color:{c_tot};">{tot_m:+,.2f} €</span>
+                    </div>
                 </div>
             </div>
             """
         html_cal_ventes += "</div>"
         afficher_html(html_cal_ventes)
 
+        # --- TABLEAU RÉCAPITULATIF MOIS PAR MOIS ---
         st.markdown("#### 📊 Tableau Récapitulatif d'Extraction de Performance Mois par Mois")
         agregation_mois = {}
         for v in historique_v:
@@ -4147,7 +4204,7 @@ with onglet_ventes:
             agregation_mois[m_key]["cout_total"] += ct_val
             agregation_mois[m_key]["pv_totale"] += pv_val
 
-        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Ventes Actées</th><th>Capital Initial Vendu (€)</th><th>Total Encaissé Net (€)</th><th>Plus/Moins-Value Actée (€)</th><th>Performance Extraite (%)</th></tr></thead><tbody>"
+        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Opérations</th><th>Capital Initial Vendu (€)</th><th>Cash Net Encaissé (€)</th><th>Plus/Moins-Value Actée (€)</th><th>Performance Extraite (%)</th></tr></thead><tbody>"
         for m_k in sorted(agregation_mois.keys(), reverse=True):
             d_m = agregation_mois[m_k]
             p_m_pct = (d_m["pv_totale"] / d_m["cout_total"] * 100.0) if d_m["cout_total"] > 0 else 0.0
@@ -4176,7 +4233,7 @@ with onglet_ventes:
                     st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} € ({badge_esp})")
                 with col_h2:
                     col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
-                    st.markdown(f"Plus-value actée : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
+                    st.markdown(f"Plus/Moins-Value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
                 with col_h3:
                     st.button(
                         "🗑️ Annuler",
@@ -4197,4 +4254,3 @@ with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales 
         "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
     )
 afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
-        
