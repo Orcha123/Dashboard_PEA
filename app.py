@@ -4289,10 +4289,11 @@ with onglet_ventes:
                 st.markdown("---")
 
 # ==============================================================================
-# STATION GRAPHIQUE PRO 360° (PLACÉE EN FIN DE FICHIER — S'AFFICHE DANS L'ONGLET 1)
+# STATION GRAPHIQUE PRO 360° (100% PYTHON NATIF & PANDAS — SANS NUMPY)
 # ==============================================================================
 with onglet_radar:
     try:
+        import math
         st.markdown("---")
         st.subheader("📈 Station Graphique Interactive 360° (Canal 3A, EMA 2/12, Supports & TradingView)")
         st.caption("Sélectionnez n'importe quelle valeur de votre radar pour visualiser ses courbes EMA 2/12, son couloir de régression linéaire à 3 ans, ses supports/résistances 30J et votre PRU.")
@@ -4375,28 +4376,34 @@ with onglet_radar:
             highs_sg_full = [c * 1.01 for c in closes_sg_full]
             lows_sg_full = [c * 0.99 for c in closes_sg_full]
 
-        arr_c_full = np.array(closes_sg_full, dtype=float)
+        # Calculs 100% Python natif (sans numpy)
+        arr_c_full = [float(x) for x in closes_sg_full]
         n_full = len(arr_c_full)
-        x_full = np.arange(n_full)
 
         if n_full >= 2:
-            pente_3a, intercept_3a = np.polyfit(x_full, arr_c_full, 1)
-            droite_reg_full = pente_3a * x_full + intercept_3a
-            ecart_type_3a = float(np.std(arr_c_full - droite_reg_full))
+            moy_x = (n_full - 1) / 2.0
+            moy_y = sum(arr_c_full) / n_full
+            num_reg = sum((i - moy_x) * (arr_c_full[i] - moy_y) for i in range(n_full))
+            den_reg = sum((i - moy_x) ** 2 for i in range(n_full))
+            pente_3a = (num_reg / den_reg) if den_reg > 0 else 0.0
+            intercept_3a = moy_y - pente_3a * moy_x
+            droite_reg_full = [pente_3a * i + intercept_3a for i in range(n_full)]
+            variance_3a = sum((arr_c_full[i] - droite_reg_full[i]) ** 2 for i in range(n_full)) / n_full
+            ecart_type_3a = math.sqrt(max(0.0, variance_3a))
         else:
-            droite_reg_full = arr_c_full.copy()
+            droite_reg_full = list(arr_c_full)
             ecart_type_3a = float(arr_c_full[-1] * 0.05)
 
-        canal_haut_full = droite_reg_full + ecart_type_3a
-        canal_bas_full = np.maximum(0.01, droite_reg_full - ecart_type_3a)
+        canal_haut_full = [droite_reg_full[i] + ecart_type_3a for i in range(n_full)]
+        canal_bas_full = [max(0.01, droite_reg_full[i] - ecart_type_3a) for i in range(n_full)]
 
         s_c_full = pd.Series(arr_c_full)
-        ema_rapide_full = s_c_full.ewm(span=10, adjust=False).mean().values
-        ema_lente_full = s_c_full.ewm(span=50, adjust=False).mean().values
+        ema_rapide_full = s_c_full.ewm(span=10, adjust=False).mean().tolist()
+        ema_lente_full = s_c_full.ewm(span=50, adjust=False).mean().tolist()
 
         fenetre_sr = min(30, n_full)
-        sup_30j_sg = float(np.min(lows_sg_full[-fenetre_sr:])) if lows_sg_full else float(np.min(arr_c_full[-fenetre_sr:]))
-        res_30j_sg = float(np.max(highs_sg_full[-fenetre_sr:])) if highs_sg_full else float(np.max(arr_c_full[-fenetre_sr:]))
+        sup_30j_sg = float(min(lows_sg_full[-fenetre_sr:])) if lows_sg_full else float(min(arr_c_full[-fenetre_sr:]))
+        res_30j_sg = float(max(highs_sg_full[-fenetre_sr:])) if highs_sg_full else float(max(arr_c_full[-fenetre_sr:]))
         cours_act_sg = float(arr_c_full[-1])
         fair_val_act = float(droite_reg_full[-1])
         ecart_fv_pct = ((cours_act_sg - fair_val_act) / fair_val_act * 100.0) if fair_val_act > 0 else 0.0
