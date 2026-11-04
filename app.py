@@ -293,70 +293,71 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
         st.session_state["qte_Espèces"] = 0
 
 def sauvegarder_dans_cloud():
-        if supabase and st.session_state.get("user"):
-            try:
-                user_id_str = str(st.session_state["user"].id)
-                email_str = str(st.session_state["user"].email)
-                watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+    if supabase and st.session_state.get("user"):
+        try:
+            user_id_str = str(st.session_state["user"].id)
+            email_str = str(st.session_state["user"].email)
+            watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
 
-                est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
-                st.session_state["est_abonne_pro"] = est_pro_val
+            est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
+            st.session_state["est_abonne_pro"] = est_pro_val
 
-                hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
+            hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
 
-                # Protection anti-écrasement à la reconnexion : on récupère les ventes déjà sur Supabase si la mémoire locale est vide
-                if not hist_ventes_actuel and not st.session_state.get("_ventes_videes_volontairement", False):
-                    try:
-                        res_ex = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
-                        if res_ex.data and len(res_ex.data) > 0:
-                            pf_ex = res_ex.data[0].get("portefeuille") or {}
-                            if isinstance(pf_ex, dict) and isinstance(pf_ex.get("_historique_ventes"), list):
-                                hist_ventes_actuel = pf_ex["_historique_ventes"]
-                                st.session_state["historique_ventes"] = hist_ventes_actuel
-                    except Exception:
-                        pass
+            # Protection anti-écrasement : si la liste locale est vide à la reconnexion, on conserve les ventes déjà présentes sur Supabase
+            if not hist_ventes_actuel and not st.session_state.get("_ventes_videes_volontairement", False):
+                try:
+                    res_ex = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
+                    if res_ex.data and len(res_ex.data) > 0:
+                        pf_ex = res_ex.data[0].get("portefeuille") or {}
+                        if isinstance(pf_ex, dict) and isinstance(pf_ex.get("_historique_ventes"), list):
+                            hist_ventes_actuel = list(pf_ex["_historique_ventes"])
+                            st.session_state["historique_ventes"] = hist_ventes_actuel
+                except Exception:
+                    pass
 
-                pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
-                pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
+            pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
+            pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
+            st.session_state["portefeuille"]["_historique_ventes"] = hist_ventes_actuel
 
-                payload = {
-                    "user_id": user_id_str,
-                    "email": email_str,
-                    "budget_dca": float(st.session_state.get("budget_dca", 450.0)),
-                    "watchlist": dict(watchlist_actuelle),
-                    "portefeuille": pf_a_sauver,
-                    "est_abonne_pro": est_pro_val,
-                    "updated_at": datetime.utcnow().isoformat()
-                }
-                supabase.table("user_data").upsert(payload).execute()
-            except Exception as e:
-                st.sidebar.error(f"Erreur Supabase : {e}")
+            payload = {
+                "user_id": user_id_str,
+                "email": email_str,
+                "budget_dca": float(st.session_state.get("budget_dca", 450.0)),
+                "watchlist": dict(watchlist_actuelle),
+                "portefeuille": pf_a_sauver,
+                "est_abonne_pro": est_pro_val,
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            supabase.table("user_data").upsert(payload).execute()
 
-            dict_prix = st.session_state.get("prix_temps_reel", {})
-            taux_usd_eur = st.session_state.get("taux_change", 1.08)
-            if dict_prix:
-                pf_actuel = st.session_state["portefeuille"]
-                val_totale = 0.0
-                cap_investi = 0.0
-                rente_tot = 0.0
+            # Calcul et sauvegarde du Snapshot du jour dans portfolio_history
+            date_du_jour = datetime.utcnow().strftime("%Y-%m-%d")
+            cap_investi = 0.0
+            val_totale = 0.0
+            rente_tot = 0.0
+            prix_tr = st.session_state.get("prix_temps_reel", {})
 
-                for nom, data in pf_actuel.items():
-                    if nom == "Espèces":
-                        val_esp = float(data.get("pru", 0.0))
-                        val_totale += val_esp
-                        cap_investi += val_esp
-                    elif nom in watchlist_actuelle:
-                        q = float(data.get("qte", 0.0))
-                        pru = float(data.get("pru", 0.0))
-                        cours = float(dict_prix.get(nom, watchlist_actuelle[nom].get("prix_cible", 50.0)))
-                        devise = watchlist_actuelle[nom].get("devise", "EUR")
-                        facteur = (1.0 / taux_usd_eur) if devise == "USD" else 1.0
+            for nom_a, pos_a in pf_a_sauver.items():
+                if nom_a == "_historique_ventes" or not isinstance(pos_a, dict):
+                    continue
+                q_a = float(pos_a.get("qte", 0.0))
+                p_a = float(pos_a.get("pru", 0.0))
+                if q_a <= 0:
+                    continue
+                if nom_a == "Espèces":
+                    cap_investi += p_a
+                    val_totale += p_a
+                else:
+                    info_a = watchlist_actuelle.get(nom_a, WATCHLIST_DEFAUT.get(nom_a, {}))
+                    fact_a = (1.0 / TAUX_USD_EUR) if info_a.get("devise") == "USD" else 1.0
+                    cours_a = float(prix_tr.get(nom_a, info_a.get("prix_cible", p_a)))
+                    div_a = float(info_a.get("div_eur", 0.0))
+                    cap_investi += q_a * p_a * fact_a
+                    val_totale += q_a * cours_a * fact_a
+                    rente_tot += q_a * div_a * fact_a
 
-                        val_totale += q * cours * facteur
-                        cap_investi += q * pru * facteur
-                        rente_tot += q * float(watchlist_actuelle[nom].get("div_eur", 0.0)) * facteur
-
-                date_du_jour = datetime.now().strftime("%Y-%m-%d")
+            if val_totale > 0:
                 snapshot_payload = {
                     "user_id": user_id_str,
                     "date": date_du_jour,
@@ -375,6 +376,7 @@ def sauvegarder_dans_cloud():
     else:
         st.sidebar.warning("⚠️ Connectez-vous dans l'Espace Membre pour sauvegarder dans le Cloud.")
         return False
+
 
 # ==============================================================================
 # BARRE LATÉRALE : ESPACE MEMBRE, DCA, GESTION D'ACTIFS & CONSOLE ADMIN
