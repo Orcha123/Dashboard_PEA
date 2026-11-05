@@ -4289,7 +4289,7 @@ with onglet_ventes:
                 st.markdown("---")
 
 # ==============================================================================
-# PACK PRO ULTIME : MODE DISCRÉTION, EXPORT CSV, ALERTES CIBLES/20% & TIROIR 360°
+# SUPER-PACK PRO V2 : PEA/CTO, YIELD ON COST, DUEL ETF, BOOST COUPON & TIROIR 360°
 # ==============================================================================
 try:
     import math
@@ -4301,9 +4301,111 @@ try:
     hist_ventes_pack = st.session_state.get("historique_ventes", [])
     liste_t1_pack = globals().get("donnees_t1", [])
     hist_prix_pack = globals().get("historiques_prix", {})
+    budget_dca_pack = float(st.session_state.get("budget_dca", st.session_state.get("budget_mensuel", 450.0)))
+
+    # Détection automatique des conteneurs des 5 onglets
+    _onglets_dispo = [v for k, v in globals().items() if k.startswith("onglet_")]
+    _tab_portefeuille = (
+        globals().get("onglet_portefeuille")
+        or globals().get("onglet_pf")
+        or (_onglets_dispo[1] if len(_onglets_dispo) >= 2 else None)
+    )
+    _tab_dividendes = (
+        globals().get("onglet_dividendes")
+        or globals().get("onglet_calendrier")
+        or (_onglets_dispo[2] if len(_onglets_dispo) >= 3 else None)
+    )
 
     # --------------------------------------------------------------------------
-    # 1. BARRE LATÉRALE : MODE DISCRÉTION & EXPORT EXCEL / CSV
+    # CALCULS CENTRAUX : SÉPARATION PEA (€) / CTO ($), YIELD ON COST & POIDS
+    # --------------------------------------------------------------------------
+    cap_inv_pea = 0.0
+    val_act_pea = 0.0
+    rente_pea = 0.0
+
+    cap_inv_cto = 0.0
+    val_act_cto = 0.0
+    rente_cto = 0.0
+
+    total_val_actions_pack = 0.0
+    total_cout_actions_pack = 0.0
+    total_rente_actions_pack = 0.0
+    poids_actions_pack = {}
+    lignes_yoc_details = []
+
+    lignes_csv = ["\ufeff=== 1. MON PORTEFEUILLE ACTUEL (PEA & CTO) ==="]
+    lignes_csv.append("Enveloppe;Action;Symbole;Quantite;PRU;Devise;Cours Actuel;Valorisation EUR;Plus-Value Latente EUR;Rendement Marche %;Rendement sur PRU (YoC) %;Rente Annuelle EUR")
+
+    for nom_p, pos_p in pf_pack.items():
+        if nom_p == "_historique_ventes" or not isinstance(pos_p, dict):
+            continue
+        q_p = float(pos_p.get("qte", 0.0))
+        pru_p = float(pos_p.get("pru", 0.0))
+        if q_p <= 0:
+            continue
+
+        if nom_p == "Espèces":
+            cap_inv_pea += pru_p
+            val_act_pea += pru_p
+            lignes_csv.append(f"PEA (EUR);Especes;CASH;1;{pru_p:.2f};EUR;{pru_p:.2f};{pru_p:.2f};0.00;0.00%;0.00%;0.00")
+        else:
+            inf_p = wl_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
+            sym_p = inf_p.get("symbole", "")
+            dev_p = inf_p.get("devise", "EUR")
+            est_cto_usd = (dev_p == "USD")
+            env_label = "CTO (USD)" if est_cto_usd else "PEA (EUR)"
+            dev_sym_p = "$" if est_cto_usd else "€"
+            fact_p = (1.0 / TAUX_USD_EUR) if est_cto_usd else 1.0
+
+            cours_p = float(prix_tr_pack.get(nom_p, inf_p.get("prix_cible", pru_p)))
+            div_p = float(inf_p.get("div_eur", 0.0))
+
+            val_eur_p = q_p * cours_p * fact_p
+            cout_eur_p = q_p * pru_p * fact_p
+            pv_lat_p = val_eur_p - cout_eur_p
+            rente_eur_p = q_p * div_p * fact_p
+
+            rdt_marche_p = (div_p / cours_p * 100.0) if cours_p > 0 else 0.0
+            yoc_p = (div_p / pru_p * 100.0) if pru_p > 0 else 0.0
+            payback_ans = (pru_p / div_p) if div_p > 0 else 0.0
+
+            if est_cto_usd:
+                cap_inv_cto += cout_eur_p
+                val_act_cto += val_eur_p
+                rente_cto += rente_eur_p
+            else:
+                cap_inv_pea += cout_eur_p
+                val_act_pea += val_eur_p
+                rente_pea += rente_eur_p
+
+            total_val_actions_pack += val_eur_p
+            total_cout_actions_pack += cout_eur_p
+            total_rente_actions_pack += rente_eur_p
+            poids_actions_pack[nom_p] = val_eur_p
+
+            lignes_yoc_details.append({
+                "nom": nom_p,
+                "enveloppe": env_label,
+                "qte": int(q_p),
+                "pru": pru_p,
+                "cours": cours_p,
+                "dev_sym": dev_sym_p,
+                "div_unitaire": div_p,
+                "rdt_marche": rdt_marche_p,
+                "yoc": yoc_p,
+                "bonus_yoc": yoc_p - rdt_marche_p,
+                "rente_eur": rente_eur_p,
+                "val_eur": val_eur_p,
+                "cout_eur": cout_eur_p,
+                "payback": payback_ans,
+            })
+
+            lignes_csv.append(
+                f"{env_label};{nom_p};{sym_p};{int(q_p)};{pru_p:.2f};{dev_p};{cours_p:.2f};{val_eur_p:.2f};{pv_lat_p:+.2f};{rdt_marche_p:.2f}%;{yoc_p:.2f}%;{rente_eur_p:.2f}"
+            )
+
+    # --------------------------------------------------------------------------
+    # 1. BARRE LATÉRALE : MODE DISCRÉTION & EXPORT EXCEL / CSV ENRICHI
     # --------------------------------------------------------------------------
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛡️ Outils Pro & Sécurité")
@@ -4334,43 +4436,6 @@ try:
             unsafe_allow_html=True,
         )
 
-    # Génération du fichier CSV (compatible Excel France avec BOM UTF-8 et séparateur ;)
-    lignes_csv = ["\ufeff=== 1. MON PORTEFEUILLE ACTUEL ==="]
-    lignes_csv.append("Action;Symbole;Quantite;PRU;Devise;Cours Actuel;Valorisation EUR;Plus-Value Latente EUR;Rente Annuelle EUR")
-
-    total_val_actions_pack = 0.0
-    poids_actions_pack = {}
-
-    for nom_p, pos_p in pf_pack.items():
-        if nom_p == "_historique_ventes" or not isinstance(pos_p, dict):
-            continue
-        q_p = float(pos_p.get("qte", 0.0))
-        pru_p = float(pos_p.get("pru", 0.0))
-        if q_p <= 0:
-            continue
-
-        if nom_p == "Espèces":
-            lignes_csv.append(f"Especes;CASH;1;{pru_p:.2f};EUR;{pru_p:.2f};{pru_p:.2f};0.00;0.00")
-        else:
-            inf_p = wl_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
-            sym_p = inf_p.get("symbole", "")
-            dev_p = inf_p.get("devise", "EUR")
-            fact_p = (1.0 / TAUX_USD_EUR) if dev_p == "USD" else 1.0
-            cours_p = float(prix_tr_pack.get(nom_p, inf_p.get("prix_cible", pru_p)))
-            div_p = float(inf_p.get("div_eur", 0.0))
-
-            val_eur_p = q_p * cours_p * fact_p
-            cout_eur_p = q_p * pru_p * fact_p
-            pv_lat_p = val_eur_p - cout_eur_p
-            rente_p = q_p * div_p * fact_p
-
-            total_val_actions_pack += val_eur_p
-            poids_actions_pack[nom_p] = val_eur_p
-
-            lignes_csv.append(
-                f"{nom_p};{sym_p};{int(q_p)};{pru_p:.2f};{dev_p};{cours_p:.2f};{val_eur_p:.2f};{pv_lat_p:+.2f};{rente_p:.2f}"
-            )
-
     lignes_csv.append("")
     lignes_csv.append("=== 2. JOURNAL DES PLUS-VALUES ACTEES (VENTES) ===")
     lignes_csv.append("Date;Action;Quantite Vendue;PRU;Prix de Vente;Devise;Cash Net Encaisse EUR;Plus ou Moins-Value Actee EUR;Performance %")
@@ -4391,9 +4456,7 @@ try:
         use_container_width=True,
     )
 
-    # --------------------------------------------------------------------------
-    # 2. CALCUL DES ALERTES DE SURPONDÉRATION (> 20% DU PORTEFEUILLE ACTIONS)
-    # --------------------------------------------------------------------------
+    # Calcul des alertes de surpondération (> 20%)
     alertes_surpond = []
     if total_val_actions_pack > 0:
         for nom_sp, val_sp in sorted(poids_actions_pack.items(), key=lambda x: x[1], reverse=True):
@@ -4401,32 +4464,271 @@ try:
             if pct_sp >= 20.0:
                 alertes_surpond.append((nom_sp, pct_sp, val_sp))
 
-    # Si l'onglet 2 existe dans les variables globales, on y affiche aussi l'alerte de concentration
-    conteneur_onglet2 = (
-        globals().get("onglet_portefeuille")
-        or globals().get("onglet_pf")
-        or globals().get("onglet_2")
-        or globals().get("tab2")
-    )
-    if conteneur_onglet2 is not None and alertes_surpond:
-        with conteneur_onglet2:
-            badges_sp_html = " ".join(
-                f"<span class='b-orange' style='margin-right:6px; padding:3px 8px;'><b>{n_s}</b> : {p_s:.1f}% ({v_s:,.0f} €)</span>"
-                for n_s, p_s, v_s in alertes_surpond
-            )
+    # --------------------------------------------------------------------------
+    # 2. ONGLET 2 : SÉPARATION PEA/CTO, YIELD ON COST & DUEL STOCK-PICKING VS ETF
+    # --------------------------------------------------------------------------
+    if _tab_portefeuille is not None and (cap_inv_pea > 0 or cap_inv_cto > 0):
+        with _tab_portefeuille:
+            st.markdown("---")
+            st.subheader("🏛️ Architecture Patrimoniale : Séparation PEA (€) vs CTO ($), Yield on Cost & Duel ETF")
+
+            # A. SÉPARATION FISCALE PEA (PLAFOND 150 000 €) vs CTO ($)
+            plafond_pea_legal = 150000.0
+            marge_pea_dispo = max(0.0, plafond_pea_legal - cap_inv_pea)
+            pct_plafond_pea = min(100.0, (cap_inv_pea / plafond_pea_legal) * 100.0)
+            pv_pea = val_act_pea - cap_inv_pea
+            pv_cto = val_act_cto - cap_inv_cto
+            c_pv_pea = "#2ecc71" if pv_pea >= 0 else "#e74c3c"
+            c_pv_cto = "#2ecc71" if pv_cto >= 0 else "#e74c3c"
+
+            yoc_global = (total_rente_actions_pack / total_cout_actions_pack * 100.0) if total_cout_actions_pack > 0 else 0.0
+            rdt_marche_global = (total_rente_actions_pack / total_val_actions_pack * 100.0) if total_val_actions_pack > 0 else 0.0
+            bonus_yoc_global = yoc_global - rdt_marche_global
+
             afficher_html(f"""
-            <div style="background:rgba(243,156,18,0.08); border-left:4px solid #f39c12; padding:10px 14px; border-radius:8px; margin-top:12px; font-size:0.88em;">
-                ⚖️ <b>Règle Prudentielle de Concentration (Seuil 20%) :</b> Attention, {len(alertes_surpond)} ligne(s) dépasse(nt) 20% de votre portefeuille actions :
-                <div style="margin-top:6px;">{badges_sp_html}</div>
-                <div style="font-size:0.85em; opacity:0.8; margin-top:4px;">💡 Conseil DCA : privilégiez le renforcement de vos autres lignes pour diluer ce risque.</div>
+            <div class="argon-grid" style="margin-bottom: 14px;">
+                <div class="argon-card" style="border-top: 3px solid #3498db;">
+                    <div class="argon-title">🇫🇷 Poche PEA Éligible (Hors US)</div>
+                    <div class="argon-val">{val_act_pea:,.2f} €</div>
+                    <div class="argon-sub">Investi : <b>{cap_inv_pea:,.0f} €</b> | PV : <span style="color:{c_pv_pea}; font-weight:700;">{pv_pea:+,.0f} €</span></div>
+                </div>
+                <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                    <div class="argon-title">🇺🇸 Poche CTO Actions US ($)</div>
+                    <div class="argon-val">{val_act_cto:,.2f} €</div>
+                    <div class="argon-sub">Investi : <b>{cap_inv_cto:,.0f} €</b> | PV : <span style="color:{c_pv_cto}; font-weight:700;">{pv_cto:+,.0f} €</span></div>
+                </div>
+                <div class="argon-card" style="border-top: 3px solid #2ecc71;">
+                    <div class="argon-title">🛡️ Plafond Légal PEA (150 000 €)</div>
+                    <div class="argon-val" style="color:#2ecc71;">{pct_plafond_pea:.1f}% utilisé</div>
+                    <div class="argon-sub">Reste à verser sur PEA : <b>{marge_pea_dispo:,.0f} €</b></div>
+                </div>
+                <div class="argon-card" style="border-top: 3px solid #f39c12;">
+                    <div class="argon-title">💎 Rendement sur PRU (Yield on Cost)</div>
+                    <div class="argon-val" style="color:#f39c12;">{yoc_global:.2f}%</div>
+                    <div class="argon-sub">Rendement marché : <b>{rdt_marche_global:.2f}%</b> ({bonus_yoc_global:+.2f}% grâce à vos PRU)</div>
+                </div>
             </div>
             """)
 
+            if alertes_surpond:
+                badges_sp_html = " ".join(
+                    f"<span class='b-orange' style='margin-right:6px; padding:3px 8px;'><b>{n_s}</b> : {p_s:.1f}% ({v_s:,.0f} €)</span>"
+                    for n_s, p_s, v_s in alertes_surpond
+                )
+                afficher_html(f"""
+                <div style="background:rgba(243,156,18,0.08); border-left:4px solid #f39c12; padding:10px 14px; border-radius:8px; margin-bottom:14px; font-size:0.88em;">
+                    ⚖️ <b>Règle Prudentielle de Concentration (Seuil 20%) :</b> {len(alertes_surpond)} ligne(s) dépasse(nt) 20% de votre portefeuille actions :
+                    <div style="margin-top:6px;">{badges_sp_html}</div>
+                </div>
+                """)
+
+            # B. TABLEAU DÉTAILLÉ DU YIELD ON COST (RENDEMENT SUR PRU)
+            with st.expander("💎 Ouvrir la Matrice du Rendement sur PRU (Yield on Cost & Années d'Amortissement)", expanded=True):
+                st.caption("Le **Yield on Cost (Rendement sur PRU)** mesure le rendement réel que vous procure chaque action par rapport au prix auquel VOUS l'avez achetée.")
+                html_yoc = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Enveloppe</th><th>Votre PRU</th><th>Cours Actuel</th><th>Dividende / An</th><th>Rdt Marché</th><th>💎 Rdt sur PRU (YoC)</th><th>Bonus PRU</th><th>Rente Annuelle</th><th>Remboursé en</th></tr></thead><tbody>"
+
+                for item_y in sorted(lignes_yoc_details, key=lambda x: x["yoc"], reverse=True):
+                    c_bonus = "#2ecc71" if item_y["bonus_yoc"] >= 0 else "#f39c12"
+                    b_yoc = "b-green" if item_y["yoc"] >= 4.5 else ("b-blue" if item_y["yoc"] >= 2.5 else "b-orange")
+                    txt_payback = f"{item_y['payback']:.1f} ans" if item_y["payback"] > 0 else "—"
+                    badge_env = "<span class='b-blue'>PEA (€)</span>" if "PEA" in item_y["enveloppe"] else "<span class='b-orange'>CTO ($)</span>"
+
+                    html_yoc += f"""
+                    <tr>
+                        <td class='r-name'>{item_y['nom']} <span style='font-size:0.78em; opacity:0.65;'>(x{item_y['qte']})</span></td>
+                        <td>{badge_env}</td>
+                        <td><b>{item_y['pru']:.2f} {item_y['dev_sym']}</b></td>
+                        <td>{item_y['cours']:.2f} {item_y['dev_sym']}</td>
+                        <td>{item_y['div_unitaire']:.2f} €</td>
+                        <td>{item_y['rdt_marche']:.2f}%</td>
+                        <td><span class='{b_yoc}' style='font-weight:900;'>💎 {item_y['yoc']:.2f}%</span></td>
+                        <td style='color:{c_bonus}; font-weight:800;'>{item_y['bonus_yoc']:+.2f}%</td>
+                        <td style='color:#2ecc71; font-weight:800;'>{item_y['rente_eur']:,.2f} €</td>
+                        <td style='font-size:0.85em; opacity:0.85;'>⏳ {txt_payback}</td>
+                    </tr>
+                    """
+                html_yoc += "</tbody></table>"
+                afficher_html(html_yoc)
+
+            # C. DUEL STOCK-PICKING vs GESTION PASSIVE ETF (CW8 / S&P 500 / CAC 40)
+            with st.expander("⚔️ Duel de Performance : Mon Stock-Picking (Total Return) vs ETF MSCI World (CW8) & CAC 40", expanded=True):
+                st.caption("Comparaison de votre performance globale réelle (Plus-values latentes + Plus-values actées + Dividendes annuels) face aux grands indices passifs sur 1 an glissant.")
+
+                pv_lat_tot = (val_act_pea + val_act_cto) - (cap_inv_pea + cap_inv_cto)
+                pv_actee_tot = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack)
+                gain_total_return_eur = pv_lat_tot + pv_actee_tot + total_rente_actions_pack
+                cap_base_total = max(1.0, cap_inv_pea + cap_inv_cto)
+                perf_user_tot_pct = (gain_total_return_eur / cap_base_total) * 100.0
+
+                def _perf_1an_indice(sym_idx, defaut_pct):
+                    try:
+                        _, cl_i, _, _ = recuperer_donnees(sym_idx)
+                        if cl_i and len(cl_i) >= 30:
+                            idx_deb = max(0, len(cl_i) - min(252, len(cl_i)))
+                            p_deb = float(cl_i[idx_deb])
+                            p_fin = float(cl_i[-1])
+                            if p_deb > 0:
+                                return ((p_fin - p_deb) / p_deb) * 100.0
+                    except Exception:
+                        pass
+                    return defaut_pct
+
+                perf_cw8_1a = _perf_1an_indice("CW8.PA", 11.5)
+                perf_cac_1a = _perf_1an_indice("^FCHI", 6.5)
+                perf_sp500_1a = _perf_1an_indice("^GSPC", 13.0)
+
+                gain_sim_cw8 = cap_base_total * (perf_cw8_1a / 100.0)
+                gain_sim_cac = cap_base_total * (perf_cac_1a / 100.0)
+                alpha_vs_cw8 = perf_user_tot_pct - perf_cw8_1a
+                alpha_vs_cac = perf_user_tot_pct - perf_cac_1a
+
+                c_user_duel = "#2ecc71" if perf_user_tot_pct >= 0 else "#e74c3c"
+                c_alpha_cw8 = "#2ecc71" if alpha_vs_cw8 >= 0 else "#f39c12"
+                c_alpha_cac = "#2ecc71" if alpha_vs_cac >= 0 else "#f39c12"
+
+                afficher_html(f"""
+                <div class="argon-grid" style="margin-top:6px;">
+                    <div class="argon-card" style="border-top: 3px solid {c_user_duel};">
+                        <div class="argon-title">🏆 Votre Portefeuille (Total Return)</div>
+                        <div class="argon-val" style="color:{c_user_duel};">{perf_user_tot_pct:+.2f}%</div>
+                        <div class="argon-sub">Gain global (PV + Rente) : <b>{gain_total_return_eur:+,.0f} €</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid #3498db;">
+                        <div class="argon-title">🌍 ETF MSCI World (CW8.PA - 1 An)</div>
+                        <div class="argon-val" style="color:#3498db;">{perf_cw8_1a:+.2f}%</div>
+                        <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cw8:+,.0f} €</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                        <div class="argon-title">🇫🇷 Indice CAC 40 (1 An)</div>
+                        <div class="argon-val" style="color:#9b59b6;">{perf_cac_1a:+.2f}%</div>
+                        <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cac:+,.0f} €</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid {c_alpha_cw8};">
+                        <div class="argon-title">⚡ Votre Alpha (Surperformance)</div>
+                        <div class="argon-val" style="color:{c_alpha_cw8}; font-size:1.18em;">{alpha_vs_cw8:+.2f}% vs CW8</div>
+                        <div class="argon-sub">Et <b style="color:{c_alpha_cac};">{alpha_vs_cac:+.2f}% vs CAC 40</b> (S&P 500 : {perf_sp500_1a:+.1f}%)</div>
+                    </div>
+                </div>
+                """)
+
     # --------------------------------------------------------------------------
-    # 3. ONGLET 1 : BANDEAU D'OPPORTUNITÉS IMMÉDIATES & TIROIR GRAPHIQUE 360°
+    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS & BOOST DE COUPON DCA
+    # --------------------------------------------------------------------------
+    if _tab_dividendes is not None:
+        with _tab_dividendes:
+            st.markdown("---")
+            st.subheader("⏳ Radar des Prochains Détachements & Simulateur « Boost de Coupon DCA »")
+            st.caption("Repérez les dividendes imminents (mois en cours et 2 prochains mois) et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
+
+            mois_actuel_num = datetime.now().month
+            noms_mois_fr = {
+                1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
+                5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
+                9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
+            }
+            fenetre_3_mois = [
+                mois_actuel_num,
+                (mois_actuel_num % 12) + 1,
+                ((mois_actuel_num + 1) % 12) + 1,
+            ]
+            noms_fenetre = [noms_mois_fr[m] for m in fenetre_3_mois]
+
+            detachements_proches = []
+            for nom_d, inf_d in wl_pack.items():
+                if nom_d in ("Espèces", "_historique_ventes") or not isinstance(inf_d, dict):
+                    continue
+                div_tot_d = float(inf_d.get("div_eur", 0.0))
+                if div_tot_d <= 0:
+                    continue
+
+                mois_list_d = inf_d.get("mois", [5])
+                if not isinstance(mois_list_d, list) or len(mois_list_d) == 0:
+                    mois_list_d = [5]
+
+                mois_imminents = [m for m in mois_list_d if m in fenetre_3_mois]
+                if mois_imminents:
+                    nb_v_d = len(mois_list_d)
+                    coupon_unitaire_d = div_tot_d / nb_v_d
+                    dev_d = "$" if inf_d.get("devise") == "USD" else "€"
+                    fact_d = (1.0 / TAUX_USD_EUR) if dev_d == "$" else 1.0
+                    cours_d = float(prix_tr_pack.get(nom_d, inf_d.get("prix_cible", 50.0)))
+                    cours_eur_d = max(0.01, cours_d * fact_d)
+
+                    qte_det_d = int(pf_pack.get(nom_d, {}).get("qte", 0)) if isinstance(pf_pack.get(nom_d), dict) else 0
+                    coupon_deja_acquis = qte_det_d * coupon_unitaire_d * fact_d
+                    nb_titres_dca = int(budget_dca_pack // cours_eur_d)
+                    boost_coupon_imm = nb_titres_dca * coupon_unitaire_d * fact_d
+                    boost_rente_annuelle = nb_titres_dca * div_tot_d * fact_d
+                    rdt_coupon_seul = (coupon_unitaire_d / cours_d * 100.0) if cours_d > 0 else 0.0
+
+                    detachements_proches.append({
+                        "nom": nom_d,
+                        "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents)),
+                        "en_pf": qte_det_d > 0,
+                        "qte_pf": qte_det_d,
+                        "cours": cours_d,
+                        "dev": dev_d,
+                        "coupon_unit": coupon_unitaire_d,
+                        "rdt_coupon": rdt_coupon_seul,
+                        "acquis_eur": coupon_deja_acquis,
+                        "nb_dca": nb_titres_dca,
+                        "boost_imm_eur": boost_coupon_imm,
+                        "boost_an_eur": boost_rente_annuelle,
+                    })
+
+            detachements_proches.sort(key=lambda x: (not x["en_pf"], -x["boost_imm_eur"]))
+
+            if not detachements_proches:
+                st.info(f"Aucun détachement prévu sur la période {', '.join(noms_fenetre)}.")
+            else:
+                total_acquis_fenetre = sum(d["acquis_eur"] for d in detachements_proches)
+                meilleur_boost = max(detachements_proches, key=lambda x: x["boost_imm_eur"])
+
+                afficher_html(f"""
+                <div class="meteo-bar" style="margin-bottom: 14px;">
+                    <div class="meteo-item" style="border-left-color:#2ecc71;">
+                        <div>
+                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ FENÊTRE DE DÉTACHEMENT (90 JOURS)</div>
+                            <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeurs)</div>
+                        </div>
+                    </div>
+                    <div class="meteo-item" style="border-left-color:#3498db;">
+                        <div>
+                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS SUR LA PÉRIODE</div>
+                            <div style="font-size:1.02em; font-weight:900; color:#2ecc71;">+{total_acquis_fenetre:,.2f} € attendus</div>
+                        </div>
+                    </div>
+                    <div class="meteo-item" style="border-left-color:#f39c12;">
+                        <div>
+                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🚀 MEILLEUR BOOST DCA ({budget_dca_pack:,.0f} €)</div>
+                            <div style="font-size:0.95em; font-weight:900; color:#f39c12;">{meilleur_boost['nom']} : +{meilleur_boost['boost_imm_eur']:,.2f} € dès ce détachement</div>
+                        </div>
+                    </div>
+                </div>
+                """)
+
+                html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>En Portefeuille</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
+                for d_b in detachements_proches:
+                    badge_pf_b = f"<span class='b-green'>{d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>Radar</span>"
+                    html_boost += f"""
+                    <tr>
+                        <td class='r-name'>{d_b['nom']} <span style='font-size:0.78em; opacity:0.65;'>({d_b['cours']:.2f} {d_b['dev']})</span></td>
+                        <td>📅 <b>{d_b['mois_txt']}</b></td>
+                        <td>{badge_pf_b}</td>
+                        <td><b>{d_b['coupon_unit']:.2f} €</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
+                        <td style='color:#2ecc71; font-weight:800;'>+{d_b['acquis_eur']:,.2f} €</td>
+                        <td><b>+{d_b['nb_dca']} action(s)</b></td>
+                        <td><span class='b-orange' style='font-weight:900;'>⚡ +{d_b['boost_imm_eur']:,.2f} €</span></td>
+                        <td style='color:#3498db; font-weight:800;'>+{d_b['boost_an_eur']:,.2f} € / an</td>
+                    </tr>
+                    """
+                html_boost += "</tbody></table>"
+                afficher_html(html_boost)
+
+    # --------------------------------------------------------------------------
+    # 4. ONGLET 1 : BANDEAU D'OPPORTUNITÉS IMMÉDIATES & TIROIR GRAPHIQUE 360°
     # --------------------------------------------------------------------------
     with onglet_radar:
-        # Détection des opportunités (Sous Prix Cible ou Proche Cible <= 2% ou Score >= 70)
         map_t1_sg = {d["NomBrut"]: d for d in liste_t1_pack if isinstance(d, dict) and "NomBrut" in d}
         opportunites_cibles = []
 
@@ -4479,7 +4781,6 @@ try:
         </div>
         """)
 
-        # TIROIR REPLIÉ PAR DÉFAUT POUR NE PAS SURCHARGER LA PAGE 1
         with st.expander("📈 Ouvrir la Station Graphique Interactive 360° (Canal 3A, EMA 2/12, Supports & TradingView)", expanded=False):
             st.caption("Sélectionnez n'importe quelle valeur de votre radar pour visualiser ses courbes EMA 2/12, son couloir de régression linéaire à 3 ans, ses supports/résistances 30J et votre PRU.")
 
@@ -4825,7 +5126,8 @@ try:
                 components.html(tv_html, height=535)
                 st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
 except Exception as e_pack:
-    st.warning(f"Initialisation du Pack Pro ({e_pack})")
+    st.warning(f"Initialisation du Super-Pack Pro V2 ({e_pack})")
+
 
 # Footer & Mentions Légales
 st.markdown("---")
