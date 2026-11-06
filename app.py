@@ -3933,6 +3933,7 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             with st.spinner("🧠 Le Coach IA 2.0 analyse votre portefeuille, vos plus-values actées et les indicateurs techniques en direct..."):
                 reponse_texte = appeler_gemini_coach(prompt_choisi, code_audit_choisi)
                 st.session_state["quota_ia_utilise"] = quota_utilise + 1
+                sauvegarder_dans_cloud()
                 st.session_state["reponse_ia_coach"] = reponse_texte
                 st.session_state["historique_chat_ia"].insert(0, {
                     "heure": datetime.now().strftime("%H:%M"),
