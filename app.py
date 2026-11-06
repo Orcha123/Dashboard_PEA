@@ -4698,126 +4698,125 @@ try:
                 """)
 
     # --------------------------------------------------------------------------
-    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS & BOOST DE COUPON DCA (CORRIGÉ)
+    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS EN TIROIR (REPLIÉ PAR DÉFAUT)
     # --------------------------------------------------------------------------
     if _tab_dividendes is not None:
         with _tab_dividendes:
             st.markdown("---")
-            st.subheader("⏳ Radar des Prochains Détachements & Simulateur « Boost de Coupon DCA »")
-            st.caption("Repérez les dividendes imminents à 90 jours et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
+            with st.expander("⏳ Ouvrir le Radar des Prochains Détachements (90 jours) & Simulateur « Boost de Coupon DCA »", expanded=False):
+                st.caption("Repérez les dividendes imminents à 90 jours et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
 
-            mois_actuel_num = datetime.now().month
-            noms_mois_fr = {
-                1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
-                5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
-                9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
-            }
-            # Fenêtre de 90 jours glissants (Mois en cours + 3 mois suivants pour couvrir tout trimestre)
-            fenetre_90j = [
-                mois_actuel_num,
-                (mois_actuel_num % 12) + 1,
-                ((mois_actuel_num + 1) % 12) + 1,
-                ((mois_actuel_num + 2) % 12) + 1,
-            ]
-            noms_fenetre = [noms_mois_fr[m] for m in fenetre_90j[:3]]
+                mois_actuel_num = datetime.now().month
+                noms_mois_fr = {
+                    1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
+                    5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
+                    9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
+                }
+                fenetre_90j = [
+                    mois_actuel_num,
+                    (mois_actuel_num % 12) + 1,
+                    ((mois_actuel_num + 1) % 12) + 1,
+                    ((mois_actuel_num + 2) % 12) + 1,
+                ]
+                noms_fenetre = [noms_mois_fr[m] for m in fenetre_90j[:3]]
 
-            toutes_actions_div = sorted(list(set(list(WATCHLIST_DEFAUT.keys()) + list(wl_pack.keys()))))
-            detachements_proches = []
+                toutes_actions_div = sorted(list(set(list(WATCHLIST_DEFAUT.keys()) + list(wl_pack.keys()))))
+                detachements_proches = []
 
-            for nom_d in toutes_actions_div:
-                if nom_d in ("Espèces", "_historique_ventes"):
-                    continue
+                for nom_d in toutes_actions_div:
+                    if nom_d in ("Espèces", "_historique_ventes"):
+                        continue
 
-                inf_base_d = wl_pack.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
-                cours_def_d = float(inf_base_d.get("prix_cible", 50.0)) if isinstance(inf_base_d, dict) else 50.0
-                cours_d = float(prix_tr_pack.get(nom_d, cours_def_d))
+                    inf_base_d = wl_pack.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
+                    cours_def_d = float(inf_base_d.get("prix_cible", 50.0)) if isinstance(inf_base_d, dict) else 50.0
+                    cours_d = float(prix_tr_pack.get(nom_d, cours_def_d))
 
-                inf_d, div_tot_d, mois_list_d = _extraire_infos_div_et_mois(nom_d, cours_d)
-                if div_tot_d <= 0:
-                    continue
+                    inf_d, div_tot_d, mois_list_d = _extraire_infos_div_et_mois(nom_d, cours_d)
+                    if div_tot_d <= 0:
+                        continue
 
-                mois_imminents = [m for m in mois_list_d if m in fenetre_90j]
-                if mois_imminents:
-                    nb_v_d = max(1, len(mois_list_d))
-                    coupon_unitaire_d = div_tot_d / nb_v_d
-                    dev_d = "$" if inf_d.get("devise") == "USD" else "€"
-                    fact_d = (1.0 / TAUX_USD_EUR) if dev_d == "$" else 1.0
-                    cours_eur_d = max(0.01, cours_d * fact_d)
+                    mois_imminents = [m for m in mois_list_d if m in fenetre_90j]
+                    if mois_imminents:
+                        nb_v_d = max(1, len(mois_list_d))
+                        coupon_unitaire_d = div_tot_d / nb_v_d
+                        dev_d = "$" if inf_d.get("devise") == "USD" else "€"
+                        fact_d = (1.0 / TAUX_USD_EUR) if dev_d == "$" else 1.0
+                        cours_eur_d = max(0.01, cours_d * fact_d)
 
-                    qte_det_d = int(pf_pack.get(nom_d, {}).get("qte", 0)) if isinstance(pf_pack.get(nom_d), dict) else 0
-                    coupon_deja_acquis = qte_det_d * coupon_unitaire_d * len(mois_imminents) * fact_d
-                    nb_titres_dca = max(1, int(budget_dca_pack // cours_eur_d)) if budget_dca_pack >= cours_eur_d else 0
-                    boost_coupon_imm = nb_titres_dca * coupon_unitaire_d * fact_d
-                    boost_rente_annuelle = nb_titres_dca * div_tot_d * fact_d
-                    rdt_coupon_seul = (coupon_unitaire_d / cours_d * 100.0) if cours_d > 0 else 0.0
+                        qte_det_d = int(pf_pack.get(nom_d, {}).get("qte", 0)) if isinstance(pf_pack.get(nom_d), dict) else 0
+                        coupon_deja_acquis = qte_det_d * coupon_unitaire_d * len(mois_imminents) * fact_d
+                        nb_titres_dca = max(1, int(budget_dca_pack // cours_eur_d)) if budget_dca_pack >= cours_eur_d else 0
+                        boost_coupon_imm = nb_titres_dca * coupon_unitaire_d * fact_d
+                        boost_rente_annuelle = nb_titres_dca * div_tot_d * fact_d
+                        rdt_coupon_seul = (coupon_unitaire_d / cours_d * 100.0) if cours_d > 0 else 0.0
 
-                    # Tri par proximité chronologique du mois de détachement
-                    dist_mois = min((m - mois_actuel_num) % 12 for m in mois_imminents)
+                        dist_mois = min((m - mois_actuel_num) % 12 for m in mois_imminents)
 
-                    detachements_proches.append({
-                        "nom": nom_d,
-                        "dist": dist_mois,
-                        "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents, key=lambda x: (x - mois_actuel_num) % 12)),
-                        "en_pf": qte_det_d > 0,
-                        "qte_pf": qte_det_d,
-                        "cours": cours_d,
-                        "dev": dev_d,
-                        "coupon_unit": coupon_unitaire_d,
-                        "rdt_coupon": rdt_coupon_seul,
-                        "acquis_eur": coupon_deja_acquis,
-                        "nb_dca": nb_titres_dca,
-                        "boost_imm_eur": boost_coupon_imm,
-                        "boost_an_eur": boost_rente_annuelle,
-                    })
+                        detachements_proches.append({
+                            "nom": nom_d,
+                            "dist": dist_mois,
+                            "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents, key=lambda x: (x - mois_actuel_num) % 12)),
+                            "en_pf": qte_det_d > 0,
+                            "qte_pf": qte_det_d,
+                            "cours": cours_d,
+                            "dev": dev_d,
+                            "coupon_unit": coupon_unitaire_d,
+                            "rdt_coupon": rdt_coupon_seul,
+                            "acquis_eur": coupon_deja_acquis,
+                            "nb_dca": nb_titres_dca,
+                            "boost_imm_eur": boost_coupon_imm,
+                            "boost_an_eur": boost_rente_annuelle,
+                        })
 
-            detachements_proches.sort(key=lambda x: (not x["en_pf"], x["dist"], -x["boost_imm_eur"]))
+                detachements_proches.sort(key=lambda x: (not x["en_pf"], x["dist"], -x["boost_imm_eur"]))
 
-            if not detachements_proches:
-                st.info(f"Aucun détachement détecté sur la période {', '.join(noms_fenetre)}.")
-            else:
-                total_acquis_fenetre = sum(d["acquis_eur"] for d in detachements_proches)
-                meilleur_boost = max(detachements_proches, key=lambda x: x["boost_imm_eur"])
+                if not detachements_proches:
+                    st.info(f"Aucun détachement détecté sur la période {', '.join(noms_fenetre)}.")
+                else:
+                    total_acquis_fenetre = sum(d["acquis_eur"] for d in detachements_proches)
+                    meilleur_boost = max(detachements_proches, key=lambda x: x["boost_imm_eur"])
 
-                afficher_html(f"""
-                <div class="meteo-bar" style="margin-bottom: 14px;">
-                    <div class="meteo-item" style="border-left-color:#2ecc71;">
-                        <div>
-                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ RADAR DE DÉTACHEMENTS (90 JOURS GLISSANTS)</div>
-                            <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeur(s) détectée(s))</div>
+                    afficher_html(f"""
+                    <div class="meteo-bar" style="margin-bottom: 14px;">
+                        <div class="meteo-item" style="border-left-color:#2ecc71;">
+                            <div>
+                                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ RADAR DE DÉTACHEMENTS (90 JOURS GLISSANTS)</div>
+                                <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeur(s) détectée(s))</div>
+                            </div>
+                        </div>
+                        <div class="meteo-item" style="border-left-color:#3498db;">
+                            <div>
+                                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS (MON PORTEFEUILLE)</div>
+                                <div style="font-size:1.02em; font-weight:900; color:#2ecc71;">+{total_acquis_fenetre:,.2f} € attendus</div>
+                            </div>
+                        </div>
+                        <div class="meteo-item" style="border-left-color:#f39c12;">
+                            <div>
+                                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🚀 MEILLEUR BOOST DCA ({budget_dca_pack:,.0f} €)</div>
+                                <div style="font-size:0.95em; font-weight:900; color:#f39c12;">{meilleur_boost['nom']} : +{meilleur_boost['boost_imm_eur']:,.2f} € dès ce détachement</div>
+                            </div>
                         </div>
                     </div>
-                    <div class="meteo-item" style="border-left-color:#3498db;">
-                        <div>
-                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS (MON PORTEFEUILLE)</div>
-                            <div style="font-size:1.02em; font-weight:900; color:#2ecc71;">+{total_acquis_fenetre:,.2f} € attendus</div>
-                        </div>
-                    </div>
-                    <div class="meteo-item" style="border-left-color:#f39c12;">
-                        <div>
-                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🚀 MEILLEUR BOOST DCA ({budget_dca_pack:,.0f} €)</div>
-                            <div style="font-size:0.95em; font-weight:900; color:#f39c12;">{meilleur_boost['nom']} : +{meilleur_boost['boost_imm_eur']:,.2f} € dès ce détachement</div>
-                        </div>
-                    </div>
-                </div>
-                """)
+                    """)
 
-                html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>Statut</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
-                for d_b in detachements_proches:
-                    badge_pf_b = f"<span class='b-green'>💼 {d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>🔍 Radar</span>"
-                    html_boost += f"""
-                    <tr>
-                        <td class='r-name'>{d_b['nom']} <span style='font-size:0.78em; opacity:0.65;'>({d_b['cours']:.2f} {d_b['dev']})</span></td>
-                        <td>📅 <b>{d_b['mois_txt']}</b></td>
-                        <td>{badge_pf_b}</td>
-                        <td><b>{d_b['coupon_unit']:.2f} {d_b['dev']}</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
-                        <td style='color:#2ecc71; font-weight:800;'>+{d_b['acquis_eur']:,.2f} €</td>
-                        <td><b>+{d_b['nb_dca']} action(s)</b></td>
-                        <td><span class='b-orange' style='font-weight:900;'>⚡ +{d_b['boost_imm_eur']:,.2f} €</span></td>
-                        <td style='color:#3498db; font-weight:800;'>+{d_b['boost_an_eur']:,.2f} € / an</td>
-                    </tr>
-                    """
-                html_boost += "</tbody></table>"
-                afficher_html(html_boost)
+                    html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>Statut</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
+                    for d_b in detachements_proches:
+                        badge_pf_b = f"<span class='b-green'>💼 {d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>🔍 Radar</span>"
+                        html_boost += f"""
+                        <tr>
+                            <td class='r-name'>{d_b['nom']} <span style='font-size:0.78em; opacity:0.65;'>({d_b['cours']:.2f} {d_b['dev']})</span></td>
+                            <td>📅 <b>{d_b['mois_txt']}</b></td>
+                            <td>{badge_pf_b}</td>
+                            <td><b>{d_b['coupon_unit']:.2f} {d_b['dev']}</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
+                            <td style='color:#2ecc71; font-weight:800;'>+{d_b['acquis_eur']:,.2f} €</td>
+                            <td><b>+{d_b['nb_dca']} action(s)</b></td>
+                            <td><span class='b-orange' style='font-weight:900;'>⚡ +{d_b['boost_imm_eur']:,.2f} €</span></td>
+                            <td style='color:#3498db; font-weight:800;'>+{d_b['boost_an_eur']:,.2f} € / an</td>
+                        </tr>
+                        """
+                    html_boost += "</tbody></table>"
+                    afficher_html(html_boost)
+
 
     # --------------------------------------------------------------------------
     # 4. ONGLET 1 : BANDEAU D'OPPORTUNITÉS IMMÉDIATES & TIROIR GRAPHIQUE 360°
