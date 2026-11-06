@@ -4289,7 +4289,7 @@ with onglet_ventes:
                 st.markdown("---")
 
 # ==============================================================================
-# SUPER-PACK PRO V2 : PEA/CTO, YIELD ON COST, DUEL ETF, BOOST COUPON & TIROIR 360°
+# SUPER-PACK PRO V2 (CORRECTIF DÉTECTION AUTO DES MOIS & DIVIDENDES 90 JOURS)
 # ==============================================================================
 try:
     import math
@@ -4303,7 +4303,97 @@ try:
     hist_prix_pack = globals().get("historiques_prix", {})
     budget_dca_pack = float(st.session_state.get("budget_dca", st.session_state.get("budget_mensuel", 450.0)))
 
-    # Détection automatique des conteneurs des 5 onglets
+    # --- EXTRACTEUR UNIVERSEL DE DIVIDENDES ET DE MOIS DE VERSEMENT ---
+    def _extraire_infos_div_et_mois(nom_act, cours_actuel):
+        inf_def = WATCHLIST_DEFAUT.get(nom_act, {})
+        inf_usr = wl_pack.get(nom_act, {})
+        inf = {}
+        if isinstance(inf_def, dict):
+            inf.update(inf_def)
+        if isinstance(inf_usr, dict):
+            inf.update(inf_usr)
+
+        # 1. Extraction du dividende annuel unitaire
+        div_val = 0.0
+        for k_d in ("div_eur", "dividende", "div", "div_annuel", "dividende_eur", "coupon", "montant_div", "div_brut"):
+            if inf.get(k_d) is not None:
+                try:
+                    v_d = float(str(inf.get(k_d)).replace("€", "").replace("$", "").replace(",", ".").strip())
+                    if v_d > 0:
+                        div_val = v_d
+                        break
+                except Exception:
+                    pass
+
+        # Si seul le rendement (%) est renseigné, on calcule le dividende à partir du cours
+        if div_val <= 0 and cours_actuel > 0:
+            for k_r in ("rendement", "rdt", "yield", "rendement_pct", "div_pct"):
+                if inf.get(k_r) is not None:
+                    try:
+                        v_r = float(str(inf.get(k_r)).replace("%", "").replace(",", ".").strip())
+                        if v_r > 0:
+                            div_val = round(cours_actuel * (v_r / 100.0), 2)
+                            break
+                    except Exception:
+                        pass
+
+        # 2. Extraction des mois de détachement / versement (numéros 1..12 ou noms de mois)
+        raw_m = None
+        for k_m in ("mois", "mois_div", "mois_versement", "mois_detachement", "mois_paiement", "versements", "calendrier", "dates_div"):
+            if inf.get(k_m) is not None and inf.get(k_m) != [] and inf.get(k_m) != "":
+                raw_m = inf.get(k_m)
+                break
+        if raw_m is None and isinstance(inf_def, dict):
+            for k_m in ("mois", "mois_div", "mois_versement", "mois_detachement", "mois_paiement", "versements", "calendrier"):
+                if inf_def.get(k_m):
+                    raw_m = inf_def.get(k_m)
+                    break
+        if raw_m is None:
+            for k_any, v_any in inf.items():
+                if "mois" in str(k_any).lower() and v_any:
+                    raw_m = v_any
+                    break
+
+        map_nom_m = {
+            "jan": 1, "fev": 2, "fév": 2, "feb": 2, "mar": 3, "avr": 4, "apr": 4,
+            "mai": 5, "may": 5, "juin": 6, "jun": 6, "juil": 7, "jul": 7,
+            "aou": 8, "aoû": 8, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12, "déc": 12,
+        }
+
+        def _convertir_en_mois(item):
+            res = []
+            if isinstance(item, (int, float)):
+                m_i = int(item)
+                if 1 <= m_i <= 12:
+                    res.append(m_i)
+            elif isinstance(item, str):
+                s_clean = item.lower().replace("/", " ").replace("-", " ").replace(";", ",").replace("|", ",")
+                for morceau in s_clean.split(","):
+                    morceau = morceau.strip()
+                    if not morceau:
+                        continue
+                    if morceau.isdigit() and 1 <= int(morceau) <= 12:
+                        res.append(int(morceau))
+                    else:
+                        for pref, num_m in map_nom_m.items():
+                            if morceau.startswith(pref) or pref in morceau:
+                                res.append(num_m)
+                                break
+            elif isinstance(item, dict):
+                for k_sub in item.keys():
+                    res.extend(_convertir_en_mois(k_sub))
+            elif isinstance(item, (list, tuple, set)):
+                for sub in item:
+                    res.extend(_convertir_en_mois(sub))
+            return res
+
+        mois_extraits = sorted(list(set(_convertir_en_mois(raw_m)))) if raw_m is not None else [5]
+        if not mois_extraits:
+            mois_extraits = [5]
+
+        return inf, div_val, mois_extraits
+
+    # Détection automatique des conteneurs des onglets
     _onglets_dispo = [v for k, v in globals().items() if k.startswith("onglet_")]
     _tab_portefeuille = (
         globals().get("onglet_portefeuille")
@@ -4349,16 +4439,16 @@ try:
             val_act_pea += pru_p
             lignes_csv.append(f"PEA (EUR);Especes;CASH;1;{pru_p:.2f};EUR;{pru_p:.2f};{pru_p:.2f};0.00;0.00%;0.00%;0.00")
         else:
-            inf_p = wl_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
+            inf_base = wl_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
+            cours_p = float(prix_tr_pack.get(nom_p, inf_base.get("prix_cible", pru_p)))
+            inf_p, div_p, _ = _extraire_infos_div_et_mois(nom_p, cours_p)
+
             sym_p = inf_p.get("symbole", "")
             dev_p = inf_p.get("devise", "EUR")
             est_cto_usd = (dev_p == "USD")
             env_label = "CTO (USD)" if est_cto_usd else "PEA (EUR)"
             dev_sym_p = "$" if est_cto_usd else "€"
             fact_p = (1.0 / TAUX_USD_EUR) if est_cto_usd else 1.0
-
-            cours_p = float(prix_tr_pack.get(nom_p, inf_p.get("prix_cible", pru_p)))
-            div_p = float(inf_p.get("div_eur", 0.0))
 
             val_eur_p = q_p * cours_p * fact_p
             cout_eur_p = q_p * pru_p * fact_p
@@ -4456,7 +4546,6 @@ try:
         use_container_width=True,
     )
 
-    # Calcul des alertes de surpondération (> 20%)
     alertes_surpond = []
     if total_val_actions_pack > 0:
         for nom_sp, val_sp in sorted(poids_actions_pack.items(), key=lambda x: x[1], reverse=True):
@@ -4472,7 +4561,6 @@ try:
             st.markdown("---")
             st.subheader("🏛️ Architecture Patrimoniale : Séparation PEA (€) vs CTO ($), Yield on Cost & Duel ETF")
 
-            # A. SÉPARATION FISCALE PEA (PLAFOND 150 000 €) vs CTO ($)
             plafond_pea_legal = 150000.0
             marge_pea_dispo = max(0.0, plafond_pea_legal - cap_inv_pea)
             pct_plafond_pea = min(100.0, (cap_inv_pea / plafond_pea_legal) * 100.0)
@@ -4522,7 +4610,6 @@ try:
                 </div>
                 """)
 
-            # B. TABLEAU DÉTAILLÉ DU YIELD ON COST (RENDEMENT SUR PRU)
             with st.expander("💎 Ouvrir la Matrice du Rendement sur PRU (Yield on Cost & Années d'Amortissement)", expanded=True):
                 st.caption("Le **Yield on Cost (Rendement sur PRU)** mesure le rendement réel que vous procure chaque action par rapport au prix auquel VOUS l'avez achetée.")
                 html_yoc = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Enveloppe</th><th>Votre PRU</th><th>Cours Actuel</th><th>Dividende / An</th><th>Rdt Marché</th><th>💎 Rdt sur PRU (YoC)</th><th>Bonus PRU</th><th>Rente Annuelle</th><th>Remboursé en</th></tr></thead><tbody>"
@@ -4539,7 +4626,7 @@ try:
                         <td>{badge_env}</td>
                         <td><b>{item_y['pru']:.2f} {item_y['dev_sym']}</b></td>
                         <td>{item_y['cours']:.2f} {item_y['dev_sym']}</td>
-                        <td>{item_y['div_unitaire']:.2f} €</td>
+                        <td>{item_y['div_unitaire']:.2f} {item_y['dev_sym']}</td>
                         <td>{item_y['rdt_marche']:.2f}%</td>
                         <td><span class='{b_yoc}' style='font-weight:900;'>💎 {item_y['yoc']:.2f}%</span></td>
                         <td style='color:{c_bonus}; font-weight:800;'>{item_y['bonus_yoc']:+.2f}%</td>
@@ -4550,7 +4637,6 @@ try:
                 html_yoc += "</tbody></table>"
                 afficher_html(html_yoc)
 
-            # C. DUEL STOCK-PICKING vs GESTION PASSIVE ETF (CW8 / S&P 500 / CAC 40)
             with st.expander("⚔️ Duel de Performance : Mon Stock-Picking (Total Return) vs ETF MSCI World (CW8) & CAC 40", expanded=True):
                 st.caption("Comparaison de votre performance globale réelle (Plus-values latentes + Plus-values actées + Dividendes annuels) face aux grands indices passifs sur 1 an glissant.")
 
@@ -4612,13 +4698,13 @@ try:
                 """)
 
     # --------------------------------------------------------------------------
-    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS & BOOST DE COUPON DCA
+    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS & BOOST DE COUPON DCA (CORRIGÉ)
     # --------------------------------------------------------------------------
     if _tab_dividendes is not None:
         with _tab_dividendes:
             st.markdown("---")
             st.subheader("⏳ Radar des Prochains Détachements & Simulateur « Boost de Coupon DCA »")
-            st.caption("Repérez les dividendes imminents (mois en cours et 2 prochains mois) et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
+            st.caption("Repérez les dividendes imminents à 90 jours et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
 
             mois_actuel_num = datetime.now().month
             noms_mois_fr = {
@@ -4626,44 +4712,52 @@ try:
                 5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
                 9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
             }
-            fenetre_3_mois = [
+            # Fenêtre de 90 jours glissants (Mois en cours + 3 mois suivants pour couvrir tout trimestre)
+            fenetre_90j = [
                 mois_actuel_num,
                 (mois_actuel_num % 12) + 1,
                 ((mois_actuel_num + 1) % 12) + 1,
+                ((mois_actuel_num + 2) % 12) + 1,
             ]
-            noms_fenetre = [noms_mois_fr[m] for m in fenetre_3_mois]
+            noms_fenetre = [noms_mois_fr[m] for m in fenetre_90j[:3]]
 
+            toutes_actions_div = sorted(list(set(list(WATCHLIST_DEFAUT.keys()) + list(wl_pack.keys()))))
             detachements_proches = []
-            for nom_d, inf_d in wl_pack.items():
-                if nom_d in ("Espèces", "_historique_ventes") or not isinstance(inf_d, dict):
+
+            for nom_d in toutes_actions_div:
+                if nom_d in ("Espèces", "_historique_ventes"):
                     continue
-                div_tot_d = float(inf_d.get("div_eur", 0.0))
+
+                inf_base_d = wl_pack.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
+                cours_def_d = float(inf_base_d.get("prix_cible", 50.0)) if isinstance(inf_base_d, dict) else 50.0
+                cours_d = float(prix_tr_pack.get(nom_d, cours_def_d))
+
+                inf_d, div_tot_d, mois_list_d = _extraire_infos_div_et_mois(nom_d, cours_d)
                 if div_tot_d <= 0:
                     continue
 
-                mois_list_d = inf_d.get("mois", [5])
-                if not isinstance(mois_list_d, list) or len(mois_list_d) == 0:
-                    mois_list_d = [5]
-
-                mois_imminents = [m for m in mois_list_d if m in fenetre_3_mois]
+                mois_imminents = [m for m in mois_list_d if m in fenetre_90j]
                 if mois_imminents:
-                    nb_v_d = len(mois_list_d)
+                    nb_v_d = max(1, len(mois_list_d))
                     coupon_unitaire_d = div_tot_d / nb_v_d
                     dev_d = "$" if inf_d.get("devise") == "USD" else "€"
                     fact_d = (1.0 / TAUX_USD_EUR) if dev_d == "$" else 1.0
-                    cours_d = float(prix_tr_pack.get(nom_d, inf_d.get("prix_cible", 50.0)))
                     cours_eur_d = max(0.01, cours_d * fact_d)
 
                     qte_det_d = int(pf_pack.get(nom_d, {}).get("qte", 0)) if isinstance(pf_pack.get(nom_d), dict) else 0
-                    coupon_deja_acquis = qte_det_d * coupon_unitaire_d * fact_d
-                    nb_titres_dca = int(budget_dca_pack // cours_eur_d)
+                    coupon_deja_acquis = qte_det_d * coupon_unitaire_d * len(mois_imminents) * fact_d
+                    nb_titres_dca = max(1, int(budget_dca_pack // cours_eur_d)) if budget_dca_pack >= cours_eur_d else 0
                     boost_coupon_imm = nb_titres_dca * coupon_unitaire_d * fact_d
                     boost_rente_annuelle = nb_titres_dca * div_tot_d * fact_d
                     rdt_coupon_seul = (coupon_unitaire_d / cours_d * 100.0) if cours_d > 0 else 0.0
 
+                    # Tri par proximité chronologique du mois de détachement
+                    dist_mois = min((m - mois_actuel_num) % 12 for m in mois_imminents)
+
                     detachements_proches.append({
                         "nom": nom_d,
-                        "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents)),
+                        "dist": dist_mois,
+                        "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents, key=lambda x: (x - mois_actuel_num) % 12)),
                         "en_pf": qte_det_d > 0,
                         "qte_pf": qte_det_d,
                         "cours": cours_d,
@@ -4676,10 +4770,10 @@ try:
                         "boost_an_eur": boost_rente_annuelle,
                     })
 
-            detachements_proches.sort(key=lambda x: (not x["en_pf"], -x["boost_imm_eur"]))
+            detachements_proches.sort(key=lambda x: (not x["en_pf"], x["dist"], -x["boost_imm_eur"]))
 
             if not detachements_proches:
-                st.info(f"Aucun détachement prévu sur la période {', '.join(noms_fenetre)}.")
+                st.info(f"Aucun détachement détecté sur la période {', '.join(noms_fenetre)}.")
             else:
                 total_acquis_fenetre = sum(d["acquis_eur"] for d in detachements_proches)
                 meilleur_boost = max(detachements_proches, key=lambda x: x["boost_imm_eur"])
@@ -4688,13 +4782,13 @@ try:
                 <div class="meteo-bar" style="margin-bottom: 14px;">
                     <div class="meteo-item" style="border-left-color:#2ecc71;">
                         <div>
-                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ FENÊTRE DE DÉTACHEMENT (90 JOURS)</div>
-                            <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeurs)</div>
+                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ RADAR DE DÉTACHEMENTS (90 JOURS GLISSANTS)</div>
+                            <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeur(s) détectée(s))</div>
                         </div>
                     </div>
                     <div class="meteo-item" style="border-left-color:#3498db;">
                         <div>
-                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS SUR LA PÉRIODE</div>
+                            <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS (MON PORTEFEUILLE)</div>
                             <div style="font-size:1.02em; font-weight:900; color:#2ecc71;">+{total_acquis_fenetre:,.2f} € attendus</div>
                         </div>
                     </div>
@@ -4707,15 +4801,15 @@ try:
                 </div>
                 """)
 
-                html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>En Portefeuille</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
+                html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>Statut</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
                 for d_b in detachements_proches:
-                    badge_pf_b = f"<span class='b-green'>{d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>Radar</span>"
+                    badge_pf_b = f"<span class='b-green'>💼 {d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>🔍 Radar</span>"
                     html_boost += f"""
                     <tr>
                         <td class='r-name'>{d_b['nom']} <span style='font-size:0.78em; opacity:0.65;'>({d_b['cours']:.2f} {d_b['dev']})</span></td>
                         <td>📅 <b>{d_b['mois_txt']}</b></td>
                         <td>{badge_pf_b}</td>
-                        <td><b>{d_b['coupon_unit']:.2f} €</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
+                        <td><b>{d_b['coupon_unit']:.2f} {d_b['dev']}</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
                         <td style='color:#2ecc71; font-weight:800;'>+{d_b['acquis_eur']:,.2f} €</td>
                         <td><b>+{d_b['nb_dca']} action(s)</b></td>
                         <td><span class='b-orange' style='font-weight:900;'>⚡ +{d_b['boost_imm_eur']:,.2f} €</span></td>
@@ -5127,6 +5221,206 @@ try:
                 st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
 except Exception as e_pack:
     st.warning(f"Initialisation du Super-Pack Pro V2 ({e_pack})")
+# ==============================================================================
+# MODULE RECHERCHE YAHOO FINANCE LIVE V2 (ANTI-BLOCAGE + AUTO-DIVIDENDES & MOIS)
+# ==============================================================================
+try:
+    import urllib.request
+    import urllib.parse
+    import json
+
+    def _requete_yahoo_json(url_cible):
+        headers_ liste = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        ]
+        for ua in headers_liste:
+            try:
+                req = urllib.request.Request(
+                    url_cible,
+                    headers={
+                        "User-Agent": ua,
+                        "Accept": "application/json,text/plain,*/*",
+                        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=6) as rep:
+                    return json.loads(rep.read().decode("utf-8"))
+            except Exception:
+                continue
+        return None
+
+    def _rechercher_tickers_yahoo_live(mot_cle):
+        q_enc = urllib.parse.quote(mot_cle.strip())
+        for srv in ("query2", "query1"):
+            url_s = f"https://{srv}.finance.yahoo.com/v1/finance/search?q={q_enc}&quotesCount=12&newsCount=0&listsCount=0"
+            data_s = _requete_yahoo_json(url_s)
+            if data_s and isinstance(data_s.get("quotes"), list) and len(data_s["quotes"]) > 0:
+                resultats = []
+                for item in data_s["quotes"]:
+                    sym = item.get("symbol", "")
+                    qtype = item.get("quoteType", "")
+                    if not sym or qtype not in ("EQUITY", "ETF", "INDEX", ""):
+                        continue
+                    nom_propre = item.get("shortname") or item.get("longname") or sym
+                    bourse = item.get("exchDisp") or item.get("exchange") or ""
+                    resultats.append({
+                        "symbole": sym,
+                        "nom": nom_propre,
+                        "bourse": bourse,
+                        "type": qtype,
+                        "label": f"{nom_propre} ({sym}) — {bourse}",
+                    })
+                if resultats:
+                    return resultats
+        return []
+
+    def _inspecter_action_yahoo_live(symbole):
+        sym_enc = urllib.parse.quote(symbole.strip())
+        for srv in ("query1", "query2"):
+            url_c = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?interval=1d&range=1y&events=div"
+            data_c = _requete_yahoo_json(url_c)
+            try:
+                res0 = data_c["chart"]["result"][0]
+                meta = res0.get("meta", {})
+                closes = res0.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                closes_net = [float(x) for x in closes if x is not None]
+                cours_live = float(meta.get("regularMarketPrice") or (closes_net[-1] if closes_net else 50.0))
+                dev_raw = str(meta.get("currency", "EUR")).upper()
+                devise = "USD" if dev_raw == "USD" else "EUR"
+
+                # Extraction automatique des dividendes et des mois sur les 12 derniers mois
+                divs_dict = res0.get("events", {}).get("dividends", {})
+                div_annuel = 0.0
+                mois_set = set()
+                if isinstance(divs_dict, dict) and divs_dict:
+                    seuil_ts = datetime.now().timestamp() - (375 * 86400)
+                    for _, d_obj in divs_dict.items():
+                        ts_d = float(d_obj.get("date", 0))
+                        mt_d = float(d_obj.get("amount", 0.0))
+                        if ts_d >= seuil_ts and mt_d > 0:
+                            div_annuel += mt_d
+                            mois_set.add(datetime.fromtimestamp(ts_d).month)
+
+                mois_liste = sorted(list(mois_set)) if mois_set else [5]
+                return round(cours_live, 2), devise, round(div_annuel, 2), mois_liste
+            except Exception:
+                continue
+        return 50.0, ("USD" if "." not in symbole else "EUR"), 0.0, [5]
+
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("🔍 Recherche Yahoo Live (Ajouter une Action)", expanded=False):
+        st.caption("Tapez le nom d'une société (ex: *Air Liquide, Rubis, Realty Income, Microsoft*) ou son ticker Yahoo.")
+
+        col_rech_in, col_rech_btn = st.columns([3, 1.2])
+        with col_rech_in:
+            saisie_yahoo = st.text_input(
+                "Nom ou Ticker :",
+                placeholder="Ex: Total, LVMH, O, MSFT...",
+                key="input_yahoo_live_v2",
+                label_visibility="collapsed",
+            )
+        with col_rech_btn:
+            clic_chercher = st.button("🔎", key="btn_yahoo_live_v2", use_container_width=True, help="Lancer la recherche Yahoo Live")
+
+        if saisie_yahoo and (clic_chercher or len(saisie_yahoo.strip()) >= 2):
+            res_y = _rechercher_tickers_yahoo_live(saisie_yahoo)
+            st.session_state["_res_yahoo_live_v2"] = res_y
+
+        liste_res_y = st.session_state.get("_res_yahoo_live_v2", [])
+
+        if saisie_yahoo and not liste_res_y:
+            st.warning("Aucun résultat trouvé. Essayez avec le symbole boursier (ex: AI.PA, TTE.PA, AAPL).")
+        elif liste_res_y:
+            map_lbl_y = {r["label"]: r for r in liste_res_y}
+            choix_lbl_y = st.selectbox("🎯 Résultats Yahoo Finance :", list(map_lbl_y.keys()), key="sel_yahoo_live_v2")
+            item_choisi = map_lbl_y[choix_lbl_y]
+            sym_choisi = item_choisi["symbole"]
+
+            # Récupération automatique des infos live de l'action choisie
+            if st.session_state.get("_dernier_sym_inspecte_v2") != sym_choisi:
+                c_live, dev_live, div_live, mois_live = _inspecter_action_yahoo_live(sym_choisi)
+                st.session_state["_dernier_sym_inspecte_v2"] = sym_choisi
+                st.session_state["_y_cours_v2"] = c_live
+                st.session_state["_y_dev_v2"] = dev_live
+                st.session_state["_y_div_v2"] = div_live
+                st.session_state["_y_mois_v2"] = mois_live
+                st.session_state["_y_nom_v2"] = item_choisi["nom"].split(" ")[0].title() if len(item_choisi["nom"]) > 18 else item_choisi["nom"]
+
+            cours_y = float(st.session_state.get("_y_cours_v2", 50.0))
+            dev_y = st.session_state.get("_y_dev_v2", "EUR")
+            sym_dev_y = "$" if dev_y == "USD" else "€"
+            div_y = float(st.session_state.get("_y_div_v2", 0.0))
+            mois_y = st.session_state.get("_y_mois_v2", [5])
+            rdt_est_y = (div_y / cours_y * 100.0) if cours_y > 0 else 0.0
+
+            st.markdown(
+                f"<div style='background:rgba(46,204,113,0.1); border-left:3px solid #2ecc71; padding:8px 10px; border-radius:6px; font-size:0.84em; margin-bottom:8px;'>"
+                f"🏷️ <b>{sym_choisi}</b> : <b>{cours_y:.2f} {sym_dev_y}</b> en direct<br>"
+                f"💰 Dividende détecté : <b>{div_y:.2f} {sym_dev_y}/an</b> ({rdt_est_y:.2f}%) | Mois : <b>{', '.join(str(m) for m in mois_y)}</b>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            nom_perso_y = st.text_input("Nom dans votre Radar :", value=st.session_state.get("_y_nom_v2", item_choisi["nom"]), key="in_nom_y_v2")
+            col_yc1, col_yc2 = st.columns(2)
+            with col_yc1:
+                cible_perso_y = st.number_input(
+                    f"Prix Cible ({sym_dev_y}) :",
+                    min_value=0.01,
+                    value=round(max(0.01, cours_y * 0.95), 2),
+                    step=0.5,
+                    key="in_cible_y_v2",
+                )
+            with col_yc2:
+                div_perso_y = st.number_input(
+                    f"Dividende/an ({sym_dev_y}) :",
+                    min_value=0.0,
+                    value=float(div_y),
+                    step=0.1,
+                    key="in_div_y_v2",
+                )
+
+            ajout_pf_direct = st.checkbox("💼 Je possède déjà cette action en portefeuille", value=False, key="chk_aj_pf_y_v2")
+            if ajout_pf_direct:
+                col_yp1, col_yp2 = st.columns(2)
+                with col_yp1:
+                    qte_init_y = st.number_input("Quantité détenue :", min_value=1, value=1, step=1, key="in_qte_y_v2")
+                with col_yp2:
+                    pru_init_y = st.number_input(f"Mon PRU ({sym_dev_y}) :", min_value=0.01, value=float(cours_y), step=0.5, key="in_pru_y_v2")
+
+            if st.button("➕ Ajouter au Radar & Sauvegarder Cloud", type="primary", use_container_width=True, key="btn_valider_ajout_y_v2"):
+                nom_final = nom_perso_y.strip() or sym_choisi
+                nouvelle_entree_wl = {
+                    "symbole": sym_choisi,
+                    "prix_cible": float(cible_perso_y),
+                    "div_eur": float(div_perso_y),
+                    "dividende": float(div_perso_y),
+                    "mois": list(mois_y),
+                    "devise": dev_y,
+                    "secteur": "Actions",
+                }
+                if "watchlist" not in st.session_state or not isinstance(st.session_state["watchlist"], dict):
+                    st.session_state["watchlist"] = dict(WATCHLIST_DEFAUT)
+                st.session_state["watchlist"][nom_final] = nouvelle_entree_wl
+                WATCHLIST_DEFAUT[nom_final] = nouvelle_entree_wl
+
+                if "prix_temps_reel" not in st.session_state:
+                    st.session_state["prix_temps_reel"] = {}
+                st.session_state["prix_temps_reel"][nom_final] = float(cours_y)
+
+                if ajout_pf_direct:
+                    if "portefeuille" not in st.session_state or not isinstance(st.session_state["portefeuille"], dict):
+                        st.session_state["portefeuille"] = {}
+                    st.session_state["portefeuille"][nom_final] = {"qte": int(qte_init_y), "pru": float(pru_init_y)}
+                    st.session_state[f"qte_{nom_final}"] = int(qte_init_y)
+                    st.session_state[f"pru_{nom_final}"] = float(pru_init_y)
+
+                sauvegarder_dans_cloud()
+                st.success(f"✅ {nom_final} ({sym_choisi}) ajouté et sauvegardé dans Supabase !")
+                st.rerun()
+except Exception as e_yahoo_v2:
+    st.sidebar.warning(f"Module Recherche Yahoo Live : {e_yahoo_v2}")
 
 
 # Footer & Mentions Légales
