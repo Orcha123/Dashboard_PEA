@@ -285,14 +285,22 @@ if st.session_state.get("quota_ia_date") != date_jour_str:
     st.session_state["quota_ia_utilise"] = 0
 
 def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
-    if isinstance(portefeuille_cloud, dict) and isinstance(portefeuille_cloud.get("_historique_ventes"), list):
-        st.session_state["historique_ventes"] = list(portefeuille_cloud["_historique_ventes"])
+    if isinstance(portefeuille_cloud, dict):
+        if isinstance(portefeuille_cloud.get("_historique_ventes"), list):
+            st.session_state["historique_ventes"] = list(portefeuille_cloud["_historique_ventes"])
+        # Restauration anti-triche (F5) du quota IA journalier depuis le Cloud
+        quota_str = str(portefeuille_cloud.get("_quota_ia", ""))
+        if "|" in quota_str:
+            q_date, q_nb = quota_str.split("|", 1)
+            if q_date == datetime.now().strftime("%Y-%m-%d") and q_nb.isdigit():
+                st.session_state["quota_ia_date"] = q_date
+                st.session_state["quota_ia_utilise"] = max(int(st.session_state.get("quota_ia_utilise", 0)), int(q_nb))
 
-    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k not in ("Espèces", "_historique_ventes")]
+    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k not in ("Espèces", "_historique_ventes", "_quota_ia")]
     toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()) + actions_pf_cloud)
 
     for nom_act in toutes_les_actions:
-        if nom_act in ("Espèces", "_historique_ventes"):
+        if nom_act in ("Espèces", "_historique_ventes", "_quota_ia"):
             continue
         if nom_act in portefeuille_cloud and isinstance(portefeuille_cloud[nom_act], dict):
             st.session_state[f"qte_{nom_act}"] = int(portefeuille_cloud[nom_act].get("qte", 0))
@@ -315,27 +323,36 @@ def sauvegarder_dans_cloud():
             user_id_str = str(st.session_state["user"].id)
             email_str = str(st.session_state["user"].email)
             watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+            date_du_jour = datetime.now().strftime("%Y-%m-%d")
 
             est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
             st.session_state["est_abonne_pro"] = est_pro_val
 
             hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
 
-            # Protection anti-écrasement : si la liste locale est vide à la reconnexion, on conserve les ventes déjà présentes sur Supabase
+            # Protection anti-écrasement : conserve les ventes et le quota IA déjà présents sur Supabase
             if not hist_ventes_actuel and not st.session_state.get("_ventes_videes_volontairement", False):
                 try:
                     res_ex = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
                     if res_ex.data and len(res_ex.data) > 0:
                         pf_ex = res_ex.data[0].get("portefeuille") or {}
-                        if isinstance(pf_ex, dict) and isinstance(pf_ex.get("_historique_ventes"), list):
-                            hist_ventes_actuel = list(pf_ex["_historique_ventes"])
-                            st.session_state["historique_ventes"] = hist_ventes_actuel
+                        if isinstance(pf_ex, dict):
+                            if isinstance(pf_ex.get("_historique_ventes"), list):
+                                hist_ventes_actuel = list(pf_ex["_historique_ventes"])
+                                st.session_state["historique_ventes"] = hist_ventes_actuel
+                            q_str_ex = str(pf_ex.get("_quota_ia", ""))
+                            if "|" in q_str_ex:
+                                q_d_ex, q_n_ex = q_str_ex.split("|", 1)
+                                if q_d_ex == date_du_jour and q_n_ex.isdigit():
+                                    st.session_state["quota_ia_utilise"] = max(int(st.session_state.get("quota_ia_utilise", 0)), int(q_n_ex))
                 except Exception:
                     pass
 
             pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
+            pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
             st.session_state["portefeuille"]["_historique_ventes"] = hist_ventes_actuel
+            st.session_state["portefeuille"]["_quota_ia"] = pf_a_sauver["_quota_ia"]
 
             payload = {
                 "user_id": user_id_str,
@@ -344,19 +361,18 @@ def sauvegarder_dans_cloud():
                 "watchlist": dict(watchlist_actuelle),
                 "portefeuille": pf_a_sauver,
                 "est_abonne_pro": est_pro_val,
-                "updated_at": datetime.utcnow().isoformat()
+                "updated_at": datetime.now().isoformat()
             }
             supabase.table("user_data").upsert(payload).execute()
 
             # Calcul et sauvegarde du Snapshot du jour dans portfolio_history
-            date_du_jour = datetime.utcnow().strftime("%Y-%m-%d")
             cap_investi = 0.0
             val_totale = 0.0
             rente_tot = 0.0
             prix_tr = st.session_state.get("prix_temps_reel", {})
 
             for nom_a, pos_a in pf_a_sauver.items():
-                if nom_a == "_historique_ventes" or not isinstance(pos_a, dict):
+                if nom_a in ("_historique_ventes", "_quota_ia") or not isinstance(pos_a, dict):
                     continue
                 q_a = float(pos_a.get("qte", 0.0))
                 p_a = float(pos_a.get("pru", 0.0))
@@ -1264,8 +1280,10 @@ if st.session_state["user"] is None:
     afficher_html(html_landing_banner)
 
 # ==============================================================================
-# TRAITEMENT DU MOTEUR BOURSIER SUR LA WATCHLIST
+# TRAITEMENT DU MOTEUR BOURSIER SUR LA WATCHLIST (MULTI-THREADING ULTRA-RAPIDE)
 # ==============================================================================
+from concurrent.futures import ThreadPoolExecutor
+
 resultats_analysed = []
 donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
 alertes_detectees = []
@@ -1273,10 +1291,21 @@ historiques_prix = {}
 droites_regression_dict = {}
 prix_temps_reel = {}
 
-for nom, info in list(st.session_state["watchlist"].items()):
-    if nom in ("Espèces", "_historique_ventes") or not isinstance(info, dict) or not info.get("symbole"):
-        continue
-    prix_actuel, closes, hauts, bas = recuperer_donnees(info["symbole"])
+items_wl_valides = [
+    (nom_w, info_w)
+    for nom_w, info_w in list(st.session_state["watchlist"].items())
+    if nom_w not in ("Espèces", "_historique_ventes", "_quota_ia") and isinstance(info_w, dict) and info_w.get("symbole")
+]
+
+# Pré-chargement parallèle simultané de tous les tickers Yahoo Finance
+def _charger_ticker_parallele(item_tuple):
+    nom_t, info_t = item_tuple
+    return nom_t, info_t, recuperer_donnees(info_t["symbole"])
+
+with ThreadPoolExecutor(max_workers=10) as executor:
+    resultats_bruts_yahoo = list(executor.map(_charger_ticker_parallele, items_wl_valides))
+
+for nom, info, (prix_actuel, closes, hauts, bas) in resultats_bruts_yahoo:
     if prix_actuel is None or not closes:
         continue
 
@@ -1286,6 +1315,7 @@ for nom, info in list(st.session_state["watchlist"].items()):
 
     if nom not in actions_autorisees:
         continue
+
 
     devise = info.get("devise", "EUR")
     symbole_devise = "$" if devise == "USD" else "€"
@@ -4368,11 +4398,18 @@ with onglet_ventes:
                     )
                 st.markdown("---")
 # ==============================================================================
+# ==============================================================================
 # SUPER-PACK PRO V2 : PEA/CTO, YIELD ON COST, DUEL ETF, BOOST COUPON & STATION 360°
 # ==============================================================================
 try:
     pf_pack = st.session_state.get("portefeuille", {})
-    wl_pack = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+    wl_complet_pack = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+    # Verrouillage SaaS Freemium : limite le radar d'opportunités et la Station 360° aux actions autorisées
+    if mode_gratuit:
+        wl_pack = {k: v for k, v in wl_complet_pack.items() if k in actions_autorisees}
+    else:
+        wl_pack = wl_complet_pack
+
     prix_tr_pack = st.session_state.get("prix_temps_reel", {})
     hist_ventes_pack = st.session_state.get("historique_ventes", [])
     liste_t1_pack = globals().get("donnees_t1", [])
@@ -4382,14 +4419,13 @@ try:
     # --- EXTRACTEUR UNIVERSEL DE DIVIDENDES ET DE MOIS DE VERSEMENT ---
     def _extraire_infos_div_et_mois(nom_act, cours_actuel):
         inf_def = WATCHLIST_DEFAUT.get(nom_act, {})
-        inf_usr = wl_pack.get(nom_act, {})
+        inf_usr = wl_complet_pack.get(nom_act, {})
         inf = {}
         if isinstance(inf_def, dict):
             inf.update(inf_def)
         if isinstance(inf_usr, dict):
             inf.update(inf_usr)
 
-        # 1. Extraction du dividende annuel unitaire
         div_val = 0.0
         for k_d in ("div_eur", "dividende", "div", "div_annuel", "dividende_eur", "coupon", "montant_div", "div_brut"):
             if inf.get(k_d) is not None:
@@ -4401,7 +4437,6 @@ try:
                 except Exception:
                     pass
 
-        # Si seul le rendement (%) est renseigné, on calcule le dividende à partir du cours
         if div_val <= 0 and cours_actuel > 0:
             for k_r in ("rendement", "rdt", "yield", "rendement_pct", "div_pct"):
                 if inf.get(k_r) is not None:
@@ -4413,7 +4448,6 @@ try:
                     except Exception:
                         pass
 
-        # 2. Extraction des mois de détachement / versement (numéros 1..12 ou noms de mois)
         raw_m = None
         for k_m in ("mois", "mois_div", "mois_versement", "mois_detachement", "mois_paiement", "versements", "calendrier", "dates_div"):
             if inf.get(k_m) is not None and inf.get(k_m) != [] and inf.get(k_m) != "":
@@ -4469,7 +4503,6 @@ try:
 
         return inf, div_val, mois_extraits
 
-    # Détection automatique des conteneurs des onglets
     _onglets_dispo = [v for k, v in globals().items() if k.startswith("onglet_")]
     _tab_portefeuille = (
         globals().get("onglet_portefeuille")
@@ -4503,7 +4536,7 @@ try:
     lignes_csv.append("Enveloppe;Action;Symbole;Quantite;PRU;Devise;Cours Actuel;Valorisation EUR;Plus-Value Latente EUR;Rendement Marche %;Rendement sur PRU (YoC) %;Rente Annuelle EUR")
 
     for nom_p, pos_p in pf_pack.items():
-        if nom_p == "_historique_ventes" or not isinstance(pos_p, dict):
+        if nom_p in ("_historique_ventes", "_quota_ia") or not isinstance(pos_p, dict):
             continue
         q_p = float(pos_p.get("qte", 0.0))
         pru_p = float(pos_p.get("pru", 0.0))
@@ -4515,7 +4548,7 @@ try:
             val_act_pea += pru_p
             lignes_csv.append(f"PEA (EUR);Especes;CASH;1;{pru_p:.2f};EUR;{pru_p:.2f};{pru_p:.2f};0.00;0.00%;0.00%;0.00")
         else:
-            inf_base = wl_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
+            inf_base = wl_complet_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
             cours_p = float(prix_tr_pack.get(nom_p, inf_base.get("prix_cible", pru_p)))
             inf_p, div_p, _ = _extraire_infos_div_et_mois(nom_p, cours_p)
 
@@ -4637,9 +4670,14 @@ try:
             st.markdown("---")
             st.subheader("🏛️ Architecture Patrimoniale : Séparation PEA (€) vs CTO ($), Yield on Cost & Duel ETF")
 
+            # Formule unifiée du Plafond Légal PEA (150 000 €)
             plafond_pea_legal = 150000.0
-            marge_pea_dispo = max(0.0, plafond_pea_legal - cap_inv_pea)
-            pct_plafond_pea = min(100.0, (cap_inv_pea / plafond_pea_legal) * 100.0)
+            pv_actees_tot_pea = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack if v.get("devise", "€") != "$")
+            div_enc_pea = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
+            versements_nets_pea_unifie = max(0.0, cap_inv_pea - max(0.0, pv_actees_tot_pea + div_enc_pea))
+            marge_pea_dispo = max(0.0, plafond_pea_legal - versements_nets_pea_unifie)
+            pct_plafond_pea = min(100.0, (versements_nets_pea_unifie / plafond_pea_legal) * 100.0)
+
             pv_pea = val_act_pea - cap_inv_pea
             pv_cto = val_act_cto - cap_inv_cto
             c_pv_pea = "#2ecc71" if pv_pea >= 0 else "#e74c3c"
@@ -4654,12 +4692,12 @@ try:
                 <div class="argon-card" style="border-top: 3px solid #3498db;">
                     <div class="argon-title">🇫🇷 Poche PEA Éligible (Hors US)</div>
                     <div class="argon-val">{val_act_pea:,.2f} €</div>
-                    <div class="argon-sub">Investi : <b>{cap_inv_pea:,.0f} €</b> | PV : <span style="color:{c_pv_pea}; font-weight:700;">{pv_pea:+,.0f} €</span></div>
+                    <div class="argon-sub">Investi PRU : <b>{cap_inv_pea:,.0f} €</b> | PV : <span style="color:{c_pv_pea}; font-weight:700;">{pv_pea:+,.0f} €</span></div>
                 </div>
                 <div class="argon-card" style="border-top: 3px solid #9b59b6;">
                     <div class="argon-title">🇺🇸 Poche CTO Actions US ($)</div>
                     <div class="argon-val">{val_act_cto:,.2f} €</div>
-                    <div class="argon-sub">Investi : <b>{cap_inv_cto:,.0f} €</b> | PV : <span style="color:{c_pv_cto}; font-weight:700;">{pv_cto:+,.0f} €</span></div>
+                    <div class="argon-sub">Investi PRU : <b>{cap_inv_cto:,.0f} €</b> | PV : <span style="color:{c_pv_cto}; font-weight:700;">{pv_cto:+,.0f} €</span></div>
                 </div>
                 <div class="argon-card" style="border-top: 3px solid #2ecc71;">
                     <div class="argon-title">🛡️ Plafond Légal PEA (150 000 €)</div>
