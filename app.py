@@ -4,6 +4,7 @@ import json
 import math
 import io
 import smtplib
+from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -21,6 +22,7 @@ st.set_page_config(
 )
 
 ADMIN_EMAIL = "orcha12345@gmail.com"
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo")
 
 def afficher_html(html_brut):
     """Supprime les indentations pour empêcher Streamlit d'afficher le HTML en bloc de code."""
@@ -80,6 +82,7 @@ def init_supabase():
 supabase = init_supabase()
 
 def verifier_abonnement_stripe(email_client):
+    """Vérifie sur Stripe si le client possède un abonnement actif et détecte le palier (premium ou pro)."""
     if not email_client or not hasattr(st, "secrets"):
         return False
     cle_stripe = str(st.secrets.get("STRIPE_SECRET_KEY", "")).strip().strip('"').strip("'")
@@ -98,6 +101,14 @@ def verifier_abonnement_stripe(email_client):
                 data_sub = json.loads(resp_s.read().decode("utf-8"))
                 for sub in data_sub.get("data", []):
                     if sub.get("status") in ("active", "trialing"):
+                        try:
+                            montant_cts = int(sub["items"]["data"][0]["price"]["unit_amount"] or 0)
+                            if 0 < montant_cts <= 600:
+                                st.session_state["niveau_abonnement"] = "premium"
+                            else:
+                                st.session_state["niveau_abonnement"] = "pro"
+                        except Exception:
+                            st.session_state["niveau_abonnement"] = "pro"
                         return True
         return False
     except Exception:
@@ -273,6 +284,8 @@ if "budget_dca" not in st.session_state:
     st.session_state["budget_dca"] = 450.0
 if "est_abonne_pro" not in st.session_state:
     st.session_state["est_abonne_pro"] = False
+if "niveau_abonnement" not in st.session_state:
+    st.session_state["niveau_abonnement"] = "gratuit"
 if "reponse_ia_coach" not in st.session_state:
     st.session_state["reponse_ia_coach"] = ""
 if "historique_chat_ia" not in st.session_state:
@@ -288,6 +301,8 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
     if isinstance(portefeuille_cloud, dict):
         if isinstance(portefeuille_cloud.get("_historique_ventes"), list):
             st.session_state["historique_ventes"] = list(portefeuille_cloud["_historique_ventes"])
+        if portefeuille_cloud.get("_niveau_abo") in ("gratuit", "premium", "pro"):
+            st.session_state["niveau_abonnement"] = portefeuille_cloud["_niveau_abo"]
         # Restauration anti-triche (F5) du quota IA journalier depuis le Cloud
         quota_str = str(portefeuille_cloud.get("_quota_ia", ""))
         if "|" in quota_str:
@@ -296,11 +311,11 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
                 st.session_state["quota_ia_date"] = q_date
                 st.session_state["quota_ia_utilise"] = max(int(st.session_state.get("quota_ia_utilise", 0)), int(q_nb))
 
-    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k not in ("Espèces", "_historique_ventes", "_quota_ia")]
+    actions_pf_cloud = [k for k in portefeuille_cloud.keys() if k not in CLES_TECHNIQUES_PF]
     toutes_les_actions = set(list(watchlist_courante.keys()) + list(PORTEFEUILLE_DEFAUT.keys()) + actions_pf_cloud)
 
     for nom_act in toutes_les_actions:
-        if nom_act in ("Espèces", "_historique_ventes", "_quota_ia"):
+        if nom_act in CLES_TECHNIQUES_PF:
             continue
         if nom_act in portefeuille_cloud and isinstance(portefeuille_cloud[nom_act], dict):
             st.session_state[f"qte_{nom_act}"] = int(portefeuille_cloud[nom_act].get("qte", 0))
@@ -330,7 +345,7 @@ def sauvegarder_dans_cloud():
 
             hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
 
-            # Protection anti-écrasement : conserve les ventes et le quota IA déjà présents sur Supabase
+            # Protection anti-écrasement : conserve les ventes, le quota IA et le niveau d'abonnement sur Supabase
             if not hist_ventes_actuel and not st.session_state.get("_ventes_videes_volontairement", False):
                 try:
                     res_ex = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
@@ -340,6 +355,8 @@ def sauvegarder_dans_cloud():
                             if isinstance(pf_ex.get("_historique_ventes"), list):
                                 hist_ventes_actuel = list(pf_ex["_historique_ventes"])
                                 st.session_state["historique_ventes"] = hist_ventes_actuel
+                            if pf_ex.get("_niveau_abo") in ("premium", "pro") and st.session_state.get("niveau_abonnement") == "gratuit":
+                                st.session_state["niveau_abonnement"] = pf_ex["_niveau_abo"]
                             q_str_ex = str(pf_ex.get("_quota_ia", ""))
                             if "|" in q_str_ex:
                                 q_d_ex, q_n_ex = q_str_ex.split("|", 1)
@@ -348,11 +365,14 @@ def sauvegarder_dans_cloud():
                 except Exception:
                     pass
 
+            niv_abo_sauve = "pro" if email_str.lower() == ADMIN_EMAIL.lower() else str(st.session_state.get("niveau_abonnement", "pro" if est_pro_val else "gratuit"))
             pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
             pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
+            pf_a_sauver["_niveau_abo"] = niv_abo_sauve
             st.session_state["portefeuille"]["_historique_ventes"] = hist_ventes_actuel
             st.session_state["portefeuille"]["_quota_ia"] = pf_a_sauver["_quota_ia"]
+            st.session_state["portefeuille"]["_niveau_abo"] = niv_abo_sauve
 
             payload = {
                 "user_id": user_id_str,
@@ -372,7 +392,7 @@ def sauvegarder_dans_cloud():
             prix_tr = st.session_state.get("prix_temps_reel", {})
 
             for nom_a, pos_a in pf_a_sauver.items():
-                if nom_a in ("_historique_ventes", "_quota_ia") or not isinstance(pos_a, dict):
+                if nom_a in CLES_TECHNIQUES_PF or not isinstance(pos_a, dict):
                     continue
                 q_a = float(pos_a.get("qte", 0.0))
                 p_a = float(pos_a.get("pru", 0.0))
@@ -444,14 +464,20 @@ else:
                         est_pro_bdd = bool(profil.get("est_abonne_pro", False))
                         if email_connecte == ADMIN_EMAIL.lower():
                             est_pro_bdd = True
+                            st.session_state["niveau_abonnement"] = "pro"
                         elif not est_pro_bdd and verifier_abonnement_stripe(email_connecte):
                             est_pro_bdd = True
                             supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(res.user.id)).execute()
+                        elif est_pro_bdd:
+                            abo_stocke = portefeuille_cloud.get("_niveau_abo") if isinstance(portefeuille_cloud, dict) else None
+                            st.session_state["niveau_abonnement"] = abo_stocke if abo_stocke in ("premium", "pro") else "pro"
 
                         st.session_state["est_abonne_pro"] = est_pro_bdd
                         synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
                     else:
-                        st.session_state["est_abonne_pro"] = (email_connecte == ADMIN_EMAIL.lower())
+                        est_adm = (email_connecte == ADMIN_EMAIL.lower())
+                        st.session_state["est_abonne_pro"] = est_adm
+                        st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
                         sauvegarder_dans_cloud()
                     st.rerun()
                 except Exception:
@@ -466,7 +492,9 @@ else:
                         st.session_state["user"] = res.user
                         st.session_state["watchlist"] = WATCHLIST_DEFAUT.copy()
                         st.session_state["portefeuille"] = PORTEFEUILLE_DEFAUT.copy()
-                        st.session_state["est_abonne_pro"] = (str(res.user.email).lower() == ADMIN_EMAIL.lower())
+                        est_adm = (str(res.user.email).lower() == ADMIN_EMAIL.lower())
+                        st.session_state["est_abonne_pro"] = est_adm
+                        st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
                         sauvegarder_dans_cloud()
                         st.sidebar.success("Compte créé avec succès !")
                         st.rerun()
@@ -489,13 +517,19 @@ else:
         est_admin_connecte = (email_courant.lower() == ADMIN_EMAIL.lower())
         if est_admin_connecte:
             st.session_state["est_abonne_pro"] = True
+            st.session_state["niveau_abonnement"] = "pro"
 
-        if st.query_params.get("paiement") == "succes" and not st.session_state.get("est_abonne_pro", False):
+        param_paiement = str(st.query_params.get("paiement", "")).lower()
+        if param_paiement in ("succes", "premium", "pro") and not st.session_state.get("est_abonne_pro", False):
             if verifier_abonnement_stripe(email_courant):
                 st.session_state["est_abonne_pro"] = True
-                supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(st.session_state["user"].id)).execute()
+                if param_paiement == "premium":
+                    st.session_state["niveau_abonnement"] = "premium"
+                elif param_paiement == "pro":
+                    st.session_state["niveau_abonnement"] = "pro"
+                sauvegarder_dans_cloud()
                 st.balloons()
-                st.sidebar.success("🎉 Paiement validé ! Abonnement Boursy Pro actif.")
+                st.sidebar.success("🎉 Paiement validé ! Votre abonnement est actif.")
 
         st.sidebar.success(f"Connecté : **{email_courant}**")
 
@@ -525,6 +559,7 @@ else:
             supabase.auth.sign_out()
             st.session_state["user"] = None
             st.session_state["est_abonne_pro"] = False
+            st.session_state["niveau_abonnement"] = "gratuit"
             st.rerun()
 
 WATCHLIST = st.session_state["watchlist"]
@@ -778,7 +813,6 @@ def rechercher_actions_yahoo_live(requete):
     resultats = []
     symboles_vus = set()
 
-    # 1. Recherche instantanée dans le catalogue local (+100 valeurs)
     for lib_cat, (sym_c, dev_c, sec_c) in CATALOGUE_ACTIONS.items():
         nom_c = lib_cat.rsplit(" (", 1)[0]
         if q_low in nom_c.lower() or q_low in sym_c.lower() or q_low in sec_c.lower():
@@ -791,7 +825,6 @@ def rechercher_actions_yahoo_live(requete):
             })
             symboles_vus.add(sym_c.upper())
 
-    # 2. Recherche en direct sur Yahoo Finance (query2 + query1 en secours)
     q_enc = urllib.parse.quote(q_clean)
     for host_y in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
         url = f"https://{host_y}/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
@@ -979,9 +1012,6 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
 # --- GESTION SAAS 3 NIVEAUX (GRATUIT 0€ / PREMIUM 4,90€ / PRO 8,90€) & CONSOLE ADMIN ---
 st.sidebar.markdown("---")
 st.sidebar.header("💎 Offres & Abonnement")
-
-if "niveau_abonnement" not in st.session_state:
-    st.session_state["niveau_abonnement"] = "pro" if st.session_state.get("est_abonne_pro", False) else "gratuit"
 
 est_admin = (
     st.session_state.get("user") is not None
@@ -1336,8 +1366,6 @@ if st.session_state["user"] is None:
 # ==============================================================================
 # TRAITEMENT DU MOTEUR BOURSIER SUR LA WATCHLIST (MULTI-THREADING ULTRA-RAPIDE)
 # ==============================================================================
-from concurrent.futures import ThreadPoolExecutor
-
 resultats_analysed = []
 donnees_t1, donnees_t2, donnees_t3, donnees_t4 = [], [], [], []
 alertes_detectees = []
@@ -1348,10 +1376,9 @@ prix_temps_reel = {}
 items_wl_valides = [
     (nom_w, info_w)
     for nom_w, info_w in list(st.session_state["watchlist"].items())
-    if nom_w not in ("Espèces", "_historique_ventes", "_quota_ia") and isinstance(info_w, dict) and info_w.get("symbole")
+    if nom_w not in CLES_TECHNIQUES_PF and isinstance(info_w, dict) and info_w.get("symbole")
 ]
 
-# Pré-chargement parallèle simultané de tous les tickers Yahoo Finance
 def _charger_ticker_parallele(item_tuple):
     nom_t, info_t = item_tuple
     return nom_t, info_t, recuperer_donnees(info_t["symbole"])
@@ -1369,7 +1396,6 @@ for nom, info, (prix_actuel, closes, hauts, bas) in resultats_bruts_yahoo:
 
     if nom not in actions_autorisees:
         continue
-
 
     devise = info.get("devise", "EUR")
     symbole_devise = "$" if devise == "USD" else "€"
@@ -1565,7 +1591,7 @@ onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia, onglet_ventes =
 # ------------------------------------------------------------------------------
 with onglet_radar:
     if mode_gratuit:
-        st.warning("🔒 **Aperçu Découverte (Freemium)** : 2 valeurs affichées. Passez à Boursy Pro dans la barre latérale pour débloquer l'ensemble du catalogue PEA & US !")
+        st.warning("🌱 **Forfait Gratuit (0 €)** : 2 valeurs affichées. Passez à **Premium (4,90 €/mois)** ou **Pro (8,90 €/mois)** dans le menu de gauche pour débloquer l'ensemble du catalogue PEA & US !")
 
     nb_opportunites = sum(1 for d in donnees_t1 if "ACHAT" in d["Décision"] or "ACCUMULATION" in d["Décision"])
     meilleure_opp = candidats_tries[0]["nom"] if candidats_tries else "Aucune"
@@ -1615,7 +1641,13 @@ with onglet_radar:
 
     with col_al_exp:
         with st.expander(f"🔔 Centre d'Alertes & Notification Email ({len(alertes_detectees)} signal/signaux)", expanded=True):
-            if not alertes_detectees:
+            if not est_pro_max:
+                afficher_verrou_saas(
+                    "Alertes Prix Cibles & Notifications Email",
+                    "👑 Offre Pro (8,90 €/mois)",
+                    "Recevez directement par email vos alertes dès qu'une action passe sous votre prix cible ou déclenche un signal d'Achat Fort."
+                )
+            elif not alertes_detectees:
                 st.info("Aucune valeur n'est actuellement sous son prix cible ou en signal d'Achat Fort.")
             else:
                 for al in alertes_detectees[:4]:
@@ -1704,411 +1736,432 @@ with onglet_radar:
     ])
 
     with tab_val:
-        st.caption("📉 **Classement Value automatique :** Trié de la **plus forte décote** (en haut) jusqu'aux valeurs **les plus chères** (en bas).")
-        donnees_t2_triees = sorted(donnees_t2, key=lambda x: (x["OrdreStatut"], x["EcartNum"]))
-        html_t2 = "<table class='r-table'><thead><tr><th style='width:65px;'>Rang</th><th style='text-align: left;'>Actif</th><th>Cours Actuel</th><th>Tendance Linéaire 3A</th><th>Écart à la Tendance</th><th>Diagnostic Value</th></tr></thead><tbody>"
-        for rang_idx, d in enumerate(donnees_t2_triees, start=1):
-            st_val = d["Statut Value"]
-            b_val = "b-green" if "DÉCOTE" in st_val else ("b-yellow" if "SOUS-ÉVALUÉE" in st_val else "b-neutral")
-            c_ecart = "#2ecc71" if d["EcartNum"] <= -10 else ("#f39c12" if d["EcartNum"] < 0 else "#e74c3c")
-            badge_rang = f"<span class='b-green'>#{rang_idx}</span>" if d["OrdreStatut"] == 0 else (f"<span class='b-yellow'>#{rang_idx}</span>" if d["OrdreStatut"] == 1 else f"<span class='b-neutral'>#{rang_idx}</span>")
-            html_t2 += f"<tr><td>{badge_rang}</td><td class='r-name'>{d['Actif']}</td><td><b>{d['Prix']}</b></td><td>{d['Tendance 3A']}</td><td style='color:{c_ecart}; font-weight:800;'>{d['Écart %']}</td><td><span class='{b_val}'>{st_val}</span></td></tr>"
-        html_t2 += "</tbody></table>"
-        afficher_html(html_t2)
+        if mode_gratuit:
+            afficher_verrou_saas(
+                "Tableau 2 : Analyse Value & Canal de Régression Linéaire sur 3 Ans",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Repérez instantanément les actions historiquement décotées par rapport à leur tendance centrale à 3 ans."
+            )
+        else:
+            st.caption("📉 **Classement Value automatique :** Trié de la **plus forte décote** (en haut) jusqu'aux valeurs **les plus chères** (en bas).")
+            donnees_t2_triees = sorted(donnees_t2, key=lambda x: (x["OrdreStatut"], x["EcartNum"]))
+            html_t2 = "<table class='r-table'><thead><tr><th style='width:65px;'>Rang</th><th style='text-align: left;'>Actif</th><th>Cours Actuel</th><th>Tendance Linéaire 3A</th><th>Écart à la Tendance</th><th>Diagnostic Value</th></tr></thead><tbody>"
+            for rang_idx, d in enumerate(donnees_t2_triees, start=1):
+                st_val = d["Statut Value"]
+                b_val = "b-green" if "DÉCOTE" in st_val else ("b-yellow" if "SOUS-ÉVALUÉE" in st_val else "b-neutral")
+                c_ecart = "#2ecc71" if d["EcartNum"] <= -10 else ("#f39c12" if d["EcartNum"] < 0 else "#e74c3c")
+                badge_rang = f"<span class='b-green'>#{rang_idx}</span>" if d["OrdreStatut"] == 0 else (f"<span class='b-yellow'>#{rang_idx}</span>" if d["OrdreStatut"] == 1 else f"<span class='b-neutral'>#{rang_idx}</span>")
+                html_t2 += f"<tr><td>{badge_rang}</td><td class='r-name'>{d['Actif']}</td><td><b>{d['Prix']}</b></td><td>{d['Tendance 3A']}</td><td style='color:{c_ecart}; font-weight:800;'>{d['Écart %']}</td><td><span class='{b_val}'>{st_val}</span></td></tr>"
+            html_t2 += "</tbody></table>"
+            afficher_html(html_t2)
 
-        if droites_regression_dict:
-            st.markdown("#### 📈 Visualisation du Canal de Régression Linéaire sur 3 Ans")
-            noms_tries_value = [d["NomBrut"] for d in donnees_t2_triees if d["NomBrut"] in droites_regression_dict]
-            act_choisie_graph = st.selectbox("Choisir une action à inspecter graphiquement (classées par décote) :", noms_tries_value)
-            closes_g, reg_g, std_g, sym_g = droites_regression_dict[act_choisie_graph]
-            df_graph = pd.DataFrame({
-                "Cours Clôture": closes_g,
-                "Tendance Centrale 3A": reg_g,
-                "Borne Haute (+2σ)": [r + 2 * std_g for r in reg_g],
-                "Borne Basse d'Achat (-2σ)": [r - 2 * std_g for r in reg_g],
-            })
-            st.line_chart(df_graph)
+            if droites_regression_dict:
+                st.markdown("#### 📈 Visualisation du Canal de Régression Linéaire sur 3 Ans")
+                noms_tries_value = [d["NomBrut"] for d in donnees_t2_triees if d["NomBrut"] in droites_regression_dict]
+                act_choisie_graph = st.selectbox("Choisir une action à inspecter graphiquement (classées par décote) :", noms_tries_value)
+                closes_g, reg_g, std_g, sym_g = droites_regression_dict[act_choisie_graph]
+                df_graph = pd.DataFrame({
+                    "Cours Clôture": closes_g,
+                    "Tendance Centrale 3A": reg_g,
+                    "Borne Haute (+2σ)": [r + 2 * std_g for r in reg_g],
+                    "Borne Basse d'Achat (-2σ)": [r - 2 * std_g for r in reg_g],
+                })
+                st.line_chart(df_graph)
 
     with tab_tech:
-        html_guide_tech = """
-        <div class="argon-grid" style="margin-bottom: 14px;">
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#2ecc71;">📏 1. Canal 30 Jours (Support / Résistance)</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Le <b>Support</b> est le plancher où les acheteurs défendent le titre. Plus la jauge est proche de <b>0% (Bas)</b>, meilleur est le point d'entrée.</div>
+        if mode_gratuit:
+            afficher_verrou_saas(
+                "Tableau 3 : Indicateurs Techniques Avancés (Supports 30J, Bollinger, Stochastique & ATR)",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Obtenez le Score de Timing court terme et le prix exact d'ordre limite conseillé pour chaque action."
+            )
+        else:
+            html_guide_tech = """
+            <div class="argon-grid" style="margin-bottom: 14px;">
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#2ecc71;">📏 1. Canal 30 Jours (Support / Résistance)</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Le <b>Support</b> est le plancher où les acheteurs défendent le titre. Plus la jauge est proche de <b>0% (Bas)</b>, meilleur est le point d'entrée.</div>
+                </div>
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#3498db;">🌊 2. Bandes de Bollinger (20 Jours)</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Contiennent 95% des variations normales. Un cours sur le <b>Bas de Bollinger</b> indique un titre statistiquement bradé à court terme.</div>
+                </div>
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#f39c12;">⚡ 3. Oscillateur Stochastique (14J)</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la vitesse d'essoufflement. <b>&lt; 20% (Survente)</b> = vendeurs épuisés, rebond proche. <b>&gt; 80% (Surachat)</b> = risque de repli.</div>
+                </div>
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#9b59b6;">🎯 4. ATR & Ordre Limite Conseillé</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée. Il permet de calculer le <b>Prix d'Ordre Limite idéal</b> à placer sur votre PEA/CTO.</div>
+                </div>
             </div>
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#3498db;">🌊 2. Bandes de Bollinger (20 Jours)</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Contiennent 95% des variations normales. Un cours sur le <b>Bas de Bollinger</b> indique un titre statistiquement bradé à court terme.</div>
-            </div>
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#f39c12;">⚡ 3. Oscillateur Stochastique (14J)</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la vitesse d'essoufflement. <b>&lt; 20% (Survente)</b> = vendeurs épuisés, rebond proche. <b>&gt; 80% (Surachat)</b> = risque de repli.</div>
-            </div>
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#9b59b6;">🎯 4. ATR & Ordre Limite Conseillé</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée. Il permet de calculer le <b>Prix d'Ordre Limite idéal</b> à placer sur votre PEA/CTO.</div>
-            </div>
-        </div>
-        """
-        afficher_html(html_guide_tech)
-        st.caption("🎯 **Classement par Opportunité de Timing :** Trié de la **meilleure fenêtre d'entrée court terme (#1 en haut)** jusqu'aux valeurs **en surchauffe (en bas)**.")
-
-        donnees_t4_enrichies = []
-        for d in donnees_t4:
-            try:
-                parts_prix = d["Prix"].split()
-                prix_f = float(parts_prix[0])
-                sym_dev = parts_prix[1] if len(parts_prix) > 1 else "€"
-                sup_f = float(d["Support 30J"].split()[0])
-                res_f = float(d["Résistance 30J"].split()[0])
-            except Exception:
-                prix_f, sym_dev, sup_f, res_f = 50.0, "€", 45.0, 55.0
-
-            try:
-                bloc_b = d["Bollinger (20J)"].split("]")[0].replace("[", "")
-                b_inf_s, b_sup_s = bloc_b.split(" - ")
-                borne_inf_f, borne_sup_f = float(b_inf_s), float(b_sup_s)
-            except Exception:
-                borne_inf_f, borne_sup_f = sup_f, res_f
-
-            try:
-                stoch_f = float(d["Stochastique"].split("%")[0])
-            except Exception:
-                stoch_f = 50.0
-
-            try:
-                atr_f = float(d["Volatilité ATR"].split("%")[0])
-            except Exception:
-                atr_f = 1.5
-
-            amp_30j = max(0.01, res_f - sup_f)
-            pos_canal_pct = max(0.0, min(100.0, ((prix_f - sup_f) / amp_30j) * 100.0))
-
-            amp_boll = max(0.01, borne_sup_f - borne_inf_f)
-            pos_boll_pct = max(0.0, min(100.0, ((prix_f - borne_inf_f) / amp_boll) * 100.0))
-
-            rebond_res_pct = ((res_f - prix_f) / prix_f * 100.0) if prix_f > 0 else 0.0
-
-            score_timing = int(round(100.0 - (0.40 * pos_canal_pct + 0.35 * stoch_f + 0.25 * pos_boll_pct)))
-            score_timing = max(5, min(98, score_timing))
-
-            plancher_tech = max(sup_f, min(prix_f, (sup_f + borne_inf_f) / 2.0))
-
-            if pos_boll_pct <= 22:
-                diag_boll = f"<span class='b-green'>🟢 Bas de canal ({borne_inf_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Prix comprimé (Rebond probable)</span>"
-            elif pos_boll_pct >= 82:
-                diag_boll = f"<span class='b-red'>🔴 Haut de canal ({borne_sup_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Extension haute (Prudence)</span>"
-            else:
-                diag_boll = f"<span class='b-neutral'>⚪ Zone neutre [{borne_inf_f:.1f} - {borne_sup_f:.1f}]</span><br><span style='font-size:0.78em; opacity:0.8;'>Position : {pos_boll_pct:.0f}% de l'élastique</span>"
-
-            if stoch_f <= 20:
-                diag_stoch = f"<span class='b-green'>🟢 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Vendeurs épuisés = Signal Achat</span>"
-            elif stoch_f <= 38:
-                diag_stoch = f"<span class='b-blue'>🔵 {stoch_f:.0f}% (Zone basse)</span><br><span style='font-size:0.78em; opacity:0.8;'>Point d'entrée favorable</span>"
-            elif stoch_f >= 80:
-                diag_stoch = f"<span class='b-red'>🔴 {stoch_f:.0f}% (Surachat)</span><br><span style='font-size:0.78em; opacity:0.8;'>Surchauffe court terme</span>"
-            else:
-                diag_stoch = f"<span class='b-neutral'>⚪ {stoch_f:.0f}% (Neutre)</span><br><span style='font-size:0.78em; opacity:0.8;'>Tendance en cours</span>"
-
-            if atr_f < 1.3:
-                profil_atr = "🛡️ Calme"
-            elif atr_f <= 2.2:
-                profil_atr = "⚖️ Modérée"
-            else:
-                profil_atr = "⚡ Nerveuse"
-
-            if score_timing >= 68:
-                ordre_statut = 0
-                action_tech = f"<span class='b-green'>🔥 FENÊTRE DE TIR IDÉALE</span><br><span style='font-size:0.80em;'>Achat possible au cours actuel (<b>{prix_f:.2f} {sym_dev}</b>)</span>"
-            elif score_timing >= 50:
-                ordre_statut = 1
-                action_tech = f"<span class='b-blue'>✅ ACCUMULATION DCA</span><br><span style='font-size:0.80em;'>Ou ordre limite vers <b>{plancher_tech:.2f} {sym_dev}</b></span>"
-            elif score_timing >= 33:
-                ordre_statut = 2
-                action_tech = f"<span class='b-yellow'>⏳ ATTENDRE UN REPLI</span><br><span style='font-size:0.80em;'>Placer ordre limite à <b>{plancher_tech:.2f} {sym_dev}</b></span>"
-            else:
-                ordre_statut = 3
-                cible_repli = (sup_f + res_f) / 2.0
-                action_tech = f"<span class='b-red'>⚠️ SURCHAUFFE (TROP HAUT)</span><br><span style='font-size:0.80em;'>Attendre retour vers <b>{cible_repli:.2f} {sym_dev}</b></span>"
-
-            donnees_t4_enrichies.append({
-                "Actif": d["Actif"],
-                "Prix": d["Prix"],
-                "Support": d["Support 30J"],
-                "Resistance": d["Résistance 30J"],
-                "PosCanal": pos_canal_pct,
-                "RebondPct": rebond_res_pct,
-                "DiagBoll": diag_boll,
-                "DiagStoch": diag_stoch,
-                "ATR": f"{atr_f:.2f}% / j ({profil_atr})",
-                "ScoreTiming": score_timing,
-                "OrdreStatut": ordre_statut,
-                "ActionTech": action_tech,
-            })
-
-        donnees_t4_enrichies.sort(key=lambda x: (x["OrdreStatut"], -x["ScoreTiming"]))
-
-        html_t4 = """
-        <table class='r-table'>
-        <thead>
-            <tr>
-                <th style='width:55px;'>Rang</th>
-                <th style='text-align: left;'>Actif</th>
-                <th style='width:230px;'>Position dans le Canal 30J<br><span style='font-size:0.82em; opacity:0.75;'>(Support ➔ Cours ➔ Résistance)</span></th>
-                <th>Marge avant Résistance</th>
-                <th>Diagnostic Bollinger (20J)</th>
-                <th>Momentum Stochastique</th>
-                <th>Volatilité (ATR)</th>
-                <th style='width:125px;'>Score Timing</th>
-                <th>Décision & Ordre Limite</th>
-            </tr>
-        </thead>
-        <tbody>
-        """
-        for idx_r, item_t in enumerate(donnees_t4_enrichies, start=1):
-            pos_c = item_t["PosCanal"]
-            c_jauge_c = "#2ecc71" if pos_c <= 35 else ("#3498db" if pos_c <= 65 else "#e74c3c")
-            sc_t = item_t["ScoreTiming"]
-            c_sc_t = "#2ecc71" if sc_t >= 68 else ("#3498db" if sc_t >= 50 else ("#f39c12" if sc_t >= 33 else "#e74c3c"))
-            b_rang = "b-green" if item_t["OrdreStatut"] == 0 else ("b-blue" if item_t["OrdreStatut"] == 1 else ("b-yellow" if item_t["OrdreStatut"] == 2 else "b-neutral"))
-
-            html_t4 += f"""
-            <tr>
-                <td><span class='{b_rang}'>#{idx_r}</span></td>
-                <td class='r-name'>{item_t['Actif']}<br><span style='font-size:0.84em; opacity:0.8;'>Cours : <b>{item_t['Prix']}</b></span></td>
-                <td>
-                    <div style='display:flex; justify-content:space-between; font-size:0.78em; font-weight:700;'>
-                        <span style='color:#2ecc71;'>Sup: {item_t['Support']}</span>
-                        <span>{pos_c:.0f}%</span>
-                        <span style='color:#e74c3c;'>Rés: {item_t['Resistance']}</span>
-                    </div>
-                    <div class='score-bg'><div style='width:{max(4, min(100, pos_c))}%; background:{c_jauge_c}; height:100%;'></div></div>
-                </td>
-                <td style='color:#2ecc71; font-weight:800;'>+{item_t['RebondPct']:.1f}%<br><span style='font-size:0.76em; opacity:0.75; font-weight:600;'>potentiel 30J</span></td>
-                <td>{item_t['DiagBoll']}</td>
-                <td>{item_t['DiagStoch']}</td>
-                <td><span class='b-purple'>{item_t['ATR']}</span></td>
-                <td>
-                    <div style='font-weight:800; font-size:0.9em;'>{sc_t} / 100</div>
-                    <div class='score-bg'><div style='width:{sc_t}%; background:{c_sc_t}; height:100%;'></div></div>
-                </td>
-                <td>{item_t['ActionTech']}</td>
-            </tr>
             """
-        html_t4 += "</tbody></table>"
-        afficher_html(html_t4)
+            afficher_html(html_guide_tech)
+            st.caption("🎯 **Classement par Opportunité de Timing :** Trié de la **meilleure fenêtre d'entrée court terme (#1 en haut)** jusqu'aux valeurs **en surchauffe (en bas)**.")
+
+            donnees_t4_enrichies = []
+            for d in donnees_t4:
+                try:
+                    parts_prix = d["Prix"].split()
+                    prix_f = float(parts_prix[0])
+                    sym_dev = parts_prix[1] if len(parts_prix) > 1 else "€"
+                    sup_f = float(d["Support 30J"].split()[0])
+                    res_f = float(d["Résistance 30J"].split()[0])
+                except Exception:
+                    prix_f, sym_dev, sup_f, res_f = 50.0, "€", 45.0, 55.0
+
+                try:
+                    bloc_b = d["Bollinger (20J)"].split("]")[0].replace("[", "")
+                    b_inf_s, b_sup_s = bloc_b.split(" - ")
+                    borne_inf_f, borne_sup_f = float(b_inf_s), float(b_sup_s)
+                except Exception:
+                    borne_inf_f, borne_sup_f = sup_f, res_f
+
+                try:
+                    stoch_f = float(d["Stochastique"].split("%")[0])
+                except Exception:
+                    stoch_f = 50.0
+
+                try:
+                    atr_f = float(d["Volatilité ATR"].split("%")[0])
+                except Exception:
+                    atr_f = 1.5
+
+                amp_30j = max(0.01, res_f - sup_f)
+                pos_canal_pct = max(0.0, min(100.0, ((prix_f - sup_f) / amp_30j) * 100.0))
+
+                amp_boll = max(0.01, borne_sup_f - borne_inf_f)
+                pos_boll_pct = max(0.0, min(100.0, ((prix_f - borne_inf_f) / amp_boll) * 100.0))
+
+                rebond_res_pct = ((res_f - prix_f) / prix_f * 100.0) if prix_f > 0 else 0.0
+
+                score_timing = int(round(100.0 - (0.40 * pos_canal_pct + 0.35 * stoch_f + 0.25 * pos_boll_pct)))
+                score_timing = max(5, min(98, score_timing))
+
+                plancher_tech = max(sup_f, min(prix_f, (sup_f + borne_inf_f) / 2.0))
+
+                if pos_boll_pct <= 22:
+                    diag_boll = f"<span class='b-green'>🟢 Bas de canal ({borne_inf_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Prix comprimé (Rebond probable)</span>"
+                elif pos_boll_pct >= 82:
+                    diag_boll = f"<span class='b-red'>🔴 Haut de canal ({borne_sup_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Extension haute (Prudence)</span>"
+                else:
+                    diag_boll = f"<span class='b-neutral'>⚪ Zone neutre [{borne_inf_f:.1f} - {borne_sup_f:.1f}]</span><br><span style='font-size:0.78em; opacity:0.8;'>Position : {pos_boll_pct:.0f}% de l'élastique</span>"
+
+                if stoch_f <= 20:
+                    diag_stoch = f"<span class='b-green'>🟢 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Vendeurs épuisés = Signal Achat</span>"
+                elif stoch_f <= 38:
+                    diag_stoch = f"<span class='b-blue'>🔵 {stoch_f:.0f}% (Zone basse)</span><br><span style='font-size:0.78em; opacity:0.8;'>Point d'entrée favorable</span>"
+                elif stoch_f >= 80:
+                    diag_stoch = f"<span class='b-red'>🔴 {stoch_f:.0f}% (Surachat)</span><br><span style='font-size:0.78em; opacity:0.8;'>Surchauffe court terme</span>"
+                else:
+                    diag_stoch = f"<span class='b-neutral'>⚪ {stoch_f:.0f}% (Neutre)</span><br><span style='font-size:0.78em; opacity:0.8;'>Tendance en cours</span>"
+
+                if atr_f < 1.3:
+                    profil_atr = "🛡️ Calme"
+                elif atr_f <= 2.2:
+                    profil_atr = "⚖️ Modérée"
+                else:
+                    profil_atr = "⚡ Nerveuse"
+
+                if score_timing >= 68:
+                    ordre_statut = 0
+                    action_tech = f"<span class='b-green'>🔥 FENÊTRE DE TIR IDÉALE</span><br><span style='font-size:0.80em;'>Achat possible au cours actuel (<b>{prix_f:.2f} {sym_dev}</b>)</span>"
+                elif score_timing >= 50:
+                    ordre_statut = 1
+                    action_tech = f"<span class='b-blue'>✅ ACCUMULATION DCA</span><br><span style='font-size:0.80em;'>Ou ordre limite vers <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+                elif score_timing >= 33:
+                    ordre_statut = 2
+                    action_tech = f"<span class='b-yellow'>⏳ ATTENDRE UN REPLI</span><br><span style='font-size:0.80em;'>Placer ordre limite à <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+                else:
+                    ordre_statut = 3
+                    cible_repli = (sup_f + res_f) / 2.0
+                    action_tech = f"<span class='b-red'>⚠️ SURCHAUFFE (TROP HAUT)</span><br><span style='font-size:0.80em;'>Attendre retour vers <b>{cible_repli:.2f} {sym_dev}</b></span>"
+
+                donnees_t4_enrichies.append({
+                    "Actif": d["Actif"],
+                    "Prix": d["Prix"],
+                    "Support": d["Support 30J"],
+                    "Resistance": d["Résistance 30J"],
+                    "PosCanal": pos_canal_pct,
+                    "RebondPct": rebond_res_pct,
+                    "DiagBoll": diag_boll,
+                    "DiagStoch": diag_stoch,
+                    "ATR": f"{atr_f:.2f}% / j ({profil_atr})",
+                    "ScoreTiming": score_timing,
+                    "OrdreStatut": ordre_statut,
+                    "ActionTech": action_tech,
+                })
+
+            donnees_t4_enrichies.sort(key=lambda x: (x["OrdreStatut"], -x["ScoreTiming"]))
+
+            html_t4 = """
+            <table class='r-table'>
+            <thead>
+                <tr>
+                    <th style='width:55px;'>Rang</th>
+                    <th style='text-align: left;'>Actif</th>
+                    <th style='width:230px;'>Position dans le Canal 30J<br><span style='font-size:0.82em; opacity:0.75;'>(Support ➔ Cours ➔ Résistance)</span></th>
+                    <th>Marge avant Résistance</th>
+                    <th>Diagnostic Bollinger (20J)</th>
+                    <th>Momentum Stochastique</th>
+                    <th>Volatilité (ATR)</th>
+                    <th style='width:125px;'>Score Timing</th>
+                    <th>Décision & Ordre Limite</th>
+                </tr>
+            </thead>
+            <tbody>
+            """
+            for idx_r, item_t in enumerate(donnees_t4_enrichies, start=1):
+                pos_c = item_t["PosCanal"]
+                c_jauge_c = "#2ecc71" if pos_c <= 35 else ("#3498db" if pos_c <= 65 else "#e74c3c")
+                sc_t = item_t["ScoreTiming"]
+                c_sc_t = "#2ecc71" if sc_t >= 68 else ("#3498db" if sc_t >= 50 else ("#f39c12" if sc_t >= 33 else "#e74c3c"))
+                b_rang = "b-green" if item_t["OrdreStatut"] == 0 else ("b-blue" if item_t["OrdreStatut"] == 1 else ("b-yellow" if item_t["OrdreStatut"] == 2 else "b-neutral"))
+
+                html_t4 += f"""
+                <tr>
+                    <td><span class='{b_rang}'>#{idx_r}</span></td>
+                    <td class='r-name'>{item_t['Actif']}<br><span style='font-size:0.84em; opacity:0.8;'>Cours : <b>{item_t['Prix']}</b></span></td>
+                    <td>
+                        <div style='display:flex; justify-content:space-between; font-size:0.78em; font-weight:700;'>
+                            <span style='color:#2ecc71;'>Sup: {item_t['Support']}</span>
+                            <span>{pos_c:.0f}%</span>
+                            <span style='color:#e74c3c;'>Rés: {item_t['Resistance']}</span>
+                        </div>
+                        <div class='score-bg'><div style='width:{max(4, min(100, pos_c))}%; background:{c_jauge_c}; height:100%;'></div></div>
+                    </td>
+                    <td style='color:#2ecc71; font-weight:800;'>+{item_t['RebondPct']:.1f}%<br><span style='font-size:0.76em; opacity:0.75; font-weight:600;'>potentiel 30J</span></td>
+                    <td>{item_t['DiagBoll']}</td>
+                    <td>{item_t['DiagStoch']}</td>
+                    <td><span class='b-purple'>{item_t['ATR']}</span></td>
+                    <td>
+                        <div style='font-weight:800; font-size:0.9em;'>{sc_t} / 100</div>
+                        <div class='score-bg'><div style='width:{sc_t}%; background:{c_sc_t}; height:100%;'></div></div>
+                    </td>
+                    <td>{item_t['ActionTech']}</td>
+                </tr>
+                """
+            html_t4 += "</tbody></table>"
+            afficher_html(html_t4)
 
     with tab_div:
-        html_guide_div = """
-        <div class="argon-grid" style="margin-bottom: 14px;">
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#2ecc71;">💰 1. Rendement & Gain pour 1 000 €</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Indique le revenu annuel généré immédiatement pour <b>1 000 € investis</b>. Un rendement entre <b>3,5% et 7%</b> offre le meilleur équilibre en PEA.</div>
+        if mode_gratuit:
+            afficher_verrou_saas(
+                "Tableau 4 : Sûreté des Dividendes, Payout Ratio & Détecteur de Yield Trap",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Vérifiez la solidité du Payout Ratio, la croissance sur 5 ans et les pièges à rendement sur l'ensemble du catalogue."
+            )
+        else:
+            html_guide_div = """
+            <div class="argon-grid" style="margin-bottom: 14px;">
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#2ecc71;">💰 1. Rendement & Gain pour 1 000 €</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Indique le revenu annuel généré immédiatement pour <b>1 000 € investis</b>. Un rendement entre <b>3,5% et 7%</b> offre le meilleur équilibre en PEA.</div>
+                </div>
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#3498db;">🛡️ 2. Payout Ratio (Marge de Sécurité)</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Part des bénéfices versée en dividende. <b>&le; 55%</b> = Ultra sûr (l'entreprise garde du cash pour investir). <b>&gt; 75%</b> = Dividende sous tension.</div>
+                </div>
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#f39c12;">🚀 3. Croissance 5A & Effet YoC</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la hausse annuelle du coupon. Le <b>YoC 5 Ans</b> projette votre futur rendement annuel sur votre prix d'achat d'aujourd'hui.</div>
+                </div>
+                <div class="argon-card" style="text-align:left; padding:12px 15px;">
+                    <div class="argon-title" style="color:#9b59b6;">🏆 4. Score Rente (/100) & Profil</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Combine <b>Sûreté du Payout (40%)</b>, <b>Rendement (35%)</b> et <b>Croissance (25%)</b> pour distinguer les Pépites Royales des Vaches à lait.</div>
+                </div>
             </div>
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#3498db;">🛡️ 2. Payout Ratio (Marge de Sécurité)</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Part des bénéfices versée en dividende. <b>&le; 55%</b> = Ultra sûr (l'entreprise garde du cash pour investir). <b>&gt; 75%</b> = Dividende sous tension.</div>
-            </div>
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#f39c12;">🚀 3. Croissance 5A & Effet YoC</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la hausse annuelle du coupon. Le <b>YoC 5 Ans</b> projette votre futur rendement annuel sur votre prix d'achat d'aujourd'hui.</div>
-            </div>
-            <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                <div class="argon-title" style="color:#9b59b6;">🏆 4. Score Rente (/100) & Profil</div>
-                <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Combine <b>Sûreté du Payout (40%)</b>, <b>Rendement (35%)</b> et <b>Croissance (25%)</b> pour distinguer les Pépites Royales des Vaches à lait.</div>
-            </div>
-        </div>
-        """
-        afficher_html(html_guide_div)
-        st.caption("🏆 **Classement par Qualité de Rente :** Trié de la **meilleure combinaison Rendement + Sûreté + Croissance (#1 en haut)** jusqu'aux valeurs secondaires.")
-
-        donnees_t3_enrichies = []
-        for d in donnees_t3:
-            nom_pur = d["Actif"].rsplit(" (", 1)[0]
-            info_w = WATCHLIST.get(nom_pur, WATCHLIST_DEFAUT.get(nom_pur, {}))
-            mois_v = info_w.get("mois_div", ["Mai"])
-            if len(mois_v) == 12:
-                freq_str = "📅 Mensuel (12x/an)"
-            elif len(mois_v) == 4:
-                freq_str = f"📅 Trimestriel ({', '.join(mois_v)})"
-            elif len(mois_v) > 1:
-                freq_str = f"📅 {len(mois_v)}x/an ({', '.join(mois_v)})"
-            else:
-                freq_str = f"📅 Annuel ({mois_v[0] if mois_v else 'Mai'})"
-
-            try:
-                rend_pct = float(str(d["Rendement"]).replace("%", "").strip())
-            except Exception:
-                rend_pct = 3.0
-
-            try:
-                payout_pct = float(str(d["Payout"]).replace("%", "").strip())
-            except Exception:
-                payout_pct = 55.0
-
-            try:
-                croiss_clean = str(d["Croissance 5a"]).replace("+", "").replace("%", "").replace("/an", "").strip()
-                croiss_pct = float(croiss_clean)
-            except Exception:
-                croiss_pct = 5.0
-
-            rente_1000 = rend_pct * 10.0
-            taux_c_borne = max(0.0, min(20.0, croiss_pct))
-            yoc_5a = rend_pct * ((1.0 + taux_c_borne / 100.0) ** 5)
-
-            if payout_pct <= 50:
-                pts_payout = 40.0
-            elif payout_pct <= 60:
-                pts_payout = 35.0
-            elif payout_pct <= 72:
-                pts_payout = 27.0
-            elif payout_pct <= 85:
-                pts_payout = 18.0
-            else:
-                pts_payout = 8.0
-
-            pts_rend = min(35.0, max(5.0, rend_pct * 5.2))
-            pts_croiss = min(25.0, max(3.0, taux_c_borne * 2.5))
-            score_rente = int(round(min(99.0, max(15.0, pts_payout + pts_rend + pts_croiss))))
-
-            if payout_pct <= 55:
-                c_pay = "#2ecc71"
-                diag_payout = f"<span style='color:#2ecc71; font-weight:800;'>🛡️ Ultra Sûr ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>{100 - payout_pct:.0f}% des profits réinvestis</span>"
-            elif payout_pct <= 72:
-                c_pay = "#3498db"
-                diag_payout = f"<span style='color:#3498db; font-weight:800;'>✅ Solide ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Distribution bien couverte</span>"
-            else:
-                c_pay = "#f39c12" if payout_pct <= 85 else "#e74c3c"
-                diag_payout = f"<span style='color:{c_pay}; font-weight:800;'>🟡 Élevé ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Marge de manœuvre réduite</span>"
-
-            if croiss_pct >= 8.0:
-                diag_croiss = f"<span class='b-green'>🚀 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Accélérateur fort</span>"
-            elif croiss_pct >= 4.5:
-                diag_croiss = f"<span class='b-blue'>📈 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Hausse régulière &gt; inflation</span>"
-            else:
-                diag_croiss = f"<span class='b-neutral'>🐢 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Croissance modérée</span>"
-
-            if score_rente >= 76 and payout_pct <= 65:
-                ordre_div = 0
-                decision_div = "<span class='b-green'>👑 PÉPITE ROYALE</span><br><span style='font-size:0.80em;'>Pilier idéal Fond de Portefeuille</span>"
-            elif rend_pct >= 5.0 and payout_pct <= 75:
-                ordre_div = 1
-                decision_div = "<span class='b-blue'>💵 VACHE À LAIT SOLIDE</span><br><span style='font-size:0.80em;'>Booster de rente immédiate</span>"
-            elif croiss_pct >= 7.5 and payout_pct <= 60:
-                ordre_div = 2
-                decision_div = "<span class='b-purple'>🚀 COMPOSER CROISSANCE</span><br><span style='font-size:0.80em;'>Dividende appelé à doubler</span>"
-            else:
-                ordre_div = 3
-                decision_div = "<span class='b-yellow'>⚖️ COMPLÉMENT DE RENTE</span><br><span style='font-size:0.80em;'>À pondérer avec modération</span>"
-
-            donnees_t3_enrichies.append({
-                "Actif": d["Actif"],
-                "FreqStr": freq_str,
-                "DivAct": d["Div/Act"],
-                "RendPct": rend_pct,
-                "Rente1000": rente_1000,
-                "YoC5A": yoc_5a,
-                "PayoutPct": payout_pct,
-                "CouleurPay": c_pay,
-                "DiagPayout": diag_payout,
-                "DiagCroiss": diag_croiss,
-                "ScoreRente": score_rente,
-                "OrdreDiv": ordre_div,
-                "DecisionDiv": decision_div,
-            })
-
-        donnees_t3_enrichies.sort(key=lambda x: (x["OrdreDiv"], -x["ScoreRente"]))
-
-        html_t3 = """
-        <table class='r-table'>
-        <thead>
-            <tr>
-                <th style='width:55px;'>Rang</th>
-                <th style='text-align: left;'>Actif & Calendrier</th>
-                <th>Dividende / Action<br><span style='font-size:0.82em; opacity:0.75;'>(& Gain pour 1 000 €)</span></th>
-                <th>Rendement Actuel<br><span style='font-size:0.82em; opacity:0.75;'>(➔ Projeté à 5 Ans)</span></th>
-                <th style='width:210px;'>Jauge Payout Ratio<br><span style='font-size:0.82em; opacity:0.75;'>(Part des bénéfices versée)</span></th>
-                <th>Dynamique 5 Ans</th>
-                <th style='width:125px;'>Score Rente</th>
-                <th>Profil & Rôle DCA</th>
-            </tr>
-        </thead>
-        <tbody>
-        """
-        for idx_d, item_d in enumerate(donnees_t3_enrichies, start=1):
-            sc_r = item_d["ScoreRente"]
-            c_sc_r = "#2ecc71" if sc_r >= 75 else ("#3498db" if sc_r >= 60 else "#f39c12")
-            b_rang_d = "b-green" if item_d["OrdreDiv"] == 0 else ("b-blue" if item_d["OrdreDiv"] == 1 else ("b-purple" if item_d["OrdreDiv"] == 2 else "b-neutral"))
-            pay_w = max(5.0, min(100.0, item_d["PayoutPct"]))
-
-            html_t3 += f"""
-            <tr>
-                <td><span class='{b_rang_d}'>#{idx_d}</span></td>
-                <td class='r-name'>{item_d['Actif']}<br><span style='font-size:0.78em; opacity:0.75; font-weight:600;'>{item_d['FreqStr']}</span></td>
-                <td><b>{item_d['DivAct']}</b><br><span style='font-size:0.80em; color:#2ecc71; font-weight:700;'>+{item_d['Rente1000']:.1f} €/an pour 1 000 €</span></td>
-                <td>
-                    <span style='color:#2ecc71; font-weight:900; font-size:1.05em;'>{item_d['RendPct']:.2f}%</span><br>
-                    <span style='font-size:0.78em; opacity:0.85;'>➔ YoC 5A : <b>{item_d['YoC5A']:.2f}%</b></span>
-                </td>
-                <td>
-                    {item_d['DiagPayout']}
-                    <div class='score-bg'><div style='width:{pay_w}%; background:{item_d['CouleurPay']}; height:100%;'></div></div>
-                </td>
-                <td>{item_d['DiagCroiss']}</td>
-                <td>
-                    <div style='font-weight:800; font-size:0.9em;'>{sc_r} / 100</div>
-                    <div class='score-bg'><div style='width:{sc_r}%; background:{c_sc_r}; height:100%;'></div></div>
-                </td>
-                <td>{item_d['DecisionDiv']}</td>
-            </tr>
             """
-        html_t3 += "</tbody></table>"
-        afficher_html(html_t3)
+            afficher_html(html_guide_div)
+            st.caption("🏆 **Classement par Qualité de Rente :** Trié de la **meilleure combinaison Rendement + Sûreté + Croissance (#1 en haut)** jusqu'aux valeurs secondaires.")
 
-        # --- DÉTECTEUR DE YIELD TRAP (PIÈGES À RENDEMENT) & BONUS NOMINATIF +10% ---
-        valeurs_nominatif_eligibles = {"Air Liquide", "L'Oréal", "Engie", "Seb", "Crédit Agricole"}
-        alertes_yield_trap = []
-        pistes_nominatif = []
-        map_t2_trap = {d["Actif"]: d for d in donnees_t2}
+            donnees_t3_enrichies = []
+            for d in donnees_t3:
+                nom_pur = d["Actif"].rsplit(" (", 1)[0]
+                info_w = WATCHLIST.get(nom_pur, WATCHLIST_DEFAUT.get(nom_pur, {}))
+                mois_v = info_w.get("mois_div", ["Mai"])
+                if len(mois_v) == 12:
+                    freq_str = "📅 Mensuel (12x/an)"
+                elif len(mois_v) == 4:
+                    freq_str = f"📅 Trimestriel ({', '.join(mois_v)})"
+                elif len(mois_v) > 1:
+                    freq_str = f"📅 {len(mois_v)}x/an ({', '.join(mois_v)})"
+                else:
+                    freq_str = f"📅 Annuel ({mois_v[0] if mois_v else 'Mai'})"
 
-        for item_d in donnees_t3_enrichies:
-            nom_pur_d = item_d["Actif"].rsplit(" (", 1)[0]
-            ecart_3a_d = float(map_t2_trap.get(item_d["Actif"], {}).get("EcartNum", 0.0))
-            rend_d = item_d["RendPct"]
-            pay_d = item_d["PayoutPct"]
+                try:
+                    rend_pct = float(str(d["Rendement"]).replace("%", "").strip())
+                except Exception:
+                    rend_pct = 3.0
 
-            if rend_d >= 7.8 and (pay_d >= 75.0 or ecart_3a_d <= -12.0):
-                motif_trap = f"Rendement élevé ({rend_d:.2f}%) avec Payout tendu ({pay_d:.0f}%)" if pay_d >= 75.0 else f"Rendement facial ({rend_d:.2f}%) gonflé par une chute du cours ({ecart_3a_d:+.1f}% vs 3A)"
-                alertes_yield_trap.append(f"<li><b>{item_d['Actif']}</b> : {motif_trap} — <i>Vérifiez le cash-flow avant d'acheter.</i></li>")
+                try:
+                    payout_pct = float(str(d["Payout"]).replace("%", "").strip())
+                except Exception:
+                    payout_pct = 55.0
 
-            if nom_pur_d in valeurs_nominatif_eligibles:
-                rend_boost = rend_d * 1.10
-                pistes_nominatif.append(
-                    f"<span class='cal-pill' style='border:1px solid rgba(46,204,113,0.4);'>"
-                    f"🏅 <b>{nom_pur_d}</b> : {rend_d:.2f}% ➔ <b style='color:#2ecc71;'>{rend_boost:.2f}%</b> au Nominatif (+10%)"
-                    f"</span>"
-                )
+                try:
+                    croiss_clean = str(d["Croissance 5a"]).replace("+", "").replace("%", "").replace("/an", "").strip()
+                    croiss_pct = float(croiss_clean)
+                except Exception:
+                    croiss_pct = 5.0
 
-        html_trap = (
-            "<ul style='margin:6px 0 0 18px; padding:0; font-size:0.84em; line-height:1.5;'>" + "".join(alertes_yield_trap) + "</ul>"
-            if alertes_yield_trap
-            else "<div style='font-size:0.84em; color:#2ecc71; font-weight:700; margin-top:4px;'>✅ Aucun piège à rendement (Yield Trap) détecté dans votre sélection actuelle.</div>"
-        )
-        html_nom_pills = "".join(pistes_nominatif) if pistes_nominatif else "<span style='font-size:0.84em; opacity:0.7;'>Aucune valeur éligible au bonus +10% dans le radar.</span>"
+                rente_1000 = rend_pct * 10.0
+                taux_c_borne = max(0.0, min(20.0, croiss_pct))
+                yoc_5a = rend_pct * ((1.0 + taux_c_borne / 100.0) ** 5)
 
-        html_radar_pro = f"""
-        <div class="argon-grid" style="margin-top: 10px;">
-            <div class="argon-card" style="text-align:left; border-left: 4px solid {'#e74c3c' if alertes_yield_trap else '#2ecc71'};">
-                <div class="argon-title" style="color:{'#e74c3c' if alertes_yield_trap else '#2ecc71'};">🚨 Détecteur Algorithmique de "Yield Trap" (Piège à Rendement)</div>
-                {html_trap}
+                if payout_pct <= 50:
+                    pts_payout = 40.0
+                elif payout_pct <= 60:
+                    pts_payout = 35.0
+                elif payout_pct <= 72:
+                    pts_payout = 27.0
+                elif payout_pct <= 85:
+                    pts_payout = 18.0
+                else:
+                    pts_payout = 8.0
+
+                pts_rend = min(35.0, max(5.0, rend_pct * 5.2))
+                pts_croiss = min(25.0, max(3.0, taux_c_borne * 2.5))
+                score_rente = int(round(min(99.0, max(15.0, pts_payout + pts_rend + pts_croiss))))
+
+                if payout_pct <= 55:
+                    c_pay = "#2ecc71"
+                    diag_payout = f"<span style='color:#2ecc71; font-weight:800;'>🛡️ Ultra Sûr ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>{100 - payout_pct:.0f}% des profits réinvestis</span>"
+                elif payout_pct <= 72:
+                    c_pay = "#3498db"
+                    diag_payout = f"<span style='color:#3498db; font-weight:800;'>✅ Solide ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Distribution bien couverte</span>"
+                else:
+                    c_pay = "#f39c12" if payout_pct <= 85 else "#e74c3c"
+                    diag_payout = f"<span style='color:{c_pay}; font-weight:800;'>🟡 Élevé ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Marge de manœuvre réduite</span>"
+
+                if croiss_pct >= 8.0:
+                    diag_croiss = f"<span class='b-green'>🚀 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Accélérateur fort</span>"
+                elif croiss_pct >= 4.5:
+                    diag_croiss = f"<span class='b-blue'>📈 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Hausse régulière &gt; inflation</span>"
+                else:
+                    diag_croiss = f"<span class='b-neutral'>🐢 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Croissance modérée</span>"
+
+                if score_rente >= 76 and payout_pct <= 65:
+                    ordre_div = 0
+                    decision_div = "<span class='b-green'>👑 PÉPITE ROYALE</span><br><span style='font-size:0.80em;'>Pilier idéal Fond de Portefeuille</span>"
+                elif rend_pct >= 5.0 and payout_pct <= 75:
+                    ordre_div = 1
+                    decision_div = "<span class='b-blue'>💵 VACHE À LAIT SOLIDE</span><br><span style='font-size:0.80em;'>Booster de rente immédiate</span>"
+                elif croiss_pct >= 7.5 and payout_pct <= 60:
+                    ordre_div = 2
+                    decision_div = "<span class='b-purple'>🚀 COMPOSER CROISSANCE</span><br><span style='font-size:0.80em;'>Dividende appelé à doubler</span>"
+                else:
+                    ordre_div = 3
+                    decision_div = "<span class='b-yellow'>⚖️ COMPLÉMENT DE RENTE</span><br><span style='font-size:0.80em;'>À pondérer avec modération</span>"
+
+                donnees_t3_enrichies.append({
+                    "Actif": d["Actif"],
+                    "FreqStr": freq_str,
+                    "DivAct": d["Div/Act"],
+                    "RendPct": rend_pct,
+                    "Rente1000": rente_1000,
+                    "YoC5A": yoc_5a,
+                    "PayoutPct": payout_pct,
+                    "CouleurPay": c_pay,
+                    "DiagPayout": diag_payout,
+                    "DiagCroiss": diag_croiss,
+                    "ScoreRente": score_rente,
+                    "OrdreDiv": ordre_div,
+                    "DecisionDiv": decision_div,
+                })
+
+            donnees_t3_enrichies.sort(key=lambda x: (x["OrdreDiv"], -x["ScoreRente"]))
+
+            html_t3 = """
+            <table class='r-table'>
+            <thead>
+                <tr>
+                    <th style='width:55px;'>Rang</th>
+                    <th style='text-align: left;'>Actif & Calendrier</th>
+                    <th>Dividende / Action<br><span style='font-size:0.82em; opacity:0.75;'>(& Gain pour 1 000 €)</span></th>
+                    <th>Rendement Actuel<br><span style='font-size:0.82em; opacity:0.75;'>(➔ Projeté à 5 Ans)</span></th>
+                    <th style='width:210px;'>Jauge Payout Ratio<br><span style='font-size:0.82em; opacity:0.75;'>(Part des bénéfices versée)</span></th>
+                    <th>Dynamique 5 Ans</th>
+                    <th style='width:125px;'>Score Rente</th>
+                    <th>Profil & Rôle DCA</th>
+                </tr>
+            </thead>
+            <tbody>
+            """
+            for idx_d, item_d in enumerate(donnees_t3_enrichies, start=1):
+                sc_r = item_d["ScoreRente"]
+                c_sc_r = "#2ecc71" if sc_r >= 75 else ("#3498db" if sc_r >= 60 else "#f39c12")
+                b_rang_d = "b-green" if item_d["OrdreDiv"] == 0 else ("b-blue" if item_d["OrdreDiv"] == 1 else ("b-purple" if item_d["OrdreDiv"] == 2 else "b-neutral"))
+                pay_w = max(5.0, min(100.0, item_d["PayoutPct"]))
+
+                html_t3 += f"""
+                <tr>
+                    <td><span class='{b_rang_d}'>#{idx_d}</span></td>
+                    <td class='r-name'>{item_d['Actif']}<br><span style='font-size:0.78em; opacity:0.75; font-weight:600;'>{item_d['FreqStr']}</span></td>
+                    <td><b>{item_d['DivAct']}</b><br><span style='font-size:0.80em; color:#2ecc71; font-weight:700;'>+{item_d['Rente1000']:.1f} €/an pour 1 000 €</span></td>
+                    <td>
+                        <span style='color:#2ecc71; font-weight:900; font-size:1.05em;'>{item_d['RendPct']:.2f}%</span><br>
+                        <span style='font-size:0.78em; opacity:0.85;'>➔ YoC 5A : <b>{item_d['YoC5A']:.2f}%</b></span>
+                    </td>
+                    <td>
+                        {item_d['DiagPayout']}
+                        <div class='score-bg'><div style='width:{pay_w}%; background:{item_d['CouleurPay']}; height:100%;'></div></div>
+                    </td>
+                    <td>{item_d['DiagCroiss']}</td>
+                    <td>
+                        <div style='font-weight:800; font-size:0.9em;'>{sc_r} / 100</div>
+                        <div class='score-bg'><div style='width:{sc_r}%; background:{c_sc_r}; height:100%;'></div></div>
+                    </td>
+                    <td>{item_d['DecisionDiv']}</td>
+                </tr>
+                """
+            html_t3 += "</tbody></table>"
+            afficher_html(html_t3)
+
+            # --- DÉTECTEUR DE YIELD TRAP (PIÈGES À RENDEMENT) & BONUS NOMINATIF +10% ---
+            valeurs_nominatif_eligibles = {"Air Liquide", "L'Oréal", "Engie", "Seb", "Crédit Agricole"}
+            alertes_yield_trap = []
+            pistes_nominatif = []
+            map_t2_trap = {d["Actif"]: d for d in donnees_t2}
+
+            for item_d in donnees_t3_enrichies:
+                nom_pur_d = item_d["Actif"].rsplit(" (", 1)[0]
+                ecart_3a_d = float(map_t2_trap.get(item_d["Actif"], {}).get("EcartNum", 0.0))
+                rend_d = item_d["RendPct"]
+                pay_d = item_d["PayoutPct"]
+
+                if rend_d >= 7.8 and (pay_d >= 75.0 or ecart_3a_d <= -12.0):
+                    motif_trap = f"Rendement élevé ({rend_d:.2f}%) avec Payout tendu ({pay_d:.0f}%)" if pay_d >= 75.0 else f"Rendement facial ({rend_d:.2f}%) gonflé par une chute du cours ({ecart_3a_d:+.1f}% vs 3A)"
+                    alertes_yield_trap.append(f"<li><b>{item_d['Actif']}</b> : {motif_trap} — <i>Vérifiez le cash-flow avant d'acheter.</i></li>")
+
+                if nom_pur_d in valeurs_nominatif_eligibles:
+                    rend_boost = rend_d * 1.10
+                    pistes_nominatif.append(
+                        f"<span class='cal-pill' style='border:1px solid rgba(46,204,113,0.4);'>"
+                        f"🏅 <b>{nom_pur_d}</b> : {rend_d:.2f}% ➔ <b style='color:#2ecc71;'>{rend_boost:.2f}%</b> au Nominatif (+10%)"
+                        f"</span>"
+                    )
+
+            html_trap = (
+                "<ul style='margin:6px 0 0 18px; padding:0; font-size:0.84em; line-height:1.5;'>" + "".join(alertes_yield_trap) + "</ul>"
+                if alertes_yield_trap
+                else "<div style='font-size:0.84em; color:#2ecc71; font-weight:700; margin-top:4px;'>✅ Aucun piège à rendement (Yield Trap) détecté dans votre sélection actuelle.</div>"
+            )
+            html_nom_pills = "".join(pistes_nominatif) if pistes_nominatif else "<span style='font-size:0.84em; opacity:0.7;'>Aucune valeur éligible au bonus +10% dans le radar.</span>"
+
+            html_radar_pro = f"""
+            <div class="argon-grid" style="margin-top: 10px;">
+                <div class="argon-card" style="text-align:left; border-left: 4px solid {'#e74c3c' if alertes_yield_trap else '#2ecc71'};">
+                    <div class="argon-title" style="color:{'#e74c3c' if alertes_yield_trap else '#2ecc71'};">🚨 Détecteur Algorithmique de "Yield Trap" (Piège à Rendement)</div>
+                    {html_trap}
+                </div>
+                <div class="argon-card" style="text-align:left; border-left: 4px solid #f39c12;">
+                    <div class="argon-title" style="color:#f39c12;">🏅 Valeurs du Radar Éligibles à la Prime de Fidélité (+10% Dividende au Nominatif Administré)</div>
+                    <div style="margin-top:6px;">{html_nom_pills}</div>
+                </div>
             </div>
-            <div class="argon-card" style="text-align:left; border-left: 4px solid #f39c12;">
-                <div class="argon-title" style="color:#f39c12;">🏅 Valeurs du Radar Éligibles à la Prime de Fidélité (+10% Dividende au Nominatif Administré)</div>
-                <div style="margin-top:6px;">{html_nom_pills}</div>
-            </div>
-        </div>
-        """
-        afficher_html(html_radar_pro)
+            """
+            afficher_html(html_radar_pro)
 # ------------------------------------------------------------------------------
 # ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
 # ------------------------------------------------------------------------------
@@ -2137,6 +2190,9 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo"):
+            if cle_t in st.session_state["portefeuille"]:
+                nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
             nouveau_portefeuille_temp["_historique_ventes"] = list(st.session_state["historique_ventes"])
         if montant_especes > 0:
@@ -2146,13 +2202,13 @@ with onglet_portefeuille:
         st.markdown("---")
         st.markdown("#### 🎯 Choisir les actions à afficher dans mon portefeuille")
 
-        actions_deja_detenues = [k for k in st.session_state["portefeuille"].keys() if k not in ("Espèces", "_historique_ventes")]
-        actions_radar = [k for k in st.session_state["watchlist"].keys() if k not in ("Espèces", "_historique_ventes")]
+        actions_deja_detenues = [k for k in st.session_state["portefeuille"].keys() if k not in CLES_TECHNIQUES_PF]
+        actions_radar = [k for k in st.session_state["watchlist"].keys() if k not in CLES_TECHNIQUES_PF]
         selection_par_defaut = sorted(list(set(actions_deja_detenues + actions_radar)))
 
         actions_choisies_pf = st.multiselect(
             "Sélectionnez ou recherchez vos actions (ex: Engie, TotalEnergies, Air Liquide, Rubis, AXA...) :",
-            options=sorted([k for k in WATCHLIST_DEFAUT.keys() if k not in ("Espèces", "_historique_ventes")]),
+            options=sorted([k for k in WATCHLIST_DEFAUT.keys() if k not in CLES_TECHNIQUES_PF]),
             default=[a for a in selection_par_defaut if a in WATCHLIST_DEFAUT],
         )
 
@@ -2197,20 +2253,24 @@ with onglet_portefeuille:
 
     actions_actives_pf = [
         k for k, v in portefeuille_utilisateur.items()
-        if k != "_historique_ventes" and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+        if k not in ("_historique_ventes", "_quota_ia", "_niveau_abo") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
     ]
 
     if not actions_actives_pf:
         st.warning("Votre portefeuille est vide. Ouvrez le volet ci-dessus pour renseigner vos lignes.")
     else:
+        if mode_gratuit:
+            st.info("🌱 **Forfait Gratuit (0 €)** : Suivi limité à 2 lignes d'actions. Passez à **Premium (4,90 €/mois)** ou **Pro (8,90 €/mois)** pour débloquer un nombre illimité de lignes et l'export CSV !")
+
         # Fiscalité automatique selon l'enveloppe : PEA (EUR) = 100% en réinvestissement interne, CTO (USD) = 70% net (-30% Flat Tax)
         taux_net_eur = 1.0
         taux_net_usd = 0.70
 
         lignes_detaillees = []
+        nb_actions_comptees_gratuit = 0
 
         for nom_act, data_pos in portefeuille_utilisateur.items():
-            if nom_act == "_historique_ventes" or not isinstance(data_pos, dict):
+            if nom_act in ("_historique_ventes", "_quota_ia", "_niveau_abo") or not isinstance(data_pos, dict):
                 continue
 
             if nom_act == "Espèces":
@@ -2245,6 +2305,11 @@ with onglet_portefeuille:
             qte = float(data_pos.get("qte", 0.0))
             if qte <= 0:
                 continue
+
+            if mode_gratuit and nb_actions_comptees_gratuit >= 2:
+                continue
+            nb_actions_comptees_gratuit += 1
+
             pru = float(data_pos.get("pru", 0.0))
             info_act = WATCHLIST_DEFAUT[nom_act]
             devise = info_act.get("devise", "EUR")
@@ -2346,15 +2411,18 @@ with onglet_portefeuille:
         with col_titre_p:
             st.subheader("💼 Portefeuille et Performance")
         with col_btn_csv:
-            df_export = pd.DataFrame(lignes_export_csv)
-            csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
-            st.download_button(
-                label="📥 Exporter Bilan CSV (Excel)",
-                data=csv_bytes,
-                file_name=f"Boursy_Portefeuille_{datetime.now().strftime('%Y-%m-%d')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+            if est_premium_ou_pro:
+                df_export = pd.DataFrame(lignes_export_csv)
+                csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
+                st.download_button(
+                    label="📥 Exporter Bilan CSV (Excel)",
+                    data=csv_bytes,
+                    file_name=f"Boursy_Portefeuille_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            else:
+                st.button("🔒 Export CSV (Offre Premium/Pro)", disabled=True, use_container_width=True)
 
         html_port = "<table class='r-table'><thead><tr><th style='text-align: left;'>Actif (Enveloppe)</th><th>Qté</th><th>PRU ➔ Cours</th><th>Valorisation (€)</th><th>+/- Value (€ & %)</th><th>Div. Brut / Net (€)</th><th style='width:140px;'>Poids (%)</th></tr></thead><tbody>"
 
@@ -2465,13 +2533,12 @@ with onglet_portefeuille:
             longueurs_dispo = [
                 len(historiques_prix[nom_a])
                 for nom_a in portefeuille_utilisateur
-                if nom_a not in ("Espèces", "_historique_ventes") and nom_a in historiques_prix and len(historiques_prix[nom_a]) > 1
+                if nom_a not in CLES_TECHNIQUES_PF and nom_a in historiques_prix and len(historiques_prix[nom_a]) > 1
             ]
             nb_jours_reels = min(nb_j_cible, min(longueurs_dispo)) if longueurs_dispo else 30
             dates_bourse = pd.bdate_range(end=datetime.now(), periods=nb_jours_reels)
             pas_echantillon = 3 if nb_jours_reels > 300 else 1
 
-            # Récupération de l'historique du Benchmark CW8.PA
             _, closes_cw8_brut, _, _ = recuperer_donnees("CW8.PA")
             serie_cw8 = closes_cw8_brut if closes_cw8_brut else []
 
@@ -2482,12 +2549,15 @@ with onglet_portefeuille:
             val_depart_pf = None
             cw8_depart = None
 
+            noms_retenus_courbe = [l["nom_act"] for l in lignes_triees if not l["est_especes"]]
+
             for idx_j in range(0, nb_jours_reels, pas_echantillon):
                 offset_fin = idx_j - nb_jours_reels
                 val_jour_eur = val_esp_fixe
 
-                for nom_a, d_pos in portefeuille_utilisateur.items():
-                    if nom_a in ("Espèces", "_historique_ventes") or not isinstance(d_pos, dict) or nom_a not in WATCHLIST_DEFAUT:
+                for nom_a in noms_retenus_courbe:
+                    d_pos = portefeuille_utilisateur.get(nom_a, {})
+                    if not isinstance(d_pos, dict) or nom_a not in WATCHLIST_DEFAUT:
                         continue
                     q_a = float(d_pos.get("qte", 0.0))
                     dev_a = WATCHLIST_DEFAUT[nom_a].get("devise", "EUR")
@@ -2596,7 +2666,6 @@ with onglet_portefeuille:
                 var_periode_pct = (var_periode_eur / pt_debut[1] * 100.0) if pt_debut[1] > 0 else 0.0
                 c_var_p = "#2ecc71" if var_periode_eur >= 0 else "#e74c3c"
 
-                # Calcul du Max Drawdown sur la période
                 pic_courant = valeurs_quotidiennes[0][1]
                 max_dd_pct = 0.0
                 for _, v_j in valeurs_quotidiennes:
@@ -2606,7 +2675,6 @@ with onglet_portefeuille:
                     if dd_j < max_dd_pct:
                         max_dd_pct = dd_j
 
-                # Calcul de l'Alpha vs ETF MSCI World (CW8)
                 if valeurs_cw8_rebased and len(valeurs_cw8_rebased) >= 2:
                     perf_cw8_pct = ((valeurs_cw8_rebased[-1] - valeurs_cw8_rebased[0]) / valeurs_cw8_rebased[0] * 100.0) if valeurs_cw8_rebased[0] > 0 else 0.0
                     alpha_pct = var_periode_pct - perf_cw8_pct
@@ -2647,7 +2715,8 @@ with onglet_portefeuille:
         total_pv_actees_pf = sum(float(v.get("plus_value_eur", 0.0)) for v in st.session_state.get("historique_ventes", []))
         div_encaisses_cumul = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
         capital_autofinance = max(0.0, total_pv_actees_pf + div_encaisses_cumul)
-        versements_nets_pea = max(0.0, exposition_eur - capital_autofinance)
+        cout_pru_pea_seul = sum(l["cout_eur"] for l in lignes_triees if l["devise"] == "EUR")
+        versements_nets_pea = max(0.0, cout_pru_pea_seul - capital_autofinance)
         plafond_legal_pea = 150000.0
         pct_plafond_pea = min(100.0, (versements_nets_pea / plafond_legal_pea) * 100.0)
         marge_restante_pea = max(0.0, plafond_legal_pea - versements_nets_pea)
@@ -2698,111 +2767,125 @@ with onglet_portefeuille:
         ]
         if eligibles_nom_pf:
             with st.expander("🏅 Prime de Fidélité Nominatif Administré (+10% Dividende & Actions Gratuites Air Liquide)", expanded=False):
-                if "actions_nominatif" not in st.session_state:
-                    st.session_state["actions_nominatif"] = eligibles_nom_pf.copy()
-                selection_nom = st.multiselect(
-                    "Sélectionnez vos lignes passées au Nominatif Administré (+10% de bonus dividende après 2 années civiles) :",
-                    options=eligibles_nom_pf,
-                    default=[a for a in st.session_state["actions_nominatif"] if a in eligibles_nom_pf],
-                    key="ms_actions_nominatif",
-                )
-                st.session_state["actions_nominatif"] = selection_nom
-
-                for act_n in selection_nom:
-                    q_n = float(portefeuille_utilisateur[act_n].get("qte", 0))
-                    div_n = float(WATCHLIST_DEFAUT.get(act_n, {}).get("div_eur", 0.0))
-                    bonus_annuel_nom += q_n * div_n * 0.10
-
-                if "Air Liquide" in portefeuille_utilisateur and isinstance(portefeuille_utilisateur.get("Air Liquide"), dict) and float(portefeuille_utilisateur["Air Liquide"].get("qte", 0)) > 0:
-                    q_al = int(portefeuille_utilisateur["Air Liquide"]["qte"])
-                    act_gratuites = q_al // 10
-                    manque_al = 10 - (q_al % 10) if (q_al % 10) != 0 else 0
-                    cours_al = float(prix_temps_reel.get("Air Liquide", 165.0))
-                    val_cadeau_al = act_gratuites * cours_al
-                    texte_al = (
-                        f" | 🎁 <b>Air Liquide ({q_al} titres)</b> : Droit à <b>{act_gratuites} action(s) gratuite(s)</b> (~{val_cadeau_al:,.0f} €)"
-                        + (f" — <i>Plus que {manque_al} action(s) pour débloquer la suivante !</i>" if manque_al > 0 else " — <i>Palier exact de 10 atteint !</i>")
+                if mode_gratuit:
+                    afficher_verrou_saas(
+                        "Calculateur Prime de Fidélité Nominatif Administré (+10%) & Actions Gratuites",
+                        "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                        "Simulez vos primes de fidélité +10% et vos paliers d'attribution d'actions gratuites Air Liquide."
                     )
+                else:
+                    if "actions_nominatif" not in st.session_state:
+                        st.session_state["actions_nominatif"] = eligibles_nom_pf.copy()
+                    selection_nom = st.multiselect(
+                        "Sélectionnez vos lignes passées au Nominatif Administré (+10% de bonus dividende après 2 années civiles) :",
+                        options=eligibles_nom_pf,
+                        default=[a for a in st.session_state["actions_nominatif"] if a in eligibles_nom_pf],
+                        key="ms_actions_nominatif",
+                    )
+                    st.session_state["actions_nominatif"] = selection_nom
 
-                afficher_html(f"""
-                <div style="background:rgba(46,204,113,0.08); border:1px solid rgba(46,204,113,0.35); border-radius:10px; padding:12px 16px; font-size:0.90em;">
-                    🏅 <b>Gain de Rente Nominatif (+10%) :</b> <b style="color:#2ecc71;">+{bonus_annuel_nom:.2f} € / an</b> (soit <b>+{bonus_annuel_nom*10:.0f} €</b> sur 10 ans sans apport){texte_al}
-                </div>
-                """)
+                    for act_n in selection_nom:
+                        q_n = float(portefeuille_utilisateur[act_n].get("qte", 0))
+                        div_n = float(WATCHLIST_DEFAUT.get(act_n, {}).get("div_eur", 0.0))
+                        bonus_annuel_nom += q_n * div_n * 0.10
+
+                    if "Air Liquide" in portefeuille_utilisateur and isinstance(portefeuille_utilisateur.get("Air Liquide"), dict) and float(portefeuille_utilisateur["Air Liquide"].get("qte", 0)) > 0:
+                        q_al = int(portefeuille_utilisateur["Air Liquide"]["qte"])
+                        act_gratuites = q_al // 10
+                        manque_al = 10 - (q_al % 10) if (q_al % 10) != 0 else 0
+                        cours_al = float(prix_temps_reel.get("Air Liquide", 165.0))
+                        val_cadeau_al = act_gratuites * cours_al
+                        texte_al = (
+                            f" | 🎁 <b>Air Liquide ({q_al} titres)</b> : Droit à <b>{act_gratuites} action(s) gratuite(s)</b> (~{val_cadeau_al:,.0f} €)"
+                            + (f" — <i>Plus que {manque_al} action(s) pour débloquer la suivante !</i>" if manque_al > 0 else " — <i>Palier exact de 10 atteint !</i>")
+                        )
+
+                    afficher_html(f"""
+                    <div style="background:rgba(46,204,113,0.08); border:1px solid rgba(46,204,113,0.35); border-radius:10px; padding:12px 16px; font-size:0.90em;">
+                        🏅 <b>Gain de Rente Nominatif (+10%) :</b> <b style="color:#2ecc71;">+{bonus_annuel_nom:.2f} € / an</b> (soit <b>+{bonus_annuel_nom*10:.0f} €</b> sur 10 ans sans apport){texte_al}
+                    </div>
+                    """)
 
         # ======================================================================
         # MINI-SIMULATEUR D'IMPACT PRU & RENFORCEMENT DCA (100% ARGON DARK/LIGHT)
         # ======================================================================
         actions_Simu_pru = [
             k for k, v in portefeuille_utilisateur.items()
-            if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+            if k not in CLES_TECHNIQUES_PF and isinstance(v, dict) and float(v.get("qte", 0)) > 0
         ]
         if actions_Simu_pru:
             st.markdown("#### 🧮 Simulateur Express d'Impact PRU & DCA")
-            col_sim1, col_sim2 = st.columns([2, 1])
-            with col_sim1:
-                act_choisie = st.selectbox(
-                    "Action du portefeuille à renforcer :",
-                    actions_Simu_pru,
-                    key="simu_pru_action"
+            if mode_gratuit:
+                afficher_verrou_saas(
+                    "Simulateur Express d'Impact PRU & Renforcement DCA",
+                    "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                    "Calculez instantanément votre nouveau PRU et le gain de dividende annuel avant de passer votre ordre."
                 )
-            with col_sim2:
-                budget_simu = st.number_input(
-                    "Montant DCA à investir (€) :",
-                    min_value=50.0,
-                    max_value=50000.0,
-                    value=float(BUDGET_MENSUEL),
-                    step=50.0,
-                    key="simu_pru_budget"
-                )
+            else:
+                col_sim1, col_sim2 = st.columns([2, 1])
+                with col_sim1:
+                    act_choisie = st.selectbox(
+                        "Action du portefeuille à renforcer :",
+                        actions_Simu_pru,
+                        key="simu_pru_action"
+                    )
+                with col_sim2:
+                    budget_simu = st.number_input(
+                        "Montant DCA à investir (€) :",
+                        min_value=50.0,
+                        max_value=50000.0,
+                        value=float(BUDGET_MENSUEL),
+                        step=50.0,
+                        key="simu_pru_budget"
+                    )
 
-            pos_act = portefeuille_utilisateur.get(act_choisie, {})
-            qte_act = float(pos_act.get("qte", 0.0))
-            pru_act = float(pos_act.get("pru", 0.0))
-            info_w = st.session_state.get("watchlist", WATCHLIST_DEFAUT).get(act_choisie, WATCHLIST_DEFAUT.get(act_choisie, {}))
-            dev_sim = "$" if info_w.get("devise") == "USD" else "€"
-            div_unit = float(info_w.get("div_eur", 0.0))
-            cours_live = float(st.session_state.get("prix_temps_reel", {}).get(act_choisie, pru_act))
+                pos_act = portefeuille_utilisateur.get(act_choisie, {})
+                qte_act = float(pos_act.get("qte", 0.0))
+                pru_act = float(pos_act.get("pru", 0.0))
+                info_w = st.session_state.get("watchlist", WATCHLIST_DEFAUT).get(act_choisie, WATCHLIST_DEFAUT.get(act_choisie, {}))
+                dev_sim = "$" if info_w.get("devise") == "USD" else "€"
+                div_unit = float(info_w.get("div_eur", 0.0))
+                cours_live = float(st.session_state.get("prix_temps_reel", {}).get(act_choisie, pru_act))
 
-            if cours_live > 0 and qte_act > 0:
-                budget_devise = (budget_simu * TAUX_USD_EUR) if dev_sim == "$" else budget_simu
-                nb_ach = int(budget_devise // cours_live)
-                mode_1_titre = False
-                if nb_ach == 0:
-                    nb_ach = 1
-                    mode_1_titre = True
-                cout_ordre = nb_ach * cours_live
-                nouv_qte = qte_act + nb_ach
-                nouv_pru = ((qte_act * pru_act) + cout_ordre) / nouv_qte
-                ecart_pru = nouv_pru - pru_act
-                ecart_pru_pct = (ecart_pru / pru_act * 100) if pru_act > 0 else 0.0
-                gain_div_an = nb_ach * div_unit
+                if cours_live > 0 and qte_act > 0:
+                    budget_devise = (budget_simu * TAUX_USD_EUR) if dev_sim == "$" else budget_simu
+                    nb_ach = int(budget_devise // cours_live)
+                    mode_1_titre = False
+                    if nb_ach == 0:
+                        nb_ach = 1
+                        mode_1_titre = True
+                    cout_ordre = nb_ach * cours_live
+                    nouv_qte = qte_act + nb_ach
+                    nouv_pru = ((qte_act * pru_act) + cout_ordre) / nouv_qte
+                    ecart_pru = nouv_pru - pru_act
+                    ecart_pru_pct = (ecart_pru / pru_act * 100) if pru_act > 0 else 0.0
+                    gain_div_an = nb_ach * div_unit
 
-                classe_b_pru = "b-green" if ecart_pru <= 0 else "b-blue"
-                col_p = "#2ecc71" if ecart_pru <= 0 else "#3498db"
-                txt_badge = f"📉 PRU abaissé de {ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)" if ecart_pru <= 0 else f"📈 PRU moyenné à +{ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
-                note_1t = f"(Ajusté à 1 titre = {cout_ordre:.2f} {dev_sim})" if mode_1_titre else f"(Investi : {cout_ordre:.2f} {dev_sim})"
+                    classe_b_pru = "b-green" if ecart_pru <= 0 else "b-blue"
+                    col_p = "#2ecc71" if ecart_pru <= 0 else "#3498db"
+                    txt_badge = f"📉 PRU abaissé de {ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)" if ecart_pru <= 0 else f"📈 PRU moyenné à +{ecart_pru:.2f} {dev_sim} ({ecart_pru_pct:+.1f}%)"
+                    note_1t = f"(Ajusté à 1 titre = {cout_ordre:.2f} {dev_sim})" if mode_1_titre else f"(Investi : {cout_ordre:.2f} {dev_sim})"
 
-                html_simu_pru = f"""
-                <div class="argon-card" style="text-align:left; margin-bottom:18px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-                        <div>
-                            <div class="argon-title">Ordre simulé au cours actuel ({cours_live:.2f} {dev_sim})</div>
-                            <div style="font-size:1.08em; font-weight:900;">+{nb_ach} action(s) {act_choisie} <span style="font-size:0.84em; opacity:0.75; font-weight:600;">{note_1t}</span></div>
+                    html_simu_pru = f"""
+                    <div class="argon-card" style="text-align:left; margin-bottom:18px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                            <div>
+                                <div class="argon-title">Ordre simulé au cours actuel ({cours_live:.2f} {dev_sim})</div>
+                                <div style="font-size:1.08em; font-weight:900;">+{nb_ach} action(s) {act_choisie} <span style="font-size:0.84em; opacity:0.75; font-weight:600;">{note_1t}</span></div>
+                            </div>
+                            <div>
+                                <div class="argon-title">Trajectoire du PRU</div>
+                                <div style="font-size:1.08em; font-weight:900;">{pru_act:.2f} {dev_sim} ➔ <span style="color:{col_p};">{nouv_pru:.2f} {dev_sim}</span></div>
+                            </div>
+                            <div><span class="{classe_b_pru}">{txt_badge}</span></div>
+                            <div><span class="b-green">+{gain_div_an:.2f} {dev_sim} / an de dividendes</span></div>
                         </div>
-                        <div>
-                            <div class="argon-title">Trajectoire du PRU</div>
-                            <div style="font-size:1.08em; font-weight:900;">{pru_act:.2f} {dev_sim} ➔ <span style="color:{col_p};">{nouv_pru:.2f} {dev_sim}</span></div>
-                        </div>
-                        <div><span class="{classe_b_pru}">{txt_badge}</span></div>
-                        <div><span class="b-green">+{gain_div_an:.2f} {dev_sim} / an de dividendes</span></div>
                     </div>
-                </div>
-                """
-                afficher_html(html_simu_pru)
+                    """
+                    afficher_html(html_simu_pru)
 
         # ======================================================================
-        # IMPORT MAGIQUE DU PORTEFEUILLE (CAPTURE D'ÉCRAN OU COPIER-COLLER BRUT)
+        # IMPORT MAGIQUE DU PORTEFEUILLE (EXCLUSIF OFFRE PRO 8,90 €)
         # ======================================================================
         def appliquer_import_ia_portefeuille():
             lignes_ext = st.session_state.get("_lignes_extraites_vision", [])
@@ -2826,83 +2909,58 @@ with onglet_portefeuille:
             st.success(st.session_state.pop("_notif_import_ia"))
 
         with st.expander("📸 Import Magique : Mettre à jour mon portefeuille par Capture d'Écran ou Copier-Coller (IA Gemini)", expanded=False):
-            mode_imp_ia = st.radio(
-                "Méthode d'importation :",
-                ["📋 Copier-Coller le texte de mon courtier (Ultra-rapide)", "📸 Déposer une Capture d'Écran (PNG / JPG)"],
-                horizontal=True,
-                key="rad_mode_imp_ia",
-            )
-
-            cle_gem_vis = ""
-            if hasattr(st, "secrets"):
-                for k_s in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
-                    v_s = str(st.secrets.get(k_s, "")).strip().strip('"').strip("'")
-                    if v_s:
-                        cle_gem_vis = v_s
-                        break
-
-            prompt_base_json = (
-                "Extrais chaque ligne d'action détenue dans ce portefeuille boursier. "
-                "Réponds UNIQUEMENT avec un tableau JSON valide de la forme : "
-                '[{"nom": "TotalEnergies", "qte": 25, "pru": 54.20}]. '
-                "Utilise exactement les noms standards du catalogue si tu reconnais l'entreprise "
-                "(ex: TotalEnergies, Air Liquide, AXA, Rubis, LVMH, Sanofi, Engie, Vinci, BNP Paribas, "
-                "Pernod Ricard, Schneider Electric, Veolia, Alphabet - Google, Microsoft, Apple, Realty Income)."
-            )
-
-            if "Copier-Coller" in mode_imp_ia:
-                texte_courtier = st.text_area(
-                    "Collez ici en vrac les lignes copiées depuis votre courtier (BoursoBank, Crédit Agricole, Fortuneo, Bourse Direct, Excel...) :",
-                    placeholder="Exemple : TotalEnergies 25 titres PRU 54,20 € | Engie 40 actions à 15,10 € | Rubis 30 x 24,50 €...",
-                    height=100,
-                    key="txt_imp_courtier",
+            if not est_pro_max:
+                afficher_verrou_saas(
+                    "Import Magique IA (Lecture optique de Capture d'Écran & Copier-Coller Courtier)",
+                    "👑 Offre Pro (8,90 €/mois)",
+                    "Importez ou mettez à jour toutes les lignes et PRU de votre portefeuille en 1 clic grâce à Gemini Vision."
                 )
-                if st.button("🤖 Extraire mes positions depuis ce texte", type="primary", key="btn_ext_txt"):
-                    if not cle_gem_vis:
-                        st.error("⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit.")
-                    elif not texte_courtier.strip():
-                        st.warning("⚠️ Collez d'abord le texte de vos positions ci-dessus.")
-                    else:
-                        with st.spinner("🧠 Analyse de vos lignes et PRU en cours..."):
-                            payload_t = json.dumps({
-                                "contents": [{"parts": [{"text": f"{prompt_base_json}\n\nTexte du portefeuille :\n{texte_courtier}"}]}]
-                            }).encode("utf-8")
-                            for mod_v in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
-                                try:
-                                    url_v = f"https://generativelanguage.googleapis.com/v1beta/models/{mod_v}:generateContent?key={urllib.parse.quote(cle_gem_vis)}"
-                                    req_v = urllib.request.Request(url_v, data=payload_t, headers={"Content-Type": "application/json"})
-                                    with urllib.request.urlopen(req_v, timeout=25) as resp_v:
-                                        res_v = json.loads(resp_v.read().decode("utf-8"))
-                                        txt_v = res_v["candidates"][0]["content"]["parts"][0]["text"]
-                                        deb_j, fin_j = txt_v.find("["), txt_v.rfind("]")
-                                        if deb_j != -1 and fin_j != -1:
-                                            st.session_state["_lignes_extraites_vision"] = json.loads(txt_v[deb_j:fin_j+1])
-                                            break
-                                except Exception:
-                                    continue
             else:
-                fichier_img = st.file_uploader("Choisir une capture d'écran (PNG, JPG, WEBP)", type=["png", "jpg", "jpeg", "webp"], key="up_vision_pf_v2")
-                if fichier_img is not None:
-                    if st.button("🤖 Analyser ma capture d'écran avec Gemini Vision", type="primary", key="btn_ext_img"):
+                mode_imp_ia = st.radio(
+                    "Méthode d'importation :",
+                    ["📋 Copier-Coller le texte de mon courtier (Ultra-rapide)", "📸 Déposer une Capture d'Écran (PNG / JPG)"],
+                    horizontal=True,
+                    key="rad_mode_imp_ia",
+                )
+
+                cle_gem_vis = ""
+                if hasattr(st, "secrets"):
+                    for k_s in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
+                        v_s = str(st.secrets.get(k_s, "")).strip().strip('"').strip("'")
+                        if v_s:
+                            cle_gem_vis = v_s
+                            break
+
+                prompt_base_json = (
+                    "Extrais chaque ligne d'action détenue dans ce portefeuille boursier. "
+                    "Réponds UNIQUEMENT avec un tableau JSON valide de la forme : "
+                    '[{"nom": "TotalEnergies", "qte": 25, "pru": 54.20}]. '
+                    "Utilise exactement les noms standards du catalogue si tu reconnais l'entreprise "
+                    "(ex: TotalEnergies, Air Liquide, AXA, Rubis, LVMH, Sanofi, Engie, Vinci, BNP Paribas, "
+                    "Pernod Ricard, Schneider Electric, Veolia, Alphabet - Google, Microsoft, Apple, Realty Income)."
+                )
+
+                if "Copier-Coller" in mode_imp_ia:
+                    texte_courtier = st.text_area(
+                        "Collez ici en vrac les lignes copiées depuis votre courtier (BoursoBank, Crédit Agricole, Fortuneo, Bourse Direct, Excel...) :",
+                        placeholder="Exemple : TotalEnergies 25 titres PRU 54,20 € | Engie 40 actions à 15,10 € | Rubis 30 x 24,50 €...",
+                        height=100,
+                        key="txt_imp_courtier",
+                    )
+                    if st.button("🤖 Extraire mes positions depuis ce texte", type="primary", key="btn_ext_txt"):
                         if not cle_gem_vis:
                             st.error("⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit.")
+                        elif not texte_courtier.strip():
+                            st.warning("⚠️ Collez d'abord le texte de vos positions ci-dessus.")
                         else:
-                            import base64
-                            with st.spinner("🔍 Lecture optique de vos lignes et PRU en cours..."):
-                                b64_img = base64.b64encode(fichier_img.read()).decode("utf-8")
-                                mime_t = fichier_img.type or "image/jpeg"
-                                payload_v = json.dumps({
-                                    "contents": [{
-                                        "parts": [
-                                            {"text": prompt_base_json},
-                                            {"inline_data": {"mime_type": mime_t, "data": b64_img}}
-                                        ]
-                                    }]
+                            with st.spinner("🧠 Analyse de vos lignes et PRU en cours..."):
+                                payload_t = json.dumps({
+                                    "contents": [{"parts": [{"text": f"{prompt_base_json}\n\nTexte du portefeuille :\n{texte_courtier}"}]}]
                                 }).encode("utf-8")
                                 for mod_v in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
                                     try:
                                         url_v = f"https://generativelanguage.googleapis.com/v1beta/models/{mod_v}:generateContent?key={urllib.parse.quote(cle_gem_vis)}"
-                                        req_v = urllib.request.Request(url_v, data=payload_v, headers={"Content-Type": "application/json"})
+                                        req_v = urllib.request.Request(url_v, data=payload_t, headers={"Content-Type": "application/json"})
                                         with urllib.request.urlopen(req_v, timeout=25) as resp_v:
                                             res_v = json.loads(resp_v.read().decode("utf-8"))
                                             txt_v = res_v["candidates"][0]["content"]["parts"][0]["text"]
@@ -2912,17 +2970,49 @@ with onglet_portefeuille:
                                                 break
                                     except Exception:
                                         continue
+                else:
+                    fichier_img = st.file_uploader("Choisir une capture d'écran (PNG, JPG, WEBP)", type=["png", "jpg", "jpeg", "webp"], key="up_vision_pf_v2")
+                    if fichier_img is not None:
+                        if st.button("🤖 Analyser ma capture d'écran avec Gemini Vision", type="primary", key="btn_ext_img"):
+                            if not cle_gem_vis:
+                                st.error("⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit.")
+                            else:
+                                import base64
+                                with st.spinner("🔍 Lecture optique de vos lignes et PRU en cours..."):
+                                    b64_img = base64.b64encode(fichier_img.read()).decode("utf-8")
+                                    mime_t = fichier_img.type or "image/jpeg"
+                                    payload_v = json.dumps({
+                                        "contents": [{
+                                            "parts": [
+                                                {"text": prompt_base_json},
+                                                {"inline_data": {"mime_type": mime_t, "data": b64_img}}
+                                            ]
+                                        }]
+                                    }).encode("utf-8")
+                                    for mod_v in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+                                        try:
+                                            url_v = f"https://generativelanguage.googleapis.com/v1beta/models/{mod_v}:generateContent?key={urllib.parse.quote(cle_gem_vis)}"
+                                            req_v = urllib.request.Request(url_v, data=payload_v, headers={"Content-Type": "application/json"})
+                                            with urllib.request.urlopen(req_v, timeout=25) as resp_v:
+                                                res_v = json.loads(resp_v.read().decode("utf-8"))
+                                                txt_v = res_v["candidates"][0]["content"]["parts"][0]["text"]
+                                                deb_j, fin_j = txt_v.find("["), txt_v.rfind("]")
+                                                if deb_j != -1 and fin_j != -1:
+                                                    st.session_state["_lignes_extraites_vision"] = json.loads(txt_v[deb_j:fin_j+1])
+                                                    break
+                                        except Exception:
+                                            continue
 
-            if st.session_state.get("_lignes_extraites_vision"):
-                lignes_ext = st.session_state["_lignes_extraites_vision"]
-                st.success(f"✅ {len(lignes_ext)} position(s) détectée(s) !")
-                st.dataframe(pd.DataFrame(lignes_ext), use_container_width=True)
-                st.button(
-                    "📥 Appliquer ces positions à mon Portefeuille",
-                    type="primary",
-                    use_container_width=True,
-                    on_click=appliquer_import_ia_portefeuille,
-                )
+                if st.session_state.get("_lignes_extraites_vision"):
+                    lignes_ext = st.session_state["_lignes_extraites_vision"]
+                    st.success(f"✅ {len(lignes_ext)} position(s) détectée(s) !")
+                    st.dataframe(pd.DataFrame(lignes_ext), use_container_width=True)
+                    st.button(
+                        "📥 Appliquer ces positions à mon Portefeuille",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=appliquer_import_ia_portefeuille,
+                    )
 
 
 # ------------------------------------------------------------------------------
@@ -2934,7 +3024,7 @@ with onglet_dividendes:
     if not actions_actives_pf:
         st.warning("Ajoutez des actions dans votre portefeuille pour générer votre calendrier de revenus passifs.")
     else:
-        # --- TABLEAU DES PROCHAINS DÉTACHEMENTS (90J - STYLE ARGON) & ENCAISSEMENT ESPÈCES ---
+        # --- TABLEAU DES PROCHAINS DÉTACHEMENTS (90J - EXCLUSIF PRO 8,90 €) ---
         @st.cache_data(ttl=3600)
         def recuperer_prochain_detachement_90j(symbole):
             for srv in ("query1", "query2"):
@@ -2969,64 +3059,65 @@ with onglet_dividendes:
                     continue
             return None, None, None
 
-        lignes_detachement_90j = []
-        source_actions = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
-        for nom_d, pos_d in portefeuille_utilisateur.items():
-            if nom_d in ("Espèces", "_historique_ventes") or not isinstance(pos_d, dict) or float(pos_d.get("qte", 0)) <= 0:
-                continue
-            info_d = source_actions.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
-            sym_d = info_d.get("symbole", "")
-            if not sym_d:
-                continue
-            nb_j, date_ex, mt_unit = recuperer_prochain_detachement_90j(sym_d)
-            if date_ex is not None:
-                qte_d = float(pos_d.get("qte", 0))
-                dev_d = "$" if info_d.get("devise") == "USD" else "€"
-                lignes_detachement_90j.append({
-                    "jours": nb_j,
-                    "Action": nom_d,
-                    "Date Ex-Dividende": date_ex.strftime("%d/%m/%Y"),
-                    "Échéance": f"J-{nb_j}" if nb_j > 0 else "⚡ Aujourd'hui",
-                    "Coupon unitaire": f"{mt_unit:.2f} {dev_d}",
-                    "Total estimé": f"{mt_unit * qte_d:.2f} {dev_d}"
-                })
+        if est_pro_max:
+            lignes_detachement_90j = []
+            source_actions = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
+            for nom_d, pos_d in portefeuille_utilisateur.items():
+                if nom_d in CLES_TECHNIQUES_PF or not isinstance(pos_d, dict) or float(pos_d.get("qte", 0)) <= 0:
+                    continue
+                info_d = source_actions.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
+                sym_d = info_d.get("symbole", "")
+                if not sym_d:
+                    continue
+                nb_j, date_ex, mt_unit = recuperer_prochain_detachement_90j(sym_d)
+                if date_ex is not None:
+                    qte_d = float(pos_d.get("qte", 0))
+                    dev_d = "$" if info_d.get("devise") == "USD" else "€"
+                    lignes_detachement_90j.append({
+                        "jours": nb_j,
+                        "Action": nom_d,
+                        "Date Ex-Dividende": date_ex.strftime("%d/%m/%Y"),
+                        "Échéance": f"J-{nb_j}" if nb_j > 0 else "⚡ Aujourd'hui",
+                        "Coupon unitaire": f"{mt_unit:.2f} {dev_d}",
+                        "Total estimé": f"{mt_unit * qte_d:.2f} {dev_d}"
+                    })
 
-        if lignes_detachement_90j:
-            lignes_detachement_90j.sort(key=lambda x: x["jours"])
-            html_90j = """
-            <div style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.85em; font-weight:800; text-transform:uppercase; color:#3498db;">📌 Prochains Détachements de Dividendes (Horizon 90 Jours)</span>
-                <span class="b-blue">{nb} détachement(s) détecté(s)</span>
-            </div>
-            <table class="r-table">
-            <thead>
-                <tr>
-                    <th style="text-align:left;">Action</th>
-                    <th>Date Ex-Dividende Estimée</th>
-                    <th>Échéance</th>
-                    <th>Coupon Unitaire</th>
-                    <th>Montant Estimé</th>
-                </tr>
-            </thead>
-            <tbody>
-            """.format(nb=len(lignes_detachement_90j))
+            if lignes_detachement_90j:
+                lignes_detachement_90j.sort(key=lambda x: x["jours"])
+                html_90j = """
+                <div style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.85em; font-weight:800; text-transform:uppercase; color:#3498db;">📌 Prochains Détachements de Dividendes (Horizon 90 Jours)</span>
+                    <span class="b-blue">{nb} détachement(s) détecté(s)</span>
+                </div>
+                <table class="r-table">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;">Action</th>
+                        <th>Date Ex-Dividende Estimée</th>
+                        <th>Échéance</th>
+                        <th>Coupon Unitaire</th>
+                        <th>Montant Estimé</th>
+                    </tr>
+                </thead>
+                <tbody>
+                """.format(nb=len(lignes_detachement_90j))
 
-            for item_d in lignes_detachement_90j:
-                j_rest = item_d.get("jours", 90)
-                b_ech = "b-red" if j_rest <= 15 else ("b-blue" if j_rest <= 45 else "b-neutral")
-                html_90j += f"""
-                <tr>
-                    <td class="r-name">🏢 {item_d['Action']}</td>
-                    <td><b>📅 {item_d['Date Ex-Dividende']}</b></td>
-                    <td><span class="{b_ech}">⏳ {item_d['Échéance']}</span></td>
-                    <td>{item_d['Coupon unitaire']} / action</td>
-                    <td><span class="b-green">+{item_d['Total estimé']}</span></td>
-                </tr>
-                """
-            html_90j += "</tbody></table>"
-            afficher_html(html_90j)
+                for item_d in lignes_detachement_90j:
+                    j_rest = item_d.get("jours", 90)
+                    b_ech = "b-red" if j_rest <= 15 else ("b-blue" if j_rest <= 45 else "b-neutral")
+                    html_90j += f"""
+                    <tr>
+                        <td class="r-name">🏢 {item_d['Action']}</td>
+                        <td><b>📅 {item_d['Date Ex-Dividende']}</b></td>
+                        <td><span class="{b_ech}">⏳ {item_d['Échéance']}</span></td>
+                        <td>{item_d['Coupon unitaire']} / action</td>
+                        <td><span class="b-green">+{item_d['Total estimé']}</span></td>
+                    </tr>
+                    """
+                html_90j += "</tbody></table>"
+                afficher_html(html_90j)
 
-        # --- GUICHET D'ENCAISSEMENT DES DIVIDENDES VERS LA POCHE ESPÈCES ---
+        # --- GUICHET D'ENCAISSEMENT DES DIVIDENDES VERS LA POCHE ESPÈCES (PREMIUM & PRO) ---
         def encaisser_dividende_vers_especes():
             act_enc = st.session_state.get("sel_act_enc_div")
             mt_enc = float(st.session_state.get("input_mt_enc_div", 0.0))
@@ -3045,30 +3136,37 @@ with onglet_dividendes:
 
         actions_div_pf = [
             k for k, v in portefeuille_utilisateur.items()
-            if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+            if k not in CLES_TECHNIQUES_PF and isinstance(v, dict) and float(v.get("qte", 0)) > 0
         ]
         if actions_div_pf:
             with st.expander("📥 Guichet d'Encaissement en 1 Clic : Créditer un dividende détaché dans ma poche Espèces", expanded=False):
-                col_ed1, col_ed2, col_ed3 = st.columns([2, 1.5, 1.5])
-                with col_ed1:
-                    act_choisie_div = st.selectbox("Action ayant versé son dividende :", actions_div_pf, key="sel_act_enc_div")
-                info_ed = WATCHLIST_DEFAUT.get(act_choisie_div, {})
-                qte_ed = float(portefeuille_utilisateur.get(act_choisie_div, {}).get("qte", 0))
-                fact_ed = (1.0 / TAUX_USD_EUR) if info_ed.get("devise") == "USD" else 1.0
-                nb_vers_ed = max(1, len(info_ed.get("mois_div", ["Mai"])))
-                bonus_nom_ed = 1.10 if act_choisie_div in st.session_state.get("actions_nominatif", []) else 1.0
-                montant_coupon_defaut = round((qte_ed * float(info_ed.get("div_eur", 0.0)) * fact_ed * bonus_nom_ed) / nb_vers_ed, 2)
-
-                with col_ed2:
-                    st.number_input("Montant net reçu (€) :", min_value=0.01, value=max(0.01, montant_coupon_defaut), step=1.0, key="input_mt_enc_div")
-                with col_ed3:
-                    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-                    st.button(
-                        "💶 Créditer mes Espèces",
-                        type="primary",
-                        use_container_width=True,
-                        on_click=encaisser_dividende_vers_especes,
+                if mode_gratuit:
+                    afficher_verrou_saas(
+                        "Guichet d'Encaissement Automatique des Dividendes vers la Poche Espèces",
+                        "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                        "Créditez vos coupons détachés directement dans vos liquidités PEA/CTO en 1 clic."
                     )
+                else:
+                    col_ed1, col_ed2, col_ed3 = st.columns([2, 1.5, 1.5])
+                    with col_ed1:
+                        act_choisie_div = st.selectbox("Action ayant versé son dividende :", actions_div_pf, key="sel_act_enc_div")
+                    info_ed = WATCHLIST_DEFAUT.get(act_choisie_div, {})
+                    qte_ed = float(portefeuille_utilisateur.get(act_choisie_div, {}).get("qte", 0))
+                    fact_ed = (1.0 / TAUX_USD_EUR) if info_ed.get("devise") == "USD" else 1.0
+                    nb_vers_ed = max(1, len(info_ed.get("mois_div", ["Mai"])))
+                    bonus_nom_ed = 1.10 if act_choisie_div in st.session_state.get("actions_nominatif", []) else 1.0
+                    montant_coupon_defaut = round((qte_ed * float(info_ed.get("div_eur", 0.0)) * fact_ed * bonus_nom_ed) / nb_vers_ed, 2)
+
+                    with col_ed2:
+                        st.number_input("Montant net reçu (€) :", min_value=0.01, value=max(0.01, montant_coupon_defaut), step=1.0, key="input_mt_enc_div")
+                    with col_ed3:
+                        st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                        st.button(
+                            "💶 Créditer mes Espèces",
+                            type="primary",
+                            use_container_width=True,
+                            on_click=encaisser_dividende_vers_especes,
+                        )
 
         mois_ordre = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
         noms_mois_complets = {
@@ -3080,8 +3178,10 @@ with onglet_dividendes:
         details_par_mois = {m: [] for m in mois_ordre}
         total_annuel_div = 0.0
 
-        for nom_act, data_pos in portefeuille_utilisateur.items():
-            if nom_act in ("Espèces", "_historique_ventes") or not isinstance(data_pos, dict) or nom_act not in WATCHLIST_DEFAUT:
+        noms_retenus_div = [l["nom_act"] for l in lignes_triees if not l["est_especes"]]
+        for nom_act in noms_retenus_div:
+            data_pos = portefeuille_utilisateur.get(nom_act, {})
+            if not isinstance(data_pos, dict) or nom_act not in WATCHLIST_DEFAUT:
                 continue
             qte = float(data_pos.get("qte", 0.0))
             if qte <= 0:
@@ -3331,12 +3431,12 @@ with onglet_dividendes:
 with onglet_ia:
     st.subheader("🤖 Coach & Audit IA 2.0 (Diagnostic Instantané & Intelligence Gemini)")
 
-    quota_utilise = st.session_state.get("quota_ia_utilise", 0)
+    quota_utilise = int(st.session_state.get("quota_ia_utilise", 0))
     quota_restant = max(0, quota_ia_max - quota_utilise)
 
     nb_lignes_actions = sum(
         1 for k, v in portefeuille_utilisateur.items()
-        if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0 and k in WATCHLIST_DEFAUT
+        if k not in CLES_TECHNIQUES_PF and isinstance(v, dict) and float(v.get("qte", 0)) > 0 and k in WATCHLIST_DEFAUT
     )
     poids_max_ligne = 0.0
     nom_max_ligne = "Aucune"
@@ -3371,7 +3471,7 @@ with onglet_ia:
         <div class="argon-card">
             <div class="argon-title">⚡ Crédits d'Audit IA du Jour</div>
             <div class="argon-val" style="color:#9b59b6;">{quota_restant} / {quota_ia_max}</div>
-            <div class="argon-sub">Météo VIX ({vix_val:.1f}) & EUR/USD ({TAUX_USD_EUR:.3f}) actifs</div>
+            <div class="argon-sub">Forfait actif : <b>{niveau_acces.upper()}</b> | VIX : {vix_val:.1f}</div>
         </div>
     </div>
     """
@@ -3382,7 +3482,7 @@ with onglet_ia:
     etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
 
     # --- SYNTHÈSE DES PLUS-VALUES ACTÉES POUR LE COACH IA ---
-    hist_ventes_ia = st.session_state.get("historique_ventes", [])
+    hist_ventes_ia = st.session_state.get("historique_ventes", []) if est_pro_max else []
     total_pv_actee_ia = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_ia)
     total_vol_vendu_ia = sum(float(v.get("montant_eur", 0.0)) for v in hist_ventes_ia)
     total_cout_vendu_ia = total_vol_vendu_ia - total_pv_actee_ia
@@ -3391,7 +3491,7 @@ with onglet_ia:
     texte_bilan_ventes_flash = (
         f" Vos arbitrages ont permis d'acter <b>{total_pv_actee_ia:+,.2f} €</b> de plus-values réelles "
         f"(performance d'extraction de <b>{perf_extraction_ia:+.2f}%</b> sur {len(hist_ventes_ia)} vente(s))."
-        if hist_ventes_ia else " Aucune vente actée enregistrée pour le moment."
+        if hist_ventes_ia else ""
     )
 
     html_phrase_flash = f"""
@@ -3597,43 +3697,50 @@ with onglet_ia:
         afficher_html(html_boussole)
 
         with st.expander("📊 Voir la Matrice Complète de Convergence 360° (Toutes vos actions classées)", expanded=False):
-            html_mat = """
-            <table class='r-table'>
-            <thead>
-                <tr>
-                    <th>Rang</th>
-                    <th style='text-align:left;'>Actif</th>
-                    <th>Score Convergence</th>
-                    <th>Radar (/100)</th>
-                    <th>Canal 3 Ans</th>
-                    <th>Timing 30J</th>
-                    <th>Dividende (Payout)</th>
-                    <th>Statut Portefeuille</th>
-                    <th>Ordre Limite Idéal</th>
-                </tr>
-            </thead>
-            <tbody>
-            """
-            for idx_m, om in enumerate(synthese_opportunites, start=1):
-                c_conv = "#2ecc71" if om["ScoreConv"] >= 70 else ("#3498db" if om["ScoreConv"] >= 55 else "#f39c12")
-                html_mat += f"""
-                <tr>
-                    <td><b>#{idx_m}</b></td>
-                    <td class='r-name'>{om['Actif']}<br><span style='font-size:0.80em; opacity:0.75;'>Cours : {om['Prix']}</span></td>
-                    <td>
-                        <div style='font-weight:900; color:{c_conv};'>{om['ScoreConv']} / 100</div>
-                        <div class='score-bg'><div style='width:{om['ScoreConv']}%; background:{c_conv}; height:100%;'></div></div>
-                    </td>
-                    <td><b>{om['ScoreRadar']}</b> (RSI {om['RSI']})</td>
-                    <td>{om['Ecart3A']}</td>
-                    <td>{om['ScoreTiming']}/100 (Stoch {om['Stoch']}%)</td>
-                    <td><b style='color:#2ecc71;'>{om['Rendement']}</b> ({om['Payout']})</td>
-                    <td>{om['BadgePF']}</td>
-                    <td><span class='b-green'>{om['OrdreLimite']}</span></td>
-                </tr>
+            if mode_gratuit:
+                afficher_verrou_saas(
+                    "Matrice Complète de Convergence 360° (Ensemble du Catalogue)",
+                    "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                    "Débloquez le classement croisé intégral sur toutes vos actions PEA et US."
+                )
+            else:
+                html_mat = """
+                <table class='r-table'>
+                <thead>
+                    <tr>
+                        <th>Rang</th>
+                        <th style='text-align:left;'>Actif</th>
+                        <th>Score Convergence</th>
+                        <th>Radar (/100)</th>
+                        <th>Canal 3 Ans</th>
+                        <th>Timing 30J</th>
+                        <th>Dividende (Payout)</th>
+                        <th>Statut Portefeuille</th>
+                        <th>Ordre Limite Idéal</th>
+                    </tr>
+                </thead>
+                <tbody>
                 """
-            html_mat += "</tbody></table>"
-            afficher_html(html_mat)
+                for idx_m, om in enumerate(synthese_opportunites, start=1):
+                    c_conv = "#2ecc71" if om["ScoreConv"] >= 70 else ("#3498db" if om["ScoreConv"] >= 55 else "#f39c12")
+                    html_mat += f"""
+                    <tr>
+                        <td><b>#{idx_m}</b></td>
+                        <td class='r-name'>{om['Actif']}<br><span style='font-size:0.80em; opacity:0.75;'>Cours : {om['Prix']}</span></td>
+                        <td>
+                            <div style='font-weight:900; color:{c_conv};'>{om['ScoreConv']} / 100</div>
+                            <div class='score-bg'><div style='width:{om['ScoreConv']}%; background:{c_conv}; height:100%;'></div></div>
+                        </td>
+                        <td><b>{om['ScoreRadar']}</b> (RSI {om['RSI']})</td>
+                        <td>{om['Ecart3A']}</td>
+                        <td>{om['ScoreTiming']}/100 (Stoch {om['Stoch']}%)</td>
+                        <td><b style='color:#2ecc71;'>{om['Rendement']}</b> ({om['Payout']})</td>
+                        <td>{om['BadgePF']}</td>
+                        <td><span class='b-green'>{om['OrdreLimite']}</span></td>
+                    </tr>
+                    """
+                html_mat += "</tbody></table>"
+                afficher_html(html_mat)
 
     @st.cache_data(ttl=3600)
     def lister_modeles_gemini_actifs(cle_api):
@@ -3688,7 +3795,7 @@ with onglet_ia:
 {lignes_v_recap}"""
         else:
             bloc_recap_pv_md = """#### 💰 Bilan de vos Arbitrages & Plus/Moins-Values Actées (Réalisées)
-- *Aucune vente actée n'est enregistrée dans l'onglet 5 pour le moment. Dès que vous enregistrerez une vente, votre Coach IA analysera ici votre taux de réussite et votre performance réelle extraite.*"""
+- *Aucune vente actée active (ou module Arbitrages réservé à l'offre Pro 8,90 €/mois).*"""
 
         if code_audit == "AUDIT_1":
             return f"""### 🔍 Audit Complet 360°, Plus-Values Actées & Optimisation Fiscale
@@ -3955,17 +4062,20 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         titre_audit = "Optimisation de la Rente & Calendrier"
         code_audit_choisi = "AUDIT_5"
         prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et propose une stratégie pour accélérer mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
-    if col_ia6.button("💰 6. Bilan de mes Plus/Moins-Values Actées", use_container_width=True):
-        titre_audit = "Bilan de mes Arbitrages & Plus-Values Actées"
-        code_audit_choisi = "AUDIT_6"
-        prompt_choisi = "Fais-moi un récapitulatif complet et détaillé des performances de mes plus-values ou moins-values actées (réalisées), analyse mon taux de réussite (win rate), ma performance d'extraction réelle et conseille-moi sur le réinvestissement du cash encaissé."
+    if col_ia6.button("💰 6. Bilan de mes Plus/Moins-Values Actées (Pro)", use_container_width=True):
+        if not est_pro_max:
+            st.warning("🔒 L'audit des Arbitrages & Plus-Values Actées est réservé à l'offre **Pro (8,90 €/mois)**.")
+        else:
+            titre_audit = "Bilan de mes Arbitrages & Plus-Values Actées"
+            code_audit_choisi = "AUDIT_6"
+            prompt_choisi = "Fais-moi un récapitulatif complet et détaillé des performances de mes plus-values ou moins-values actées (réalisées), analyse mon taux de réussite (win rate), ma performance d'extraction réelle et conseille-moi sur le réinvestissement du cash encaissé."
 
     st.markdown("---")
     col_q_input, col_q_btn, col_q_clear = st.columns([4, 1.3, 0.8])
     with col_q_input:
         question_libre = st.text_input(
             "💬 Posez une question personnalisée à votre Coach IA 2.0 :",
-            placeholder="Ex: Fais-moi un bilan de mes plus-values actées et de mon PRU sur Rubis...",
+            placeholder="Ex: Analyse mon PRU sur Rubis et mes opportunités DCA du mois...",
             label_visibility="collapsed",
         )
     with col_q_btn:
@@ -3982,9 +4092,9 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
     if prompt_choisi:
         if quota_restant <= 0:
-            st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez à l'offre Boursy Pro pour disposer de 15 audits par jour !")
+            st.error("🔒 Vous avez atteint votre quota journalier d'analyses IA. Passez au forfait supérieur dans le menu de gauche (3 audits/jour en Premium 4,90 € ou 15 audits/jour en Pro 8,90 €) !")
         else:
-            with st.spinner("🧠 Le Coach IA 2.0 analyse votre portefeuille, vos plus-values actées et les indicateurs techniques en direct..."):
+            with st.spinner("🧠 Le Coach IA 2.0 analyse votre portefeuille et les indicateurs techniques en direct..."):
                 reponse_texte = appeler_gemini_coach(prompt_choisi, code_audit_choisi)
                 st.session_state["quota_ia_utilise"] = quota_utilise + 1
                 sauvegarder_dans_cloud()
@@ -4009,457 +4119,485 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 5 : ARBITRAGES, VENTES & CALENDRIER 12 MOIS ARGON DES PLUS-VALUES ACTÉES
+# ONGLET 5 : ARBITRAGES, VENTES & CALENDRIER 12 MOIS ARGON DES PLUS-VALUES ACTÉES (EXCLUSIF PRO 8,90 €)
 # ------------------------------------------------------------------------------
 with onglet_ventes:
     st.subheader("💰 Journal des Arbitrages & Calendrier 12 Mois des Plus-Values Actées")
-    st.caption("Enregistrez vos cessions : vos actions sont immédiatement déduites du portefeuille, le cash net rejoint vos Espèces (si coché) et vos plus/moins-values s'additionnent mois par mois dans le calendrier Argon.")
 
-    # --- RECHARGEMENT AUTOMATIQUE DES VENTES DEPUIS SUPABASE À LA CONNEXION ---
-    if supabase and st.session_state.get("user"):
-        uid_connecte = str(st.session_state["user"].id)
-        if not st.session_state.get("historique_ventes") and not st.session_state.get("_ventes_videes_volontairement", False):
-            try:
-                rep_v = supabase.table("user_data").select("portefeuille").eq("user_id", uid_connecte).execute()
-                if rep_v.data and len(rep_v.data) > 0:
-                    pf_cloud = rep_v.data[0].get("portefeuille") or {}
-                    if isinstance(pf_cloud, dict) and isinstance(pf_cloud.get("_historique_ventes"), list):
-                        st.session_state["historique_ventes"] = list(pf_cloud["_historique_ventes"])
-            except Exception:
-                pass
-
-    def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
-        qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
-        prix_vente = float(st.session_state.get(f"input_prix_v_{act_v}", pru_v))
-        frais_v = float(st.session_state.get(f"input_frais_v_{act_v}", 0.0))
-        date_v = st.session_state.get(f"input_date_v_{act_v}", datetime.now().date())
-        crediter_esp = bool(st.session_state.get(f"input_cred_esp_{act_v}", True))
-
-        facteur_v = (1.0 / TAUX_USD_EUR) if dev_sym_v == "$" else 1.0
-        montant_brut_eur = qte_vendue * prix_vente * facteur_v
-        montant_net_eur = round(montant_brut_eur - frais_v, 2)
-        cout_init_eur = round(qte_vendue * pru_v * facteur_v, 2)
-        pv_eur = round(montant_net_eur - cout_init_eur, 2)
-        perf_pct = round((pv_eur / cout_init_eur * 100.0) if cout_init_eur > 0 else 0.0, 2)
-
-        nouvelle_vente = {
-            "id": datetime.now().strftime("%Y%m%d%H%M%S"),
-            "date": date_v.strftime("%Y-%m-%d"),
-            "annee": date_v.strftime("%Y"),
-            "mois_num": int(date_v.strftime("%m")),
-            "mois_annee": date_v.strftime("%Y-%m"),
-            "action": act_v,
-            "qte": qte_vendue,
-            "pru": float(pru_v),
-            "prix_vente": float(prix_vente),
-            "frais_eur": float(frais_v),
-            "devise": dev_sym_v,
-            "montant_eur": montant_net_eur,
-            "cout_initial_eur": cout_init_eur,
-            "plus_value_eur": pv_eur,
-            "perf_pct": perf_pct,
-            "credite_especes": crediter_esp,
-        }
-        if "historique_ventes" not in st.session_state or not isinstance(st.session_state["historique_ventes"], list):
-            st.session_state["historique_ventes"] = []
-        st.session_state["historique_ventes"].insert(0, nouvelle_vente)
-        st.session_state["portefeuille"]["_historique_ventes"] = st.session_state["historique_ventes"]
-        st.session_state["_ventes_videes_volontairement"] = False
-
-        # 1. Déduction immédiate des actions dans l'Onglet 2
-        nouvelle_qte = max(0, int(qte_det_v) - qte_vendue)
-        st.session_state[f"qte_{act_v}"] = nouvelle_qte
-        if nouvelle_qte <= 0:
-            st.session_state["portefeuille"].pop(act_v, None)
-        else:
-            if act_v in st.session_state["portefeuille"] and isinstance(st.session_state["portefeuille"][act_v], dict):
-                st.session_state["portefeuille"][act_v]["qte"] = nouvelle_qte
-            else:
-                st.session_state["portefeuille"][act_v] = {"qte": nouvelle_qte, "pru": float(pru_v)}
-
-        # 2. Crédit automatique de la poche Espèces
-        if crediter_esp:
-            esp_dict = st.session_state["portefeuille"].get("Espèces", {})
-            esp_actuel = float(st.session_state.get("pru_Espèces", esp_dict.get("pru", 0.0) if isinstance(esp_dict, dict) else 0.0))
-            nouveau_esp = round(max(0.0, esp_actuel + montant_net_eur), 2)
-            st.session_state["pru_Espèces"] = nouveau_esp
-            st.session_state["qte_Espèces"] = 1 if nouveau_esp > 0 else 0
-            if nouveau_esp > 0:
-                st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouveau_esp}
-
-        sauvegarder_dans_cloud()
-        st.session_state["_derniere_notif_vente"] = (
-            f"✅ Vente actée : -{qte_vendue} {act_v} (Reste : {nouvelle_qte}) | "
-            f"Plus/Moins-Value actée : {pv_eur:+,.2f} € ({perf_pct:+.2f}%)"
-            + (f" | +{montant_net_eur:,.2f} € crédités dans vos Espèces !" if crediter_esp else "")
+    if not est_pro_max:
+        afficher_verrou_saas(
+            "Journal des Arbitrages, Crédit Espèces Auto & Calendrier 12 Mois des Plus-Values Actées",
+            "👑 Offre Pro (8,90 €/mois)",
+            "Ce module exclusif Pro déduit automatiquement vos actions vendues du portefeuille, crédite votre poche Espèces en 1 clic et calcule votre calendrier mensuel Argon de plus-values réalisées ainsi que votre Win Rate."
         )
-
-    def annuler_vente_portefeuille(idx_v):
-        hist = st.session_state.get("historique_ventes", [])
-        if 0 <= idx_v < len(hist):
-            v_suppr = hist.pop(idx_v)
-            st.session_state["portefeuille"]["_historique_ventes"] = hist
-            if len(hist) == 0:
-                st.session_state["_ventes_videes_volontairement"] = True
-
-            act_s = v_suppr.get("action", "")
-            qte_s = int(v_suppr.get("qte", 0))
-            pru_s = float(v_suppr.get("pru", 0.0))
-            mt_s = float(v_suppr.get("montant_eur", 0.0))
-            avait_credite_esp = bool(v_suppr.get("credite_especes", False))
-
-            if act_s and qte_s > 0:
-                pos_s = st.session_state["portefeuille"].get(act_s, {})
-                qte_actuelle = int(st.session_state.get(f"qte_{act_s}", pos_s.get("qte", 0) if isinstance(pos_s, dict) else 0))
-                qte_restauree = qte_actuelle + qte_s
-                pru_rest = float(st.session_state.get(f"pru_{act_s}", pru_s))
-                st.session_state[f"qte_{act_s}"] = qte_restauree
-                st.session_state[f"pru_{act_s}"] = pru_rest
-                st.session_state["portefeuille"][act_s] = {"qte": qte_restauree, "pru": pru_rest}
-
-            if avait_credite_esp and mt_s > 0:
-                esp_d = st.session_state["portefeuille"].get("Espèces", {})
-                esp_act = float(st.session_state.get("pru_Espèces", esp_d.get("pru", 0.0) if isinstance(esp_d, dict) else 0.0))
-                nouv_esp = round(max(0.0, esp_act - mt_s), 2)
-                st.session_state["pru_Espèces"] = nouv_esp
-                if nouv_esp > 0:
-                    st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouv_esp}
-                else:
-                    st.session_state["portefeuille"].pop("Espèces", None)
-                    st.session_state["qte_Espèces"] = 0
-
-            sauvegarder_dans_cloud()
-            st.session_state["_derniere_notif_vente"] = f"🔄 Arbitrage annulé : +{qte_s} action(s) {act_s} restaurée(s) en portefeuille."
-
-    if st.session_state.get("_derniere_notif_vente"):
-        st.success(st.session_state.pop("_derniere_notif_vente"))
-
-    # --- BANDEAU DE CONTRÔLE EN DIRECT (ACTIONS vs ESPÈCES vs TOTAL) ---
-    esp_dispo_actuel = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
-    val_actions_seules = max(0.0, valeur_totale_portefeuille - esp_dispo_actuel)
-
-    html_bar_synchro = f"""
-    <div class="meteo-bar" style="margin-bottom: 16px;">
-        <div class="meteo-item" style="border-left-color:#3498db;">
-            <div>
-                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">📈 VALORISATION ACTIONS SEULES</div>
-                <div style="font-size:1.05em; font-weight:900;">{val_actions_seules:,.2f} €</div>
-            </div>
-        </div>
-        <div class="meteo-item" style="border-left-color:#2ecc71;">
-            <div>
-                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 POCHE ESPÈCES DISPONIBLE</div>
-                <div style="font-size:1.05em; font-weight:900; color:#2ecc71;">{esp_dispo_actuel:,.2f} €</div>
-            </div>
-        </div>
-        <div class="meteo-item" style="border-left-color:#9b59b6;">
-            <div>
-                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💼 PATRIMOINE TOTAL (ACTIONS + ESPÈCES)</div>
-                <div style="font-size:1.05em; font-weight:900;">{valeur_totale_portefeuille:,.2f} € <span style="font-size:0.82em; opacity:0.8;">(PV Latente : {plus_value_globale:+,.2f} €)</span></div>
-            </div>
-        </div>
-    </div>
-    """
-    afficher_html(html_bar_synchro)
-
-    # --- GUICHET D'ENREGISTREMENT D'UNE VENTE ---
-    actions_vendables = [
-        k for k, v in portefeuille_utilisateur.items()
-        if k not in ("Espèces", "_historique_ventes") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
-    ]
-
-    with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction Actions & Crédit Espèces automatiques)", expanded=not bool(st.session_state.get("historique_ventes"))):
-        if not actions_vendables:
-            st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
-        else:
-            action_vendue = st.selectbox("1️⃣ Choisissez l'action vendue :", actions_vendables, key="sel_action_vente")
-
-            pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
-            qte_detenue = int(pos_actuelle_v.get("qte", 1))
-            pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
-            info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
-            dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
-            cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
-
-            st.markdown(
-                f"<div style='background:rgba(52,152,219,0.08); border-left:4px solid #3498db; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:0.9em;'>"
-                f"📌 En portefeuille : <b>{qte_detenue} action(s) {action_vendue}</b> | Votre PRU : <b>{pru_actuel:.2f} {dev_v}</b> | Cours actuel : <b>{cours_actuel_v:.2f} {dev_v}</b>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-            with col_v1:
-                qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(1, qte_detenue), step=1, key=f"input_qte_v_{action_vendue}")
-            with col_v2:
-                prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=float(round(cours_actuel_v, 2)), step=0.5, key=f"input_prix_v_{action_vendue}")
-            with col_v3:
-                frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5, key=f"input_frais_v_{action_vendue}")
-            with col_v4:
-                date_vente = st.date_input("Date de la vente :", value=datetime.now(), key=f"input_date_v_{action_vendue}")
-
-            crediter_especes_chk = st.checkbox(
-                "💶 Créditer automatiquement le montant net encaissé dans ma poche Espèces (Liquidités)",
-                value=True,
-                key=f"input_cred_esp_{action_vendue}",
-            )
-
-            facteur_apercu = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
-            net_apercu_eur = round((qte_a_vendre * prix_vente_saisi * facteur_apercu) - frais_vente_eur, 2)
-            cout_apercu_eur = round(qte_a_vendre * pru_actuel * facteur_apercu, 2)
-            pv_apercu_eur = round(net_apercu_eur - cout_apercu_eur, 2)
-            perf_apercu_pct = (pv_apercu_eur / cout_apercu_eur * 100.0) if cout_apercu_eur > 0 else 0.0
-            c_apercu = "#2ecc71" if pv_apercu_eur >= 0 else "#e74c3c"
-
-            st.markdown(
-                f"<div style='background:rgba(128,128,128,0.05); border:1px dashed {c_apercu}; padding:10px 14px; border-radius:8px; margin:8px 0 12px 0; font-size:0.88em;'>"
-                f"🔎 <b>Aperçu de l'opération :</b> Reste après vente : <b>{qte_detenue - qte_a_vendre} titre(s) {action_vendue}</b> | "
-                f"Cash net encaissé : <b>+{net_apercu_eur:,.2f} €</b> | "
-                f"Plus/Moins-Value actée : <span style='color:{c_apercu}; font-weight:800;'>{pv_apercu_eur:+,.2f} € ({perf_apercu_pct:+.2f}%)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-            st.button(
-                "🚀 Valider la vente & Ajouter au Calendrier des Plus-Values",
-                type="primary",
-                use_container_width=True,
-                on_click=executer_vente_portefeuille,
-                args=(action_vendue, qte_detenue, pru_actuel, dev_v),
-            )
-
-    historique_v = st.session_state.get("historique_ventes", [])
-
-    if not historique_v:
-        st.info("💡 Aucune vente enregistrée pour le moment. Dès que vous validerez une vente ci-dessus, votre calendrier 12 mois Argon s'affichera automatiquement.")
-    else:
-        total_pv_actee = sum(float(v.get("plus_value_eur", 0.0)) for v in historique_v)
-        total_montant_vendu = sum(float(v.get("montant_eur", 0.0)) for v in historique_v)
-        total_cout_initial = sum(float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - float(v.get("plus_value_eur", 0.0)))) for v in historique_v)
-        perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
-
-        nb_gagnantes = sum(1 for v in historique_v if float(v.get("plus_value_eur", 0.0)) >= 0)
-        nb_perdantes = len(historique_v) - nb_gagnantes
-        win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
-        c_pv_act = "#2ecc71" if total_pv_actee >= 0 else "#e74c3c"
-
-        # --- 4 CARTES KPI ARGON ---
-        html_kpi_ventes = f"""
-        <div class="argon-grid">
-            <div class="argon-card" style="border-top: 3px solid {c_pv_act};">
+        afficher_html("""
+        <div class="argon-grid" style="opacity:0.45; pointer-events:none; filter:blur(2px);">
+            <div class="argon-card" style="border-top: 3px solid #2ecc71;">
                 <div class="argon-title">💰 Total Plus/Moins-Values Actées</div>
-                <div class="argon-val" style="color:{c_pv_act};">{total_pv_actee:+,.2f} €</div>
-                <div class="argon-sub">Solde net réalisé sur {len(historique_v)} opération(s)</div>
+                <div class="argon-val" style="color:#2ecc71;">+1 420,00 €</div>
+                <div class="argon-sub">Aperçu réservé aux membres Pro</div>
             </div>
             <div class="argon-card" style="border-top: 3px solid #3498db;">
                 <div class="argon-title">📈 Performance d'Extraction Réelle</div>
-                <div class="argon-val" style="color:{c_pv_act};">{perf_globale_actee_pct:+.2f}%</div>
-                <div class="argon-sub">Sur {total_cout_initial:,.0f} € de capital initial cédé</div>
+                <div class="argon-val" style="color:#2ecc71;">+18,40%</div>
+                <div class="argon-sub">Calcul automatique sur PRU</div>
             </div>
             <div class="argon-card" style="border-top: 3px solid #2ecc71;">
                 <div class="argon-title">🎯 Taux de Réussite (Win Rate)</div>
-                <div class="argon-val" style="color:#3498db;">{win_rate:.0f}%</div>
-                <div class="argon-sub"><span style="color:#2ecc71; font-weight:700;">{nb_gagnantes} gagnante(s)</span> / <span style="color:#e74c3c; font-weight:700;">{nb_perdantes} perdante(s)</span></div>
+                <div class="argon-val" style="color:#3498db;">88%</div>
+                <div class="argon-sub">Suivi des arbitrages gagnants</div>
             </div>
             <div class="argon-card" style="border-top: 3px solid #9b59b6;">
                 <div class="argon-title">💵 Cash Total Extrait (Cessions)</div>
-                <div class="argon-val" style="color:#9b59b6;">{total_montant_vendu:,.2f} €</div>
-                <div class="argon-sub">Poche Espèces actuelle : <b>{esp_dispo_actuel:,.2f} €</b></div>
+                <div class="argon-val" style="color:#9b59b6;">9 140,00 €</div>
+                <div class="argon-sub">Crédit Espèces automatique</div>
             </div>
         </div>
-        """
-        afficher_html(html_kpi_ventes)
+        """)
+    else:
+        st.caption("Enregistrez vos cessions : vos actions sont immédiatement déduites du portefeuille, le cash net rejoint vos Espèces (si coché) et vos plus/moins-values s'additionnent mois par mois dans le calendrier Argon.")
 
-        # ======================================================================
-        # CALENDRIER 12 MOIS ARGON DES PLUS & MOINS-VALUES ACTÉES
-        # ======================================================================
-        annees_dispo = sorted(list({str(v.get("date", str(datetime.now().year)))[:4] for v in historique_v}), reverse=True)
-        if not annees_dispo:
-            annees_dispo = [str(datetime.now().year)]
-        options_filtre_annee = annees_dispo + (["Toutes les années (Cumul)"] if len(annees_dispo) > 1 else [])
-
-        col_an_t, col_an_sel = st.columns([2.8, 1.2])
-        with col_an_t:
-            st.markdown("#### 🗓️ Calendrier Mensuel des Plus & Moins-Values Actées (Style Argon)")
-            st.caption("Somme automatique mois par mois de toutes vos plus-values et moins-values réalisées selon la date de vente.")
-        with col_an_sel:
-            annee_choisie_v = st.selectbox("Période affichée :", options_filtre_annee, key="sel_annee_cal_ventes")
-
-        mois_noms_12 = [
-            (1, "Janvier"), (2, "Février"), (3, "Mars"), (4, "Avril"),
-            (5, "Mai"), (6, "Juin"), (7, "Juillet"), (8, "Août"),
-            (9, "Septembre"), (10, "Octobre"), (11, "Novembre"), (12, "Décembre"),
-        ]
-        pv_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
-        cout_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
-        encaisse_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
-        pills_par_mois_12 = {m_idx: [] for m_idx, _ in mois_noms_12}
-
-        for v in historique_v:
-            date_s = str(v.get("date", ""))
-            if annee_choisie_v == "Toutes les années (Cumul)" or date_s.startswith(str(annee_choisie_v)):
+        # --- RECHARGEMENT AUTOMATIQUE DES VENTES DEPUIS SUPABASE À LA CONNEXION ---
+        if supabase and st.session_state.get("user"):
+            uid_connecte = str(st.session_state["user"].id)
+            if not st.session_state.get("historique_ventes") and not st.session_state.get("_ventes_videes_volontairement", False):
                 try:
-                    m_num = int(date_s.split("-")[1])
+                    rep_v = supabase.table("user_data").select("portefeuille").eq("user_id", uid_connecte).execute()
+                    if rep_v.data and len(rep_v.data) > 0:
+                        pf_cloud = rep_v.data[0].get("portefeuille") or {}
+                        if isinstance(pf_cloud, dict) and isinstance(pf_cloud.get("_historique_ventes"), list):
+                            st.session_state["historique_ventes"] = list(pf_cloud["_historique_ventes"])
                 except Exception:
-                    m_num = int(v.get("mois_num", 1))
-                pv_v = float(v.get("plus_value_eur", 0.0))
-                mt_v = float(v.get("montant_eur", 0.0))
-                cout_v = float(v.get("cout_initial_eur", mt_v - pv_v))
-                pv_par_mois_12[m_num] += pv_v
-                cout_par_mois_12[m_num] += cout_v
-                encaisse_par_mois_12[m_num] += mt_v
-                pills_par_mois_12[m_num].append((v["action"], v["qte"], pv_v, date_s[8:10] + "/" + date_s[5:7]))
+                    pass
 
-        max_abs_mois = max([abs(val) for val in pv_par_mois_12.values()] + [1.0])
-        total_periode_sel = sum(pv_par_mois_12.values())
-        nb_mois_verts = sum(1 for m_i in pv_par_mois_12 if pills_par_mois_12[m_i] and pv_par_mois_12[m_i] >= 0)
-        nb_mois_rouges = sum(1 for m_i in pv_par_mois_12 if pills_par_mois_12[m_i] and pv_par_mois_12[m_i] < 0)
-        meilleur_mois_idx = max(pv_par_mois_12, key=lambda k: pv_par_mois_12[k]) if any(pills_par_mois_12.values()) else None
-        txt_meilleur_mois = f"{dict(mois_noms_12)[meilleur_mois_idx]} ({pv_par_mois_12[meilleur_mois_idx]:+,.2f} €)" if (meilleur_mois_idx and pv_par_mois_12[meilleur_mois_idx] != 0) else "N/A"
-        c_tot_per = "#2ecc71" if total_periode_sel >= 0 else "#e74c3c"
+        def executer_vente_portefeuille(act_v, qte_det_v, pru_v, dev_sym_v):
+            qte_vendue = int(st.session_state.get(f"input_qte_v_{act_v}", 1))
+            prix_vente = float(st.session_state.get(f"input_prix_v_{act_v}", pru_v))
+            frais_v = float(st.session_state.get(f"input_frais_v_{act_v}", 0.0))
+            date_v = st.session_state.get(f"input_date_v_{act_v}", datetime.now().date())
+            crediter_esp = bool(st.session_state.get(f"input_cred_esp_{act_v}", True))
 
-        # Bandeau synthèse du calendrier
-        html_resume_cal = f"""
-        <div class="meteo-bar" style="margin-bottom: 14px;">
-            <div class="meteo-item" style="border-left-color:{c_tot_per};">
+            facteur_v = (1.0 / TAUX_USD_EUR) if dev_sym_v == "$" else 1.0
+            montant_brut_eur = qte_vendue * prix_vente * facteur_v
+            montant_net_eur = round(montant_brut_eur - frais_v, 2)
+            cout_init_eur = round(qte_vendue * pru_v * facteur_v, 2)
+            pv_eur = round(montant_net_eur - cout_init_eur, 2)
+            perf_pct = round((pv_eur / cout_init_eur * 100.0) if cout_init_eur > 0 else 0.0, 2)
+
+            nouvelle_vente = {
+                "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+                "date": date_v.strftime("%Y-%m-%d"),
+                "annee": date_v.strftime("%Y"),
+                "mois_num": int(date_v.strftime("%m")),
+                "mois_annee": date_v.strftime("%Y-%m"),
+                "action": act_v,
+                "qte": qte_vendue,
+                "pru": float(pru_v),
+                "prix_vente": float(prix_vente),
+                "frais_eur": float(frais_v),
+                "devise": dev_sym_v,
+                "montant_eur": montant_net_eur,
+                "cout_initial_eur": cout_init_eur,
+                "plus_value_eur": pv_eur,
+                "perf_pct": perf_pct,
+                "credite_especes": crediter_esp,
+            }
+            if "historique_ventes" not in st.session_state or not isinstance(st.session_state["historique_ventes"], list):
+                st.session_state["historique_ventes"] = []
+            st.session_state["historique_ventes"].insert(0, nouvelle_vente)
+            st.session_state["portefeuille"]["_historique_ventes"] = st.session_state["historique_ventes"]
+            st.session_state["_ventes_videes_volontairement"] = False
+
+            # 1. Déduction immédiate des actions dans l'Onglet 2
+            nouvelle_qte = max(0, int(qte_det_v) - qte_vendue)
+            st.session_state[f"qte_{act_v}"] = nouvelle_qte
+            if nouvelle_qte <= 0:
+                st.session_state["portefeuille"].pop(act_v, None)
+            else:
+                if act_v in st.session_state["portefeuille"] and isinstance(st.session_state["portefeuille"][act_v], dict):
+                    st.session_state["portefeuille"][act_v]["qte"] = nouvelle_qte
+                else:
+                    st.session_state["portefeuille"][act_v] = {"qte": nouvelle_qte, "pru": float(pru_v)}
+
+            # 2. Crédit automatique de la poche Espèces
+            if crediter_esp:
+                esp_dict = st.session_state["portefeuille"].get("Espèces", {})
+                esp_actuel = float(st.session_state.get("pru_Espèces", esp_dict.get("pru", 0.0) if isinstance(esp_dict, dict) else 0.0))
+                nouveau_esp = round(max(0.0, esp_actuel + montant_net_eur), 2)
+                st.session_state["pru_Espèces"] = nouveau_esp
+                st.session_state["qte_Espèces"] = 1 if nouveau_esp > 0 else 0
+                if nouveau_esp > 0:
+                    st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouveau_esp}
+
+            sauvegarder_dans_cloud()
+            st.session_state["_derniere_notif_vente"] = (
+                f"✅ Vente actée : -{qte_vendue} {act_v} (Reste : {nouvelle_qte}) | "
+                f"Plus/Moins-Value actée : {pv_eur:+,.2f} € ({perf_pct:+.2f}%)"
+                + (f" | +{montant_net_eur:,.2f} € crédités dans vos Espèces !" if crediter_esp else "")
+            )
+
+        def annuler_vente_portefeuille(idx_v):
+            hist = st.session_state.get("historique_ventes", [])
+            if 0 <= idx_v < len(hist):
+                v_suppr = hist.pop(idx_v)
+                st.session_state["portefeuille"]["_historique_ventes"] = hist
+                if len(hist) == 0:
+                    st.session_state["_ventes_videes_volontairement"] = True
+
+                act_s = v_suppr.get("action", "")
+                qte_s = int(v_suppr.get("qte", 0))
+                pru_s = float(v_suppr.get("pru", 0.0))
+                mt_s = float(v_suppr.get("montant_eur", 0.0))
+                avait_credite_esp = bool(v_suppr.get("credite_especes", False))
+
+                if act_s and qte_s > 0:
+                    pos_s = st.session_state["portefeuille"].get(act_s, {})
+                    qte_actuelle = int(st.session_state.get(f"qte_{act_s}", pos_s.get("qte", 0) if isinstance(pos_s, dict) else 0))
+                    qte_restauree = qte_actuelle + qte_s
+                    pru_rest = float(st.session_state.get(f"pru_{act_s}", pru_s))
+                    st.session_state[f"qte_{act_s}"] = qte_restauree
+                    st.session_state[f"pru_{act_s}"] = pru_rest
+                    st.session_state["portefeuille"][act_s] = {"qte": qte_restauree, "pru": pru_rest}
+
+                if avait_credite_esp and mt_s > 0:
+                    esp_d = st.session_state["portefeuille"].get("Espèces", {})
+                    esp_act = float(st.session_state.get("pru_Espèces", esp_d.get("pru", 0.0) if isinstance(esp_d, dict) else 0.0))
+                    nouv_esp = round(max(0.0, esp_act - mt_s), 2)
+                    st.session_state["pru_Espèces"] = nouv_esp
+                    if nouv_esp > 0:
+                        st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouv_esp}
+                    else:
+                        st.session_state["portefeuille"].pop("Espèces", None)
+                        st.session_state["qte_Espèces"] = 0
+
+                sauvegarder_dans_cloud()
+                st.session_state["_derniere_notif_vente"] = f"🔄 Arbitrage annulé : +{qte_s} action(s) {act_s} restaurée(s) en portefeuille."
+
+        if st.session_state.get("_derniere_notif_vente"):
+            st.success(st.session_state.pop("_derniere_notif_vente"))
+
+        # --- BANDEAU DE CONTRÔLE EN DIRECT (ACTIONS vs ESPÈCES vs TOTAL) ---
+        esp_dispo_actuel = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
+        val_actions_seules = max(0.0, valeur_totale_portefeuille - esp_dispo_actuel)
+
+        html_bar_synchro = f"""
+        <div class="meteo-bar" style="margin-bottom: 16px;">
+            <div class="meteo-item" style="border-left-color:#3498db;">
                 <div>
-                    <div style="font-size:0.72em; font-weight:800; opacity:0.75;">📊 BILAN NET ({annee_choisie_v})</div>
-                    <div style="font-size:0.98em; font-weight:900; color:{c_tot_per};">{total_periode_sel:+,.2f} € actés</div>
+                    <div style="font-size:0.74em; font-weight:800; opacity:0.75;">📈 VALORISATION ACTIONS SEULES</div>
+                    <div style="font-size:1.05em; font-weight:900;">{val_actions_seules:,.2f} €</div>
                 </div>
             </div>
             <div class="meteo-item" style="border-left-color:#2ecc71;">
                 <div>
-                    <div style="font-size:0.72em; font-weight:800; opacity:0.75;">🟢 MOIS GAGNANTS VS 🔴 PERDANTS</div>
-                    <div style="font-size:0.95em; font-weight:800;"><span style="color:#2ecc71;">{nb_mois_verts} mois vert(s)</span> / <span style="color:#e74c3c;">{nb_mois_rouges} mois rouge(s)</span></div>
+                    <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 POCHE ESPÈCES DISPONIBLE</div>
+                    <div style="font-size:1.05em; font-weight:900; color:#2ecc71;">{esp_dispo_actuel:,.2f} €</div>
                 </div>
             </div>
-            <div class="meteo-item" style="border-left-color:#f39c12;">
+            <div class="meteo-item" style="border-left-color:#9b59b6;">
                 <div>
-                    <div style="font-size:0.72em; font-weight:800; opacity:0.75;">🏆 MEILLEUR MOIS D'EXTRACTION</div>
-                    <div style="font-size:0.95em; font-weight:800;">{txt_meilleur_mois}</div>
+                    <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💼 PATRIMOINE TOTAL (ACTIONS + ESPÈCES)</div>
+                    <div style="font-size:1.05em; font-weight:900;">{valeur_totale_portefeuille:,.2f} € <span style="font-size:0.82em; opacity:0.8;">(PV Latente : {plus_value_globale:+,.2f} €)</span></div>
                 </div>
             </div>
         </div>
         """
-        afficher_html(html_resume_cal)
+        afficher_html(html_bar_synchro)
 
-        # Grille des 12 mois style Argon
-        libelle_an_court = "" if annee_choisie_v == "Toutes les années (Cumul)" else str(annee_choisie_v)
-        html_cal_ventes = "<div class='cal-grid'>"
-        for m_idx, m_label in mois_noms_12:
-            tot_m = pv_par_mois_12[m_idx]
-            cout_m = cout_par_mois_12[m_idx]
-            enc_m = encaisse_par_mois_12[m_idx]
-            perf_m = (tot_m / cout_m * 100.0) if cout_m > 0 else 0.0
-            liste_p = pills_par_mois_12[m_idx]
-            pct_barre = min(100.0, max(6.0, (abs(tot_m) / max_abs_mois) * 100.0)) if liste_p else 0.0
+        # --- GUICHET D'ENREGISTREMENT D'UNE VENTE ---
+        actions_vendables = [
+            k for k, v in portefeuille_utilisateur.items()
+            if k not in CLES_TECHNIQUES_PF and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+        ]
 
-            if liste_p:
-                classe_c = "cal-card-active"
-                c_tot = "#2ecc71" if tot_m >= 0 else "#e74c3c"
-                bord_top = f"border-top: 3px solid {c_tot};"
-                badge_m = f"<span class='{'b-green' if tot_m >= 0 else 'b-red'}' style='font-size:0.72em; padding:2px 7px;'>{perf_m:+.1f}%</span>"
-                pills_str = "".join(
-                    f"<span class='cal-pill' style='border-left: 3px solid {'#2ecc71' if pv_p >= 0 else '#e74c3c'};'>"
-                    f"<b>{act_p}</b> (x{q_p}) : <span style='color:{'#2ecc71' if pv_p >= 0 else '#e74c3c'}; font-weight:800;'>{pv_p:+,.1f} €</span>"
-                    f"</span>"
-                    for act_p, q_p, pv_p, _ in liste_p
-                )
-                barre_html = f"<div class='score-bg' style='height:5px; margin:6px 0 4px 0;'><div style='width:{pct_barre:.0f}%; background:{c_tot}; height:100%;'></div></div>"
-                sous_info_m = f"<div style='font-size:0.72em; opacity:0.7; display:flex; justify-content:space-between;'><span>{len(liste_p)} vente(s)</span><span>Cash : {enc_m:,.0f} €</span></div>"
+        with st.expander("➕ Enregistrer une nouvelle vente d'action (Déduction Actions & Crédit Espèces automatiques)", expanded=not bool(st.session_state.get("historique_ventes"))):
+            if not actions_vendables:
+                st.info("Vous ne possédez actuellement aucune action en portefeuille à vendre. Renseignez d'abord vos lignes dans l'onglet 2.")
             else:
-                classe_c = "cal-card"
-                c_tot = "rgba(128,128,128,0.45)"
-                bord_top = ""
-                badge_m = "<span style='font-size:0.75em; opacity:0.4;'>⚪</span>"
-                pills_str = "<span style='font-size:0.80em; opacity:0.42; font-style:italic;'>Aucune vente ce mois</span>"
-                barre_html = ""
-                sous_info_m = ""
+                action_vendue = st.selectbox("1️⃣ Choisissez l'action vendue :", actions_vendables, key="sel_action_vente")
 
-            html_cal_ventes += f"""
-            <div class="{classe_c}" style="{bord_top}">
-                <div>
-                    <div class="cal-month">
-                        <span>{m_idx:02d}. {m_label} {libelle_an_court}</span>
-                        {badge_m}
-                    </div>
-                    <div style="margin-bottom:8px;">{pills_str}</div>
+                pos_actuelle_v = portefeuille_utilisateur.get(action_vendue, {})
+                qte_detenue = int(pos_actuelle_v.get("qte", 1))
+                pru_actuel = float(pos_actuelle_v.get("pru", 0.0))
+                info_w_v = WATCHLIST_DEFAUT.get(action_vendue, {})
+                dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
+                cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
+
+                st.markdown(
+                    f"<div style='background:rgba(52,152,219,0.08); border-left:4px solid #3498db; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:0.9em;'>"
+                    f"📌 En portefeuille : <b>{qte_detenue} action(s) {action_vendue}</b> | Votre PRU : <b>{pru_actuel:.2f} {dev_v}</b> | Cours actuel : <b>{cours_actuel_v:.2f} {dev_v}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                col_v1, col_v2, col_v3, col_v4 = st.columns(4)
+                with col_v1:
+                    qte_a_vendre = st.number_input("Quantité vendue :", min_value=1, max_value=qte_detenue, value=min(1, qte_detenue), step=1, key=f"input_qte_v_{action_vendue}")
+                with col_v2:
+                    prix_vente_saisi = st.number_input(f"Prix de vente unitaire ({dev_v}) :", min_value=0.01, value=float(round(cours_actuel_v, 2)), step=0.5, key=f"input_prix_v_{action_vendue}")
+                with col_v3:
+                    frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5, key=f"input_frais_v_{action_vendue}")
+                with col_v4:
+                    date_vente = st.date_input("Date de la vente :", value=datetime.now(), key=f"input_date_v_{action_vendue}")
+
+                crediter_especes_chk = st.checkbox(
+                    "💶 Créditer automatiquement le montant net encaissé dans ma poche Espèces (Liquidités)",
+                    value=True,
+                    key=f"input_cred_esp_{action_vendue}",
+                )
+
+                facteur_apercu = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
+                net_apercu_eur = round((qte_a_vendre * prix_vente_saisi * facteur_apercu) - frais_vente_eur, 2)
+                cout_apercu_eur = round(qte_a_vendre * pru_actuel * facteur_apercu, 2)
+                pv_apercu_eur = round(net_apercu_eur - cout_apercu_eur, 2)
+                perf_apercu_pct = (pv_apercu_eur / cout_apercu_eur * 100.0) if cout_apercu_eur > 0 else 0.0
+                c_apercu = "#2ecc71" if pv_apercu_eur >= 0 else "#e74c3c"
+
+                st.markdown(
+                    f"<div style='background:rgba(128,128,128,0.05); border:1px dashed {c_apercu}; padding:10px 14px; border-radius:8px; margin:8px 0 12px 0; font-size:0.88em;'>"
+                    f"🔎 <b>Aperçu de l'opération :</b> Reste après vente : <b>{qte_detenue - qte_a_vendre} titre(s) {action_vendue}</b> | "
+                    f"Cash net encaissé : <b>+{net_apercu_eur:,.2f} €</b> | "
+                    f"Plus/Moins-Value actée : <span style='color:{c_apercu}; font-weight:800;'>{pv_apercu_eur:+,.2f} € ({perf_apercu_pct:+.2f}%)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                st.button(
+                    "🚀 Valider la vente & Ajouter au Calendrier des Plus-Values",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=executer_vente_portefeuille,
+                    args=(action_vendue, qte_detenue, pru_actuel, dev_v),
+                )
+
+        historique_v = st.session_state.get("historique_ventes", [])
+
+        if not historique_v:
+            st.info("💡 Aucune vente enregistrée pour le moment. Dès que vous validerez une vente ci-dessus, votre calendrier 12 mois Argon s'affichera automatiquement.")
+        else:
+            total_pv_actee = sum(float(v.get("plus_value_eur", 0.0)) for v in historique_v)
+            total_montant_vendu = sum(float(v.get("montant_eur", 0.0)) for v in historique_v)
+            total_cout_initial = sum(float(v.get("cout_initial_eur", float(v.get("montant_eur", 0.0)) - float(v.get("plus_value_eur", 0.0)))) for v in historique_v)
+            perf_globale_actee_pct = (total_pv_actee / total_cout_initial * 100.0) if total_cout_initial > 0 else 0.0
+
+            nb_gagnantes = sum(1 for v in historique_v if float(v.get("plus_value_eur", 0.0)) >= 0)
+            nb_perdantes = len(historique_v) - nb_gagnantes
+            win_rate = (nb_gagnantes / len(historique_v) * 100.0) if historique_v else 0.0
+            c_pv_act = "#2ecc71" if total_pv_actee >= 0 else "#e74c3c"
+
+            # --- 4 CARTES KPI ARGON ---
+            html_kpi_ventes = f"""
+            <div class="argon-grid">
+                <div class="argon-card" style="border-top: 3px solid {c_pv_act};">
+                    <div class="argon-title">💰 Total Plus/Moins-Values Actées</div>
+                    <div class="argon-val" style="color:{c_pv_act};">{total_pv_actee:+,.2f} €</div>
+                    <div class="argon-sub">Solde net réalisé sur {len(historique_v)} opération(s)</div>
                 </div>
-                <div>
-                    {sous_info_m}
-                    {barre_html}
-                    <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px; margin-top:4px;">
-                        <span style="font-size:0.75em; opacity:0.75; margin-right:4px;">Net mois :</span>
-                        <span class="cal-total" style="color:{c_tot};">{tot_m:+,.2f} €</span>
+                <div class="argon-card" style="border-top: 3px solid #3498db;">
+                    <div class="argon-title">📈 Performance d'Extraction Réelle</div>
+                    <div class="argon-val" style="color:{c_pv_act};">{perf_globale_actee_pct:+.2f}%</div>
+                    <div class="argon-sub">Sur {total_cout_initial:,.0f} € de capital initial cédé</div>
+                </div>
+                <div class="argon-card" style="border-top: 3px solid #2ecc71;">
+                    <div class="argon-title">🎯 Taux de Réussite (Win Rate)</div>
+                    <div class="argon-val" style="color:#3498db;">{win_rate:.0f}%</div>
+                    <div class="argon-sub"><span style="color:#2ecc71; font-weight:700;">{nb_gagnantes} gagnante(s)</span> / <span style="color:#e74c3c; font-weight:700;">{nb_perdantes} perdante(s)</span></div>
+                </div>
+                <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                    <div class="argon-title">💵 Cash Total Extrait (Cessions)</div>
+                    <div class="argon-val" style="color:#9b59b6;">{total_montant_vendu:,.2f} €</div>
+                    <div class="argon-sub">Poche Espèces actuelle : <b>{esp_dispo_actuel:,.2f} €</b></div>
+                </div>
+            </div>
+            """
+            afficher_html(html_kpi_ventes)
+
+            # ======================================================================
+            # CALENDRIER 12 MOIS ARGON DES PLUS & MOINS-VALUES ACTÉES
+            # ======================================================================
+            annees_dispo = sorted(list({str(v.get("date", str(datetime.now().year)))[:4] for v in historique_v}), reverse=True)
+            if not annees_dispo:
+                annees_dispo = [str(datetime.now().year)]
+            options_filtre_annee = annees_dispo + (["Toutes les années (Cumul)"] if len(annees_dispo) > 1 else [])
+
+            col_an_t, col_an_sel = st.columns([2.8, 1.2])
+            with col_an_t:
+                st.markdown("#### 🗓️ Calendrier Mensuel des Plus & Moins-Values Actées (Style Argon)")
+                st.caption("Somme automatique mois par mois de toutes vos plus-values et moins-values réalisées selon la date de vente.")
+            with col_an_sel:
+                annee_choisie_v = st.selectbox("Période affichée :", options_filtre_annee, key="sel_annee_cal_ventes")
+
+            mois_noms_12 = [
+                (1, "Janvier"), (2, "Février"), (3, "Mars"), (4, "Avril"),
+                (5, "Mai"), (6, "Juin"), (7, "Juillet"), (8, "Août"),
+                (9, "Septembre"), (10, "Octobre"), (11, "Novembre"), (12, "Décembre"),
+            ]
+            pv_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+            cout_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+            encaisse_par_mois_12 = {m_idx: 0.0 for m_idx, _ in mois_noms_12}
+            pills_par_mois_12 = {m_idx: [] for m_idx, _ in mois_noms_12}
+
+            for v in historique_v:
+                date_s = str(v.get("date", ""))
+                if annee_choisie_v == "Toutes les années (Cumul)" or date_s.startswith(str(annee_choisie_v)):
+                    try:
+                        m_num = int(date_s.split("-")[1])
+                    except Exception:
+                        m_num = int(v.get("mois_num", 1))
+                    pv_v = float(v.get("plus_value_eur", 0.0))
+                    mt_v = float(v.get("montant_eur", 0.0))
+                    cout_v = float(v.get("cout_initial_eur", mt_v - pv_v))
+                    pv_par_mois_12[m_num] += pv_v
+                    cout_par_mois_12[m_num] += cout_v
+                    encaisse_par_mois_12[m_num] += mt_v
+                    pills_par_mois_12[m_num].append((v["action"], v["qte"], pv_v, date_s[8:10] + "/" + date_s[5:7]))
+
+            max_abs_mois = max([abs(val) for val in pv_par_mois_12.values()] + [1.0])
+            total_periode_sel = sum(pv_par_mois_12.values())
+            nb_mois_verts = sum(1 for m_i in pv_par_mois_12 if pills_par_mois_12[m_i] and pv_par_mois_12[m_i] >= 0)
+            nb_mois_rouges = sum(1 for m_i in pv_par_mois_12 if pills_par_mois_12[m_i] and pv_par_mois_12[m_i] < 0)
+            meilleur_mois_idx = max(pv_par_mois_12, key=lambda k: pv_par_mois_12[k]) if any(pills_par_mois_12.values()) else None
+            txt_meilleur_mois = f"{dict(mois_noms_12)[meilleur_mois_idx]} ({pv_par_mois_12[meilleur_mois_idx]:+,.2f} €)" if (meilleur_mois_idx and pv_par_mois_12[meilleur_mois_idx] != 0) else "N/A"
+            c_tot_per = "#2ecc71" if total_periode_sel >= 0 else "#e74c3c"
+
+            html_resume_cal = f"""
+            <div class="meteo-bar" style="margin-bottom: 14px;">
+                <div class="meteo-item" style="border-left-color:{c_tot_per};">
+                    <div>
+                        <div style="font-size:0.72em; font-weight:800; opacity:0.75;">📊 BILAN NET ({annee_choisie_v})</div>
+                        <div style="font-size:0.98em; font-weight:900; color:{c_tot_per};">{total_periode_sel:+,.2f} € actés</div>
+                    </div>
+                </div>
+                <div class="meteo-item" style="border-left-color:#2ecc71;">
+                    <div>
+                        <div style="font-size:0.72em; font-weight:800; opacity:0.75;">🟢 MOIS GAGNANTS VS 🔴 PERDANTS</div>
+                        <div style="font-size:0.95em; font-weight:800;"><span style="color:#2ecc71;">{nb_mois_verts} mois vert(s)</span> / <span style="color:#e74c3c;">{nb_mois_rouges} mois rouge(s)</span></div>
+                    </div>
+                </div>
+                <div class="meteo-item" style="border-left-color:#f39c12;">
+                    <div>
+                        <div style="font-size:0.72em; font-weight:800; opacity:0.75;">🏆 MEILLEUR MOIS D'EXTRACTION</div>
+                        <div style="font-size:0.95em; font-weight:800;">{txt_meilleur_mois}</div>
                     </div>
                 </div>
             </div>
             """
-        html_cal_ventes += "</div>"
-        afficher_html(html_cal_ventes)
+            afficher_html(html_resume_cal)
 
-        # --- TABLEAU RÉCAPITULATIF MOIS PAR MOIS ---
-        st.markdown("#### 📊 Tableau Récapitulatif d'Extraction de Performance Mois par Mois")
-        agregation_mois = {}
-        for v in historique_v:
-            m_key = v.get("mois_annee", str(v.get("date", ""))[:7])
-            if m_key not in agregation_mois:
-                agregation_mois[m_key] = {"nb_ventes": 0, "montant_total": 0.0, "cout_total": 0.0, "pv_totale": 0.0}
-            pv_val = float(v.get("plus_value_eur", 0.0))
-            mt_val = float(v.get("montant_eur", 0.0))
-            ct_val = float(v.get("cout_initial_eur", mt_val - pv_val))
-            agregation_mois[m_key]["nb_ventes"] += 1
-            agregation_mois[m_key]["montant_total"] += mt_val
-            agregation_mois[m_key]["cout_total"] += ct_val
-            agregation_mois[m_key]["pv_totale"] += pv_val
+            libelle_an_court = "" if annee_choisie_v == "Toutes les années (Cumul)" else str(annee_choisie_v)
+            html_cal_ventes = "<div class='cal-grid'>"
+            for m_idx, m_label in mois_noms_12:
+                tot_m = pv_par_mois_12[m_idx]
+                cout_m = cout_par_mois_12[m_idx]
+                enc_m = encaisse_par_mois_12[m_idx]
+                perf_m = (tot_m / cout_m * 100.0) if cout_m > 0 else 0.0
+                liste_p = pills_par_mois_12[m_idx]
+                pct_barre = min(100.0, max(6.0, (abs(tot_m) / max_abs_mois) * 100.0)) if liste_p else 0.0
 
-        html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Opérations</th><th>Capital Initial Vendu (€)</th><th>Cash Net Encaissé (€)</th><th>Plus/Moins-Value Actée (€)</th><th>Performance Extraite (%)</th></tr></thead><tbody>"
-        for m_k in sorted(agregation_mois.keys(), reverse=True):
-            d_m = agregation_mois[m_k]
-            p_m_pct = (d_m["pv_totale"] / d_m["cout_total"] * 100.0) if d_m["cout_total"] > 0 else 0.0
-            b_m = "b-green" if d_m["pv_totale"] >= 0 else "b-red"
-            c_m_col = "#2ecc71" if d_m["pv_totale"] >= 0 else "#e74c3c"
-
-            html_t_mois += f"""
-            <tr>
-                <td class='r-name'>📅 {m_k}</td>
-                <td><b>{d_m['nb_ventes']}</b> vente(s)</td>
-                <td>{d_m['cout_total']:,.2f} €</td>
-                <td><b>{d_m['montant_total']:,.2f} €</b></td>
-                <td><span class='{b_m}'>{d_m['pv_totale']:+,.2f} €</span></td>
-                <td style='color:{c_m_col}; font-weight:800;'>{p_m_pct:+.2f}%</td>
-            </tr>
-            """
-        html_t_mois += "</tbody></table>"
-        afficher_html(html_t_mois)
-
-        with st.expander("📋 Historique détaillé de chaque vente & Annulation (Restauration)", expanded=False):
-            for idx_h, item_h in enumerate(historique_v):
-                col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
-                with col_h1:
-                    badge_esp = "💶 Crédité en Espèces" if item_h.get("credite_especes") else "📤 Hors Espèces"
-                    st.markdown(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
-                    st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} € ({badge_esp})")
-                with col_h2:
-                    col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
-                    st.markdown(f"Plus/Moins-Value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
-                with col_h3:
-                    st.button(
-                        "🗑️ Annuler",
-                        key=f"suppr_vente_{item_h['id']}_{idx_h}",
-                        on_click=annuler_vente_portefeuille,
-                        args=(idx_h,),
-                        use_container_width=True,
+                if liste_p:
+                    classe_c = "cal-card-active"
+                    c_tot = "#2ecc71" if tot_m >= 0 else "#e74c3c"
+                    bord_top = f"border-top: 3px solid {c_tot};"
+                    badge_m = f"<span class='{'b-green' if tot_m >= 0 else 'b-red'}' style='font-size:0.72em; padding:2px 7px;'>{perf_m:+.1f}%</span>"
+                    pills_str = "".join(
+                        f"<span class='cal-pill' style='border-left: 3px solid {'#2ecc71' if pv_p >= 0 else '#e74c3c'};'>"
+                        f"<b>{act_p}</b> (x{q_p}) : <span style='color:{'#2ecc71' if pv_p >= 0 else '#e74c3c'}; font-weight:800;'>{pv_p:+,.1f} €</span>"
+                        f"</span>"
+                        for act_p, q_p, pv_p, _ in liste_p
                     )
-                st.markdown("---")
-# ==============================================================================
+                    barre_html = f"<div class='score-bg' style='height:5px; margin:6px 0 4px 0;'><div style='width:{pct_barre:.0f}%; background:{c_tot}; height:100%;'></div></div>"
+                    sous_info_m = f"<div style='font-size:0.72em; opacity:0.7; display:flex; justify-content:space-between;'><span>{len(liste_p)} vente(s)</span><span>Cash : {enc_m:,.0f} €</span></div>"
+                else:
+                    classe_c = "cal-card"
+                    c_tot = "rgba(128,128,128,0.45)"
+                    bord_top = ""
+                    badge_m = "<span style='font-size:0.75em; opacity:0.4;'>⚪</span>"
+                    pills_str = "<span style='font-size:0.80em; opacity:0.42; font-style:italic;'>Aucune vente ce mois</span>"
+                    barre_html = ""
+                    sous_info_m = ""
+
+                html_cal_ventes += f"""
+                <div class="{classe_c}" style="{bord_top}">
+                    <div>
+                        <div class="cal-month">
+                            <span>{m_idx:02d}. {m_label} {libelle_an_court}</span>
+                            {badge_m}
+                        </div>
+                        <div style="margin-bottom:8px;">{pills_str}</div>
+                    </div>
+                    <div>
+                        {sous_info_m}
+                        {barre_html}
+                        <div style="text-align:right; border-top:1px dashed rgba(128,128,128,0.2); padding-top:6px; margin-top:4px;">
+                            <span style="font-size:0.75em; opacity:0.75; margin-right:4px;">Net mois :</span>
+                            <span class="cal-total" style="color:{c_tot};">{tot_m:+,.2f} €</span>
+                        </div>
+                    </div>
+                </div>
+                """
+            html_cal_ventes += "</div>"
+            afficher_html(html_cal_ventes)
+
+            # --- TABLEAU RÉCAPITULATIF MOIS PAR MOIS ---
+            st.markdown("#### 📊 Tableau Récapitulatif d'Extraction de Performance Mois par Mois")
+            agregation_mois = {}
+            for v in historique_v:
+                m_key = v.get("mois_annee", str(v.get("date", ""))[:7])
+                if m_key not in agregation_mois:
+                    agregation_mois[m_key] = {"nb_ventes": 0, "montant_total": 0.0, "cout_total": 0.0, "pv_totale": 0.0}
+                pv_val = float(v.get("plus_value_eur", 0.0))
+                mt_val = float(v.get("montant_eur", 0.0))
+                ct_val = float(v.get("cout_initial_eur", mt_val - pv_val))
+                agregation_mois[m_key]["nb_ventes"] += 1
+                agregation_mois[m_key]["montant_total"] += mt_val
+                agregation_mois[m_key]["cout_total"] += ct_val
+                agregation_mois[m_key]["pv_totale"] += pv_val
+
+            html_t_mois = "<table class='r-table'><thead><tr><th style='text-align:left;'>Mois (Année-Mois)</th><th>Opérations</th><th>Capital Initial Vendu (€)</th><th>Cash Net Encaissé (€)</th><th>Plus/Moins-Value Actée (€)</th><th>Performance Extraite (%)</th></tr></thead><tbody>"
+            for m_k in sorted(agregation_mois.keys(), reverse=True):
+                d_m = agregation_mois[m_k]
+                p_m_pct = (d_m["pv_totale"] / d_m["cout_total"] * 100.0) if d_m["cout_total"] > 0 else 0.0
+                b_m = "b-green" if d_m["pv_totale"] >= 0 else "b-red"
+                c_m_col = "#2ecc71" if d_m["pv_totale"] >= 0 else "#e74c3c"
+
+                html_t_mois += f"""
+                <tr>
+                    <td class='r-name'>📅 {m_k}</td>
+                    <td><b>{d_m['nb_ventes']}</b> vente(s)</td>
+                    <td>{d_m['cout_total']:,.2f} €</td>
+                    <td><b>{d_m['montant_total']:,.2f} €</b></td>
+                    <td><span class='{b_m}'>{d_m['pv_totale']:+,.2f} €</span></td>
+                    <td style='color:{c_m_col}; font-weight:800;'>{p_m_pct:+.2f}%</td>
+                </tr>
+                """
+            html_t_mois += "</tbody></table>"
+            afficher_html(html_t_mois)
+
+            with st.expander("📋 Historique détaillé de chaque vente & Annulation (Restauration)", expanded=False):
+                for idx_h, item_h in enumerate(historique_v):
+                    col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
+                    with col_h1:
+                        badge_esp = "💶 Crédité en Espèces" if item_h.get("credite_especes") else "📤 Hors Espèces"
+                        st.markdown(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
+                        st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} € ({badge_esp})")
+                    with col_h2:
+                        col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
+                        st.markdown(f"Plus/Moins-Value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
+                    with col_h3:
+                        st.button(
+                            "🗑️ Annuler",
+                            key=f"suppr_vente_{item_h['id']}_{idx_h}",
+                            on_click=annuler_vente_portefeuille,
+                            args=(idx_h,),
+                            use_container_width=True,
+                        )
+                    st.markdown("---")
 # ==============================================================================
 # SUPER-PACK PRO V2 : PEA/CTO, YIELD ON COST, DUEL ETF, BOOST COUPON & STATION 360°
 # ==============================================================================
 try:
     pf_pack = st.session_state.get("portefeuille", {})
     wl_complet_pack = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
-    # Verrouillage SaaS Freemium : limite le radar d'opportunités et la Station 360° aux actions autorisées
     if mode_gratuit:
         wl_pack = {k: v for k, v in wl_complet_pack.items() if k in actions_autorisees}
     else:
@@ -4591,7 +4729,7 @@ try:
     lignes_csv.append("Enveloppe;Action;Symbole;Quantite;PRU;Devise;Cours Actuel;Valorisation EUR;Plus-Value Latente EUR;Rendement Marche %;Rendement sur PRU (YoC) %;Rente Annuelle EUR")
 
     for nom_p, pos_p in pf_pack.items():
-        if nom_p in ("_historique_ventes", "_quota_ia") or not isinstance(pos_p, dict):
+        if nom_p in CLES_TECHNIQUES_PF or not isinstance(pos_p, dict):
             continue
         q_p = float(pos_p.get("qte", 0.0))
         pru_p = float(pos_p.get("pru", 0.0))
@@ -4705,7 +4843,7 @@ try:
     st.sidebar.download_button(
         label="📥 Sauvegarde Locale (Excel / CSV)",
         data=contenu_csv_bytes,
-        file_name=f"boursy_bilan_{datetime.now().strftime('%Y-%m-%d')}.csv",
+        file_name=f"nano_bilan_{datetime.now().strftime('%Y-%m-%d')}.csv",
         mime="text/csv",
         use_container_width=True,
     )
@@ -4718,20 +4856,19 @@ try:
                 alertes_surpond.append((nom_sp, pct_sp, val_sp))
 
     # --------------------------------------------------------------------------
-    # 2. ONGLET 2 : SÉPARATION PEA/CTO, YIELD ON COST & DUEL STOCK-PICKING VS ETF
+    # 2. ONGLET 2 : SÉPARATION PEA/CTO, YIELD ON COST & DUEL ETF
     # --------------------------------------------------------------------------
     if _tab_portefeuille is not None and (cap_inv_pea > 0 or cap_inv_cto > 0):
         with _tab_portefeuille:
             st.markdown("---")
             st.subheader("🏛️ Architecture Patrimoniale : Séparation PEA (€) vs CTO ($), Yield on Cost & Duel ETF")
 
-            # Formule unifiée du Plafond Légal PEA (150 000 €)
             plafond_pea_legal = 150000.0
             pv_actees_tot_pea = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack if v.get("devise", "€") != "$")
             div_enc_pea = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
             versements_nets_pea_unifie = max(0.0, cap_inv_pea - max(0.0, pv_actees_tot_pea + div_enc_pea))
             marge_pea_dispo = max(0.0, plafond_pea_legal - versements_nets_pea_unifie)
-            pct_plafond_pea = min(100.0, (versements_nets_pea_unifie / plafond_pea_legal) * 100.0)
+            pct_plafond_pea = min(100.0, (versements_nets_pea_unifie / plafond_legal_pea) * 100.0)
 
             pv_pea = val_act_pea - cap_inv_pea
             pv_cto = val_act_cto - cap_inv_cto
@@ -4780,221 +4917,242 @@ try:
                 """)
 
             with st.expander("💎 Ouvrir la Matrice du Rendement sur PRU (Yield on Cost & Années d'Amortissement)", expanded=True):
-                st.caption("Le **Yield on Cost (Rendement sur PRU)** mesure le rendement réel que vous procure chaque action par rapport au prix auquel VOUS l'avez achetée.")
-                html_yoc = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Enveloppe</th><th>Votre PRU</th><th>Cours Actuel</th><th>Dividende / An</th><th>Rdt Marché</th><th>💎 Rdt sur PRU (YoC)</th><th>Bonus PRU</th><th>Rente Annuelle</th><th>Remboursé en</th></tr></thead><tbody>"
+                if mode_gratuit:
+                    afficher_verrou_saas(
+                        "Matrice Yield on Cost & Années d'Amortissement",
+                        "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                        "Visualisez votre rendement réel par rapport à votre prix d'achat initial (Yield on Cost)."
+                    )
+                else:
+                    st.caption("Le **Yield on Cost (Rendement sur PRU)** mesure le rendement réel que vous procure chaque action par rapport au prix auquel VOUS l'avez achetée.")
+                    html_yoc = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Enveloppe</th><th>Votre PRU</th><th>Cours Actuel</th><th>Dividende / An</th><th>Rdt Marché</th><th>💎 Rdt sur PRU (YoC)</th><th>Bonus PRU</th><th>Rente Annuelle</th><th>Remboursé en</th></tr></thead><tbody>"
 
-                for item_y in sorted(lignes_yoc_details, key=lambda x: x["yoc"], reverse=True):
-                    c_bonus = "#2ecc71" if item_y["bonus_yoc"] >= 0 else "#f39c12"
-                    b_yoc = "b-green" if item_y["yoc"] >= 4.5 else ("b-blue" if item_y["yoc"] >= 2.5 else "b-orange")
-                    txt_payback = f"{item_y['payback']:.1f} ans" if item_y["payback"] > 0 else "—"
-                    badge_env = "<span class='b-blue'>PEA (€)</span>" if "PEA" in item_y["enveloppe"] else "<span class='b-orange'>CTO ($)</span>"
+                    for item_y in sorted(lignes_yoc_details, key=lambda x: x["yoc"], reverse=True):
+                        c_bonus = "#2ecc71" if item_y["bonus_yoc"] >= 0 else "#f39c12"
+                        b_yoc = "b-green" if item_y["yoc"] >= 4.5 else ("b-blue" if item_y["yoc"] >= 2.5 else "b-orange")
+                        txt_payback = f"{item_y['payback']:.1f} ans" if item_y["payback"] > 0 else "—"
+                        badge_env = "<span class='b-blue'>PEA (€)</span>" if "PEA" in item_y["enveloppe"] else "<span class='b-orange'>CTO ($)</span>"
 
-                    html_yoc += f"""
-                    <tr>
-                        <td class='r-name'>{item_y['nom']} <span style='font-size:0.78em; opacity:0.65;'>(x{item_y['qte']})</span></td>
-                        <td>{badge_env}</td>
-                        <td><b>{item_y['pru']:.2f} {item_y['dev_sym']}</b></td>
-                        <td>{item_y['cours']:.2f} {item_y['dev_sym']}</td>
-                        <td>{item_y['div_unitaire']:.2f} {item_y['dev_sym']}</td>
-                        <td>{item_y['rdt_marche']:.2f}%</td>
-                        <td><span class='{b_yoc}' style='font-weight:900;'>💎 {item_y['yoc']:.2f}%</span></td>
-                        <td style='color:{c_bonus}; font-weight:800;'>{item_y['bonus_yoc']:+.2f}%</td>
-                        <td style='color:#2ecc71; font-weight:800;'>{item_y['rente_eur']:,.2f} €</td>
-                        <td style='font-size:0.85em; opacity:0.85;'>⏳ {txt_payback}</td>
-                    </tr>
-                    """
-                html_yoc += "</tbody></table>"
-                afficher_html(html_yoc)
+                        html_yoc += f"""
+                        <tr>
+                            <td class='r-name'>{item_y['nom']} <span style='font-size:0.78em; opacity:0.65;'>(x{item_y['qte']})</span></td>
+                            <td>{badge_env}</td>
+                            <td><b>{item_y['pru']:.2f} {item_y['dev_sym']}</b></td>
+                            <td>{item_y['cours']:.2f} {item_y['dev_sym']}</td>
+                            <td>{item_y['div_unitaire']:.2f} {item_y['dev_sym']}</td>
+                            <td>{item_y['rdt_marche']:.2f}%</td>
+                            <td><span class='{b_yoc}' style='font-weight:900;'>💎 {item_y['yoc']:.2f}%</span></td>
+                            <td style='color:{c_bonus}; font-weight:800;'>{item_y['bonus_yoc']:+.2f}%</td>
+                            <td style='color:#2ecc71; font-weight:800;'>{item_y['rente_eur']:,.2f} €</td>
+                            <td style='font-size:0.85em; opacity:0.85;'>⏳ {txt_payback}</td>
+                        </tr>
+                        """
+                    html_yoc += "</tbody></table>"
+                    afficher_html(html_yoc)
 
             with st.expander("⚔️ Duel de Performance : Mon Stock-Picking (Total Return) vs ETF MSCI World (CW8) & CAC 40", expanded=True):
-                st.caption("Comparaison de votre performance globale réelle (Plus-values latentes + Plus-values actées + Dividendes annuels) face aux grands indices passifs sur 1 an glissant.")
+                if not est_pro_max:
+                    afficher_verrou_saas(
+                        "Duel de Performance : Stock-Picking vs ETF MSCI World (CW8) & CAC 40",
+                        "👑 Offre Pro (8,90 €/mois)",
+                        "Comparez votre performance globale réelle (Total Return : PV + Rente) face aux grands indices passifs."
+                    )
+                else:
+                    st.caption("Comparaison de votre performance globale réelle (Plus-values latentes + Plus-values actées + Dividendes annuels) face aux grands indices passifs sur 1 an glissant.")
 
-                pv_lat_tot = (val_act_pea + val_act_cto) - (cap_inv_pea + cap_inv_cto)
-                pv_actee_tot = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack)
-                gain_total_return_eur = pv_lat_tot + pv_actee_tot + total_rente_actions_pack
-                cap_base_total = max(1.0, cap_inv_pea + cap_inv_cto)
-                perf_user_tot_pct = (gain_total_return_eur / cap_base_total) * 100.0
+                    pv_lat_tot = (val_act_pea + val_act_cto) - (cap_inv_pea + cap_inv_cto)
+                    pv_actee_tot = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack)
+                    gain_total_return_eur = pv_lat_tot + pv_actee_tot + total_rente_actions_pack
+                    cap_base_total = max(1.0, cap_inv_pea + cap_inv_cto)
+                    perf_user_tot_pct = (gain_total_return_eur / cap_base_total) * 100.0
 
-                def _perf_1an_indice(sym_idx, defaut_pct):
-                    try:
-                        _, cl_i, _, _ = recuperer_donnees(sym_idx)
-                        if cl_i and len(cl_i) >= 30:
-                            idx_deb = max(0, len(cl_i) - min(252, len(cl_i)))
-                            p_deb = float(cl_i[idx_deb])
-                            p_fin = float(cl_i[-1])
-                            if p_deb > 0:
-                                return ((p_fin - p_deb) / p_deb) * 100.0
-                    except Exception:
-                        pass
-                    return defaut_pct
+                    def _perf_1an_indice(sym_idx, defaut_pct):
+                        try:
+                            _, cl_i, _, _ = recuperer_donnees(sym_idx)
+                            if cl_i and len(cl_i) >= 30:
+                                idx_deb = max(0, len(cl_i) - min(252, len(cl_i)))
+                                p_deb = float(cl_i[idx_deb])
+                                p_fin = float(cl_i[-1])
+                                if p_deb > 0:
+                                    return ((p_fin - p_deb) / p_deb) * 100.0
+                        except Exception:
+                            pass
+                        return defaut_pct
 
-                perf_cw8_1a = _perf_1an_indice("CW8.PA", 11.5)
-                perf_cac_1a = _perf_1an_indice("^FCHI", 6.5)
-                perf_sp500_1a = _perf_1an_indice("^GSPC", 13.0)
+                    perf_cw8_1a = _perf_1an_indice("CW8.PA", 11.5)
+                    perf_cac_1a = _perf_1an_indice("^FCHI", 6.5)
+                    perf_sp500_1a = _perf_1an_indice("^GSPC", 13.0)
 
-                gain_sim_cw8 = cap_base_total * (perf_cw8_1a / 100.0)
-                gain_sim_cac = cap_base_total * (perf_cac_1a / 100.0)
-                alpha_vs_cw8 = perf_user_tot_pct - perf_cw8_1a
-                alpha_vs_cac = perf_user_tot_pct - perf_cac_1a
+                    gain_sim_cw8 = cap_base_total * (perf_cw8_1a / 100.0)
+                    gain_sim_cac = cap_base_total * (perf_cac_1a / 100.0)
+                    alpha_vs_cw8 = perf_user_tot_pct - perf_cw8_1a
+                    alpha_vs_cac = perf_user_tot_pct - perf_cac_1a
 
-                c_user_duel = "#2ecc71" if perf_user_tot_pct >= 0 else "#e74c3c"
-                c_alpha_cw8 = "#2ecc71" if alpha_vs_cw8 >= 0 else "#f39c12"
-                c_alpha_cac = "#2ecc71" if alpha_vs_cac >= 0 else "#f39c12"
+                    c_user_duel = "#2ecc71" if perf_user_tot_pct >= 0 else "#e74c3c"
+                    c_alpha_cw8 = "#2ecc71" if alpha_vs_cw8 >= 0 else "#f39c12"
+                    c_alpha_cac = "#2ecc71" if alpha_vs_cac >= 0 else "#f39c12"
 
-                afficher_html(f"""
-                <div class="argon-grid" style="margin-top:6px;">
-                    <div class="argon-card" style="border-top: 3px solid {c_user_duel};">
-                        <div class="argon-title">🏆 Votre Portefeuille (Total Return)</div>
-                        <div class="argon-val" style="color:{c_user_duel};">{perf_user_tot_pct:+.2f}%</div>
-                        <div class="argon-sub">Gain global (PV + Rente) : <b>{gain_total_return_eur:+,.0f} €</b></div>
+                    afficher_html(f"""
+                    <div class="argon-grid" style="margin-top:6px;">
+                        <div class="argon-card" style="border-top: 3px solid {c_user_duel};">
+                            <div class="argon-title">🏆 Votre Portefeuille (Total Return)</div>
+                            <div class="argon-val" style="color:{c_user_duel};">{perf_user_tot_pct:+.2f}%</div>
+                            <div class="argon-sub">Gain global (PV + Rente) : <b>{gain_total_return_eur:+,.0f} €</b></div>
+                        </div>
+                        <div class="argon-card" style="border-top: 3px solid #3498db;">
+                            <div class="argon-title">🌍 ETF MSCI World (CW8.PA - 1 An)</div>
+                            <div class="argon-val" style="color:#3498db;">{perf_cw8_1a:+.2f}%</div>
+                            <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cw8:+,.0f} €</b></div>
+                        </div>
+                        <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                            <div class="argon-title">🇫🇷 Indice CAC 40 (1 An)</div>
+                            <div class="argon-val" style="color:#9b59b6;">{perf_cac_1a:+.2f}%</div>
+                            <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cac:+,.0f} €</b></div>
+                        </div>
+                        <div class="argon-card" style="border-top: 3px solid {c_alpha_cw8};">
+                            <div class="argon-title">⚡ Votre Alpha (Surperformance)</div>
+                            <div class="argon-val" style="color:{c_alpha_cw8}; font-size:1.18em;">{alpha_vs_cw8:+.2f}% vs CW8</div>
+                            <div class="argon-sub">Et <b style="color:{c_alpha_cac};">{alpha_vs_cac:+.2f}% vs CAC 40</b> (S&P 500 : {perf_sp500_1a:+.1f}%)</div>
+                        </div>
                     </div>
-                    <div class="argon-card" style="border-top: 3px solid #3498db;">
-                        <div class="argon-title">🌍 ETF MSCI World (CW8.PA - 1 An)</div>
-                        <div class="argon-val" style="color:#3498db;">{perf_cw8_1a:+.2f}%</div>
-                        <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cw8:+,.0f} €</b></div>
-                    </div>
-                    <div class="argon-card" style="border-top: 3px solid #9b59b6;">
-                        <div class="argon-title">🇫🇷 Indice CAC 40 (1 An)</div>
-                        <div class="argon-val" style="color:#9b59b6;">{perf_cac_1a:+.2f}%</div>
-                        <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cac:+,.0f} €</b></div>
-                    </div>
-                    <div class="argon-card" style="border-top: 3px solid {c_alpha_cw8};">
-                        <div class="argon-title">⚡ Votre Alpha (Surperformance)</div>
-                        <div class="argon-val" style="color:{c_alpha_cw8}; font-size:1.18em;">{alpha_vs_cw8:+.2f}% vs CW8</div>
-                        <div class="argon-sub">Et <b style="color:{c_alpha_cac};">{alpha_vs_cac:+.2f}% vs CAC 40</b> (S&P 500 : {perf_sp500_1a:+.1f}%)</div>
-                    </div>
-                </div>
-                """)
+                    """)
 
     # --------------------------------------------------------------------------
-    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS EN TIROIR (REPLIÉ PAR DÉFAUT)
+    # 3. ONGLET 3 : RADAR DES PROCHAINS DÉTACHEMENTS EN TIROIR (EXCLUSIF PRO 8,90 €)
     # --------------------------------------------------------------------------
     if _tab_dividendes is not None:
         with _tab_dividendes:
             st.markdown("---")
             with st.expander("⏳ Ouvrir le Radar des Prochains Détachements (90 jours) & Simulateur « Boost de Coupon DCA »", expanded=False):
-                st.caption("Repérez les dividendes imminents à 90 jours et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
-
-                mois_actuel_num = datetime.now().month
-                noms_mois_fr = {
-                    1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
-                    5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
-                    9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
-                }
-                fenetre_90j = [
-                    mois_actuel_num,
-                    (mois_actuel_num % 12) + 1,
-                    ((mois_actuel_num + 1) % 12) + 1,
-                    ((mois_actuel_num + 2) % 12) + 1,
-                ]
-                noms_fenetre = [noms_mois_fr[m] for m in fenetre_90j[:3]]
-
-                toutes_actions_div = sorted(list(set(list(WATCHLIST_DEFAUT.keys()) + list(wl_pack.keys()))))
-                detachements_proches = []
-
-                for nom_d in toutes_actions_div:
-                    if nom_d in ("Espèces", "_historique_ventes"):
-                        continue
-
-                    inf_base_d = wl_pack.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
-                    cours_def_d = float(inf_base_d.get("prix_cible", 50.0)) if isinstance(inf_base_d, dict) else 50.0
-                    cours_d = float(prix_tr_pack.get(nom_d, cours_def_d))
-
-                    inf_d, div_tot_d, mois_list_d = _extraire_infos_div_et_mois(nom_d, cours_d)
-                    if div_tot_d <= 0:
-                        continue
-
-                    mois_imminents = [m for m in mois_list_d if m in fenetre_90j]
-                    if mois_imminents:
-                        nb_v_d = max(1, len(mois_list_d))
-                        coupon_unitaire_d = div_tot_d / nb_v_d
-                        dev_d = "$" if inf_d.get("devise") == "USD" else "€"
-                        fact_d = (1.0 / TAUX_USD_EUR) if dev_d == "$" else 1.0
-                        cours_eur_d = max(0.01, cours_d * fact_d)
-
-                        qte_det_d = int(pf_pack.get(nom_d, {}).get("qte", 0)) if isinstance(pf_pack.get(nom_d), dict) else 0
-                        coupon_deja_acquis = qte_det_d * coupon_unitaire_d * len(mois_imminents) * fact_d
-                        nb_titres_dca = max(1, int(budget_dca_pack // cours_eur_d)) if budget_dca_pack >= cours_eur_d else 0
-                        boost_coupon_imm = nb_titres_dca * coupon_unitaire_d * fact_d
-                        boost_rente_annuelle = nb_titres_dca * div_tot_d * fact_d
-                        rdt_coupon_seul = (coupon_unitaire_d / cours_d * 100.0) if cours_d > 0 else 0.0
-
-                        dist_mois = min((m - mois_actuel_num) % 12 for m in mois_imminents)
-
-                        detachements_proches.append({
-                            "nom": nom_d,
-                            "dist": dist_mois,
-                            "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents, key=lambda x: (x - mois_actuel_num) % 12)),
-                            "en_pf": qte_det_d > 0,
-                            "qte_pf": qte_det_d,
-                            "cours": cours_d,
-                            "dev": dev_d,
-                            "coupon_unit": coupon_unitaire_d,
-                            "rdt_coupon": rdt_coupon_seul,
-                            "acquis_eur": coupon_deja_acquis,
-                            "nb_dca": nb_titres_dca,
-                            "boost_imm_eur": boost_coupon_imm,
-                            "boost_an_eur": boost_rente_annuelle,
-                        })
-
-                detachements_proches.sort(key=lambda x: (not x["en_pf"], x["dist"], -x["boost_imm_eur"]))
-
-                if not detachements_proches:
-                    st.info(f"Aucun détachement détecté sur la période {', '.join(noms_fenetre)}.")
+                if not est_pro_max:
+                    afficher_verrou_saas(
+                        "Radar des Prochains Détachements (90J) & Simulateur Boost de Coupon DCA",
+                        "👑 Offre Pro (8,90 €/mois)",
+                        "Repérez les dividendes imminents à 90 jours sur vos lignes et calculez le gain immédiat de coupon si vous y allouez votre DCA."
+                    )
                 else:
-                    total_acquis_fenetre = sum(d["acquis_eur"] for d in detachements_proches)
-                    meilleur_boost = max(detachements_proches, key=lambda x: x["boost_imm_eur"])
+                    st.caption("Repérez les dividendes imminents à 90 jours et calculez le gain immédiat de coupon si vous y allouez votre enveloppe DCA avant le détachement.")
 
-                    afficher_html(f"""
-                    <div class="meteo-bar" style="margin-bottom: 14px;">
-                        <div class="meteo-item" style="border-left-color:#2ecc71;">
-                            <div>
-                                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ RADAR DE DÉTACHEMENTS (90 JOURS GLISSANTS)</div>
-                                <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeur(s) détectée(s))</div>
-                            </div>
-                        </div>
-                        <div class="meteo-item" style="border-left-color:#3498db;">
-                            <div>
-                                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS (MON PORTEFEUILLE)</div>
-                                <div style="font-size:1.02em; font-weight:900; color:#2ecc71;">+{total_acquis_fenetre:,.2f} € attendus</div>
-                            </div>
-                        </div>
-                        <div class="meteo-item" style="border-left-color:#f39c12;">
-                            <div>
-                                <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🚀 MEILLEUR BOOST DCA ({budget_dca_pack:,.0f} €)</div>
-                                <div style="font-size:0.95em; font-weight:900; color:#f39c12;">{meilleur_boost['nom']} : +{meilleur_boost['boost_imm_eur']:,.2f} € dès ce détachement</div>
-                            </div>
-                        </div>
-                    </div>
-                    """)
+                    mois_actuel_num = datetime.now().month
+                    noms_mois_fr = {
+                        1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
+                        5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
+                        9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
+                    }
+                    fenetre_90j = [
+                        mois_actuel_num,
+                        (mois_actuel_num % 12) + 1,
+                        ((mois_actuel_num + 1) % 12) + 1,
+                        ((mois_actuel_num + 2) % 12) + 1,
+                    ]
+                    noms_fenetre = [noms_mois_fr[m] for m in fenetre_90j[:3]]
 
-                    html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>Statut</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
-                    for d_b in detachements_proches:
-                        badge_pf_b = f"<span class='b-green'>💼 {d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>🔍 Radar</span>"
-                        html_boost += f"""
-                        <tr>
-                            <td class='r-name'>{d_b['nom']} <span style='font-size:0.78em; opacity:0.65;'>({d_b['cours']:.2f} {d_b['dev']})</span></td>
-                            <td>📅 <b>{d_b['mois_txt']}</b></td>
-                            <td>{badge_pf_b}</td>
-                            <td><b>{d_b['coupon_unit']:.2f} {d_b['dev']}</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
-                            <td style='color:#2ecc71; font-weight:800;'>+{d_b['acquis_eur']:,.2f} €</td>
-                            <td><b>+{d_b['nb_dca']} action(s)</b></td>
-                            <td><span class='b-orange' style='font-weight:900;'>⚡ +{d_b['boost_imm_eur']:,.2f} €</span></td>
-                            <td style='color:#3498db; font-weight:800;'>+{d_b['boost_an_eur']:,.2f} € / an</td>
-                        </tr>
-                        """
-                    html_boost += "</tbody></table>"
-                    afficher_html(html_boost)
+                    toutes_actions_div = sorted(list(set(list(WATCHLIST_DEFAUT.keys()) + list(wl_complet_pack.keys()))))
+                    detachements_proches = []
+
+                    for nom_d in toutes_actions_div:
+                        if nom_d in CLES_TECHNIQUES_PF:
+                            continue
+
+                        inf_base_d = wl_complet_pack.get(nom_d, WATCHLIST_DEFAUT.get(nom_d, {}))
+                        cours_def_d = float(inf_base_d.get("prix_cible", 50.0)) if isinstance(inf_base_d, dict) else 50.0
+                        cours_d = float(prix_tr_pack.get(nom_d, cours_def_d))
+
+                        inf_d, div_tot_d, mois_list_d = _extraire_infos_div_et_mois(nom_d, cours_d)
+                        if div_tot_d <= 0:
+                            continue
+
+                        mois_imminents = [m for m in mois_list_d if m in fenetre_90j]
+                        if mois_imminents:
+                            nb_v_d = max(1, len(mois_list_d))
+                            coupon_unitaire_d = div_tot_d / nb_v_d
+                            dev_d = "$" if inf_d.get("devise") == "USD" else "€"
+                            fact_d = (1.0 / TAUX_USD_EUR) if dev_d == "$" else 1.0
+                            cours_eur_d = max(0.01, cours_d * fact_d)
+
+                            qte_det_d = int(pf_pack.get(nom_d, {}).get("qte", 0)) if isinstance(pf_pack.get(nom_d), dict) else 0
+                            coupon_deja_acquis = qte_det_d * coupon_unitaire_d * len(mois_imminents) * fact_d
+                            nb_titres_dca = max(1, int(budget_dca_pack // cours_eur_d)) if budget_dca_pack >= cours_eur_d else 0
+                            boost_coupon_imm = nb_titres_dca * coupon_unitaire_d * fact_d
+                            boost_rente_annuelle = nb_titres_dca * div_tot_d * fact_d
+                            rdt_coupon_seul = (coupon_unitaire_d / cours_d * 100.0) if cours_d > 0 else 0.0
+
+                            dist_mois = min((m - mois_actuel_num) % 12 for m in mois_imminents)
+
+                            detachements_proches.append({
+                                "nom": nom_d,
+                                "dist": dist_mois,
+                                "mois_txt": ", ".join(noms_mois_fr[m] for m in sorted(mois_imminents, key=lambda x: (x - mois_actuel_num) % 12)),
+                                "en_pf": qte_det_d > 0,
+                                "qte_pf": qte_det_d,
+                                "cours": cours_d,
+                                "dev": dev_d,
+                                "coupon_unit": coupon_unitaire_d,
+                                "rdt_coupon": rdt_coupon_seul,
+                                "acquis_eur": coupon_deja_acquis,
+                                "nb_dca": nb_titres_dca,
+                                "boost_imm_eur": boost_coupon_imm,
+                                "boost_an_eur": boost_rente_annuelle,
+                            })
+
+                    detachements_proches.sort(key=lambda x: (not x["en_pf"], x["dist"], -x["boost_imm_eur"]))
+
+                    if not detachements_proches:
+                        st.info(f"Aucun détachement détecté sur la période {', '.join(noms_fenetre)}.")
+                    else:
+                        total_acquis_fenetre = sum(d["acquis_eur"] for d in detachements_proches)
+                        meilleur_boost = max(detachements_proches, key=lambda x: x["boost_imm_eur"])
+
+                        afficher_html(f"""
+                        <div class="meteo-bar" style="margin-bottom: 14px;">
+                            <div class="meteo-item" style="border-left-color:#2ecc71;">
+                               <div>
+                                    <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🗓️ RADAR DE DÉTACHEMENTS (90 JOURS GLISSANTS)</div>
+                                    <div style="font-size:0.98em; font-weight:900;">{' • '.join(noms_fenetre)} ({len(detachements_proches)} valeur(s) détectée(s))</div>
+                                </div>
+                            </div>
+                            <div class="meteo-item" style="border-left-color:#3498db;">
+                                <div>
+                                    <div style="font-size:0.74em; font-weight:800; opacity:0.75;">💶 COUPONS DÉJÀ ACQUIS (MON PORTEFEUILLE)</div>
+                                    <div style="font-size:1.02em; font-weight:900; color:#2ecc71;">+{total_acquis_fenetre:,.2f} € attendus</div>
+                                </div>
+                            </div>
+                            <div class="meteo-item" style="border-left-color:#f39c12;">
+                                <div>
+                                    <div style="font-size:0.74em; font-weight:800; opacity:0.75;">🚀 MEILLEUR BOOST DCA ({budget_dca_pack:,.0f} €)</div>
+                                    <div style="font-size:0.95em; font-weight:900; color:#f39c12;">{meilleur_boost['nom']} : +{meilleur_boost['boost_imm_eur']:,.2f} € dès ce détachement</div>
+                                </div>
+                            </div>
+                        </div>
+                        """)
+
+                        html_boost = f"<table class='r-table'><thead><tr><th style='text-align:left;'>Action</th><th>Mois Détachement</th><th>Statut</th><th>Coupon Unitaire</th><th>Coupon Déjà Acquis</th><th>Renfort DCA ({budget_dca_pack:,.0f} €)</th><th>⚡ Boost Coupon Immédiat</th><th>Boost Rente / An</th></tr></thead><tbody>"
+                        for d_b in detachements_proches:
+                            badge_pf_b = f"<span class='b-green'>💼 {d_b['qte_pf']} titre(s)</span>" if d_b["en_pf"] else "<span class='b-blue'>🔍 Radar</span>"
+                            html_boost += f"""
+                            <tr>
+                                <td class='r-name'>{d_b['nom']} <span style='font-size:0.78em; opacity:0.65;'>({d_b['cours']:.2f} {d_b['dev']})</span></td>
+                                <td>📅 <b>{d_b['mois_txt']}</b></td>
+                                <td>{badge_pf_b}</td>
+                                <td><b>{d_b['coupon_unit']:.2f} {d_b['dev']}</b> <span style='font-size:0.8em; opacity:0.7;'>({d_b['rdt_coupon']:.2f}%)</span></td>
+                                <td style='color:#2ecc71; font-weight:800;'>+{d_b['acquis_eur']:,.2f} €</td>
+                                <td><b>+{d_b['nb_dca']} action(s)</b></td>
+                                <td><span class='b-orange' style='font-weight:900;'>⚡ +{d_b['boost_imm_eur']:,.2f} €</span></td>
+                                <td style='color:#3498db; font-weight:800;'>+{d_b['boost_an_eur']:,.2f} € / an</td>
+                            </tr>
+                            """
+                        html_boost += "</tbody></table>"
+                        afficher_html(html_boost)
 
     # --------------------------------------------------------------------------
-    # 4. ONGLET 1 : BANDEAU D'OPPORTUNITÉS IMMÉDIATES & TIROIR GRAPHIQUE 360°
+    # 4. ONGLET 1 : BANDEAU D'OPPORTUNITÉS IMMÉDIATES & STATION GRAPHIQUE 360° (EXCLUSIF PRO 8,90 €)
     # --------------------------------------------------------------------------
     with onglet_radar:
         map_t1_sg = {d["NomBrut"]: d for d in liste_t1_pack if isinstance(d, dict) and "NomBrut" in d}
         opportunites_cibles = []
 
         for nom_op, inf_op in wl_pack.items():
-            if nom_op in ("Espèces", "_historique_ventes") or not isinstance(inf_op, dict):
+            if nom_op in CLES_TECHNIQUES_PF or not isinstance(inf_op, dict):
                 continue
             cible_op = float(inf_op.get("prix_cible", 0.0))
             dev_op = "$" if inf_op.get("devise") == "USD" else "€"
@@ -5043,350 +5201,356 @@ try:
         """)
 
         with st.expander("📈 Ouvrir la Station Graphique Interactive 360° (Canal 3A, EMA 2/12, Supports & TradingView)", expanded=False):
-            st.caption("Sélectionnez n'importe quelle valeur de votre radar pour visualiser ses courbes EMA 2/12, son couloir de régression linéaire à 3 ans, ses supports/résistances 30J et votre PRU.")
-
-            col_sg_filtre, col_sg_act, col_sg_hor, col_sg_mode = st.columns([1.3, 2.0, 1.3, 1.6])
-
-            with col_sg_filtre:
-                filtre_station = st.selectbox(
-                    "Filtrer la liste :",
-                    ["🌐 Tout le Radar", "💼 Mon Portefeuille", "🔥 Top Scores (≥ 60)", "🎯 Prix Cibles Atteints"],
-                    key="sg360_filtre_liste",
+            if not est_pro_max:
+                afficher_verrou_saas(
+                    "Station Graphique Interactive 360° & Terminal TradingView",
+                    "👑 Offre Pro (8,90 €/mois)",
+                    "Visualisez les canaux de régression 3 ans, les croisements EMA 2/12 et le terminal technique avancé."
                 )
-
-            toutes_actions_sg = sorted([k for k in wl_pack.keys() if k not in ("Espèces", "_historique_ventes")])
-            if not toutes_actions_sg:
-                toutes_actions_sg = sorted(list(WATCHLIST_DEFAUT.keys()))
-
-            if filtre_station == "💼 Mon Portefeuille":
-                actions_dispo_sg = [
-                    k for k in toutes_actions_sg
-                    if k in pf_pack and isinstance(pf_pack.get(k), dict) and float(pf_pack[k].get("qte", 0)) > 0
-                ]
-            elif filtre_station == "🔥 Top Scores (≥ 60)":
-                actions_dispo_sg = [k for k in toutes_actions_sg if int(map_t1_sg.get(k, {}).get("Score", 0)) >= 60]
-            elif filtre_station == "🎯 Prix Cibles Atteints":
-                actions_dispo_sg = [
-                    k for k in toutes_actions_sg
-                    if float(prix_tr_pack.get(k, 999999)) <= float(wl_pack.get(k, {}).get("prix_cible", 0)) * 1.02
-                ]
             else:
-                actions_dispo_sg = toutes_actions_sg
+                st.caption("Sélectionnez n'importe quelle valeur de votre radar pour visualiser ses courbes EMA 2/12, son couloir de régression linéaire à 3 ans, ses supports/résistances 30J et votre PRU.")
 
-            if not actions_dispo_sg:
-                actions_dispo_sg = toutes_actions_sg
+                col_sg_filtre, col_sg_act, col_sg_hor, col_sg_mode = st.columns([1.3, 2.0, 1.3, 1.6])
 
-            labels_actions_sg = []
-            map_label_vers_nom = {}
-            for nom_a_sg in actions_dispo_sg:
-                sc_sg = map_t1_sg.get(nom_a_sg, {}).get("Score", 50)
-                pr_sg = map_t1_sg.get(nom_a_sg, {}).get("Prix", "")
-                lbl_sg = f"{nom_a_sg} — {pr_sg} (Score {sc_sg}/100)" if pr_sg else f"{nom_a_sg} (Score {sc_sg}/100)"
-                labels_actions_sg.append(lbl_sg)
-                map_label_vers_nom[lbl_sg] = nom_a_sg
+                with col_sg_filtre:
+                    filtre_station = st.selectbox(
+                        "Filtrer la liste :",
+                        ["🌐 Tout le Radar", "💼 Mon Portefeuille", "🔥 Top Scores (≥ 60)", "🎯 Prix Cibles Atteints"],
+                        key="sg360_filtre_liste",
+                    )
 
-            with col_sg_act:
-                choix_label_sg = st.selectbox("🎯 Action à analyser :", labels_actions_sg, key="sg360_choix_action")
-                action_sg = map_label_vers_nom.get(choix_label_sg, actions_dispo_sg[0])
+                toutes_actions_sg = sorted([k for k in wl_complet_pack.keys() if k not in CLES_TECHNIQUES_PF])
+                if not toutes_actions_sg:
+                    toutes_actions_sg = sorted(list(WATCHLIST_DEFAUT.keys()))
 
-            with col_sg_hor:
-                horizon_sg = st.selectbox(
-                    "🕒 Horizon :",
-                    ["3 Mois (65 séances)", "6 Mois (130 séances)", "1 An (252 séances)", "3 Ans (Canal complet)"],
-                    index=1,
-                    key="sg360_choix_horizon",
-                )
-
-            with col_sg_mode:
-                moteur_sg = st.radio(
-                    "Moteur d'affichage :",
-                    ["📊 Boursy Quant", "🕯️ TradingView"],
-                    horizontal=True,
-                    key="sg360_choix_moteur",
-                )
-
-            info_sg = wl_pack.get(action_sg, WATCHLIST_DEFAUT.get(action_sg, {}))
-            sym_sg = info_sg.get("symbole", "MC.PA")
-            dev_sg = "$" if info_sg.get("devise") == "USD" else "€"
-            cible_sg = float(info_sg.get("prix_cible", 100.0))
-
-            pos_pf_sg = pf_pack.get(action_sg, {})
-            en_pf_sg = isinstance(pos_pf_sg, dict) and float(pos_pf_sg.get("qte", 0)) > 0
-            pru_sg = float(pos_pf_sg.get("pru", 0.0)) if en_pf_sg else 0.0
-            qte_sg = int(pos_pf_sg.get("qte", 0)) if en_pf_sg else 0
-
-            _, closes_sg_full, highs_sg_full, lows_sg_full = recuperer_donnees(sym_sg)
-            if not closes_sg_full or len(closes_sg_full) < 20:
-                closes_sg_full = hist_prix_pack.get(action_sg, [cible_sg] * 60)
-                highs_sg_full = [c * 1.01 for c in closes_sg_full]
-                lows_sg_full = [c * 0.99 for c in closes_sg_full]
-
-            arr_c_full = [float(x) for x in closes_sg_full]
-            n_full = len(arr_c_full)
-
-            if n_full >= 2:
-                moy_x = (n_full - 1) / 2.0
-                moy_y = sum(arr_c_full) / n_full
-                num_reg = sum((i - moy_x) * (arr_c_full[i] - moy_y) for i in range(n_full))
-                den_reg = sum((i - moy_x) ** 2 for i in range(n_full))
-                pente_3a = (num_reg / den_reg) if den_reg > 0 else 0.0
-                intercept_3a = moy_y - pente_3a * moy_x
-                droite_reg_full = [pente_3a * i + intercept_3a for i in range(n_full)]
-                variance_3a = sum((arr_c_full[i] - droite_reg_full[i]) ** 2 for i in range(n_full)) / n_full
-                ecart_type_3a = math.sqrt(max(0.0, variance_3a))
-            else:
-                droite_reg_full = list(arr_c_full)
-                ecart_type_3a = float(arr_c_full[-1] * 0.05)
-
-            canal_haut_full = [droite_reg_full[i] + ecart_type_3a for i in range(n_full)]
-            canal_bas_full = [max(0.01, droite_reg_full[i] - ecart_type_3a) for i in range(n_full)]
-
-            # Calcul exact des EMA 2 et EMA 12 (aligné sur le Tableau 1)
-            s_c_full = pd.Series(arr_c_full)
-            ema_rapide_full = s_c_full.ewm(span=2, adjust=False).mean().tolist()
-            ema_lente_full = s_c_full.ewm(span=12, adjust=False).mean().tolist()
-
-            fenetre_sr = min(30, n_full)
-            sup_30j_sg = float(min(lows_sg_full[-fenetre_sr:])) if lows_sg_full else float(min(arr_c_full[-fenetre_sr:]))
-            res_30j_sg = float(max(highs_sg_full[-fenetre_sr:])) if highs_sg_full else float(max(arr_c_full[-fenetre_sr:]))
-            cours_act_sg = float(arr_c_full[-1])
-            fair_val_act = float(droite_reg_full[-1])
-            ecart_fv_pct = ((cours_act_sg - fair_val_act) / fair_val_act * 100.0) if fair_val_act > 0 else 0.0
-
-            amp_sr_sg = max(0.01, res_30j_sg - sup_30j_sg)
-            pos_canal_30j = max(0.0, min(100.0, ((cours_act_sg - sup_30j_sg) / amp_sr_sg) * 100.0))
-            signal_ema_sg = "🟢 Haussier (EMA 2 > 12)" if ema_rapide_full[-1] >= ema_lente_full[-1] else "🔴 Baissier (EMA 2 < 12)"
-            c_ema_sg = "#2ecc71" if ema_rapide_full[-1] >= ema_lente_full[-1] else "#e74c3c"
-            c_fv_sg = "#2ecc71" if ecart_fv_pct <= 0 else "#f39c12"
-
-            txt_pru_card = (
-                f"<div class='argon-val' style='color:{'#2ecc71' if cours_act_sg >= pru_sg else '#3498db'};'>{pru_sg:.2f} {dev_sg}</div>"
-                f"<div class='argon-sub'>{qte_sg} titre(s) | Écart : {((cours_act_sg - pru_sg)/pru_sg*100):+.1f}%</div>"
-                if en_pf_sg and pru_sg > 0
-                else f"<div class='argon-val' style='color:#9b59b6;'>Hors PF</div><div class='argon-sub'>Cible : <b>{cible_sg:.2f} {dev_sg}</b></div>"
-            )
-
-            html_kpi_station = f"""
-            <div class="argon-grid" style="margin-top: 6px; margin-bottom: 14px;">
-                <div class="argon-card" style="border-top: 3px solid #3498db;">
-                    <div class="argon-title">🏷️ Cours Live ({sym_sg})</div>
-                    <div class="argon-val">{cours_act_sg:.2f} {dev_sg}</div>
-                    <div class="argon-sub">Objectif Cible : <b>{cible_sg:.2f} {dev_sg}</b></div>
-                </div>
-                <div class="argon-card" style="border-top: 3px solid {c_ema_sg};">
-                    <div class="argon-title">⚡ Croisement EMA 2 / 12</div>
-                    <div class="argon-val" style="color:{c_ema_sg}; font-size:1.15em;">{ema_rapide_full[-1]:.2f} / {ema_lente_full[-1]:.2f}</div>
-                    <div class="argon-sub"><b>{signal_ema_sg}</b></div>
-                </div>
-                <div class="argon-card" style="border-top: 3px solid #2ecc71;">
-                    <div class="argon-title">🟢 Support / 🔴 Résistance 30J</div>
-                    <div class="argon-val" style="font-size:1.15em;"><span style="color:#2ecc71;">{sup_30j_sg:.2f}</span> — <span style="color:#e74c3c;">{res_30j_sg:.2f} {dev_sg}</span></div>
-                    <div class="argon-sub">Position dans le couloir 30J : <b>{pos_canal_30j:.0f}%</b></div>
-                </div>
-                <div class="argon-card" style="border-top: 3px solid {c_fv_sg};">
-                    <div class="argon-title">📐 Canal Régression 3 Ans</div>
-                    <div class="argon-val" style="color:{c_fv_sg}; font-size:1.15em;">{ecart_fv_pct:+.1f}% vs Fair Value</div>
-                    <div class="argon-sub">Tunnel : <b>{canal_bas_full[-1]:.1f}</b> ➔ <b>{canal_haut_full[-1]:.1f} {dev_sg}</b></div>
-                </div>
-                <div class="argon-card" style="border-top: 3px solid #9b59b6;">
-                    <div class="argon-title">💼 Votre PRU / Cible</div>
-                    {txt_pru_card}
-                </div>
-            </div>
-            """
-            afficher_html(html_kpi_station)
-
-            if "Boursy Quant" in moteur_sg:
-                col_chk1, col_chk2, col_chk3, col_chk4, col_chk5 = st.columns(5)
-                aff_canal_3a = col_chk1.checkbox("📐 Canal 3 Ans (±1σ)", value=True, key="chk_sg360_c3a")
-                aff_ema = col_chk2.checkbox("⚡ Courbes EMA 2 & 12", value=True, key="chk_sg360_ema")
-                aff_sr30 = col_chk3.checkbox("🟢/🔴 Support & Résist. 30J", value=True, key="chk_sg360_sr")
-                aff_cible = col_chk4.checkbox("🎯 Prix Cible", value=True, key="chk_sg360_cib")
-                aff_pru = col_chk5.checkbox("💼 Mon PRU", value=en_pf_sg, disabled=not en_pf_sg, key="chk_sg360_pru")
-
-                map_nb_j_sg = {
-                    "3 Mois (65 séances)": 65,
-                    "6 Mois (130 séances)": 130,
-                    "1 An (252 séances)": 252,
-                    "3 Ans (Canal complet)": n_full,
-                }
-                nb_j_sg = min(n_full, map_nb_j_sg.get(horizon_sg, 130))
-                pas_sg = 2 if nb_j_sg > 350 else 1
-
-                dates_sg = pd.bdate_range(end=datetime.now(), periods=nb_j_sg)
-                lignes_vega_sg = []
-
-                for i_s in range(0, nb_j_sg, pas_sg):
-                    idx_f = n_full - nb_j_sg + i_s
-                    d_iso = dates_sg[i_s].strftime("%Y-%m-%d")
-                    d_fr = dates_sg[i_s].strftime("%d/%m/%Y")
-
-                    row_sg = {
-                        "Date": d_iso,
-                        "DateFR": d_fr,
-                        "Cours": round(float(arr_c_full[idx_f]), 2),
-                        "EMA_2": round(float(ema_rapide_full[idx_f]), 2),
-                        "EMA_12": round(float(ema_lente_full[idx_f]), 2),
-                        "FairValue_3A": round(float(droite_reg_full[idx_f]), 2),
-                        "Canal_Haut": round(float(canal_haut_full[idx_f]), 2),
-                        "Canal_Bas": round(float(canal_bas_full[idx_f]), 2),
-                        "Support_30J": round(sup_30j_sg, 2),
-                        "Resistance_30J": round(res_30j_sg, 2),
-                        "Prix_Cible": round(cible_sg, 2),
-                    }
-                    if en_pf_sg and pru_sg > 0:
-                        row_sg["Mon_PRU"] = round(pru_sg, 2)
-                    lignes_vega_sg.append(row_sg)
-
-                df_sg = pd.DataFrame(lignes_vega_sg)
-                layers_sg = []
-
-                if aff_canal_3a:
-                    layers_sg.append({
-                        "mark": {"type": "area", "opacity": 0.13, "color": "#3498db"},
-                        "encoding": {
-                            "x": {"field": "Date", "type": "temporal"},
-                            "y": {"field": "Canal_Bas", "type": "quantitative"},
-                            "y2": {"field": "Canal_Haut"},
-                        },
-                    })
-                    layers_sg.append({
-                        "mark": {"type": "line", "strokeDash": [6, 4], "strokeWidth": 1.6, "color": "#3498db", "opacity": 0.8},
-                        "encoding": {
-                            "x": {"field": "Date", "type": "temporal"},
-                            "y": {"field": "FairValue_3A", "type": "quantitative"},
-                        },
-                    })
-
-                if aff_sr30:
-                    layers_sg.append({
-                        "mark": {"type": "rule", "strokeDash": [4, 4], "strokeWidth": 1.8, "color": "#2ecc71"},
-                        "encoding": {"y": {"field": "Support_30J", "type": "quantitative"}},
-                    })
-                    layers_sg.append({
-                        "mark": {"type": "rule", "strokeDash": [4, 4], "strokeWidth": 1.8, "color": "#e74c3c"},
-                        "encoding": {"y": {"field": "Resistance_30J", "type": "quantitative"}},
-                    })
-
-                if aff_cible:
-                    layers_sg.append({
-                        "mark": {"type": "rule", "strokeDash": [2, 3], "strokeWidth": 1.8, "color": "#f39c12"},
-                        "encoding": {"y": {"field": "Prix_Cible", "type": "quantitative"}},
-                    })
-
-                if aff_pru and en_pf_sg and pru_sg > 0:
-                    layers_sg.append({
-                        "mark": {"type": "rule", "strokeWidth": 2.2, "color": "#9b59b6"},
-                        "encoding": {"y": {"field": "Mon_PRU", "type": "quantitative"}},
-                    })
-
-                if aff_ema:
-                    layers_sg.append({
-                        "mark": {"type": "line", "strokeWidth": 2.0, "color": "#f39c12", "opacity": 0.95},
-                        "encoding": {
-                            "x": {"field": "Date", "type": "temporal"},
-                            "y": {"field": "EMA_2", "type": "quantitative"},
-                        },
-                    })
-                    layers_sg.append({
-                        "mark": {"type": "line", "strokeWidth": 2.2, "color": "#e67e22", "strokeDash": [3, 2], "opacity": 0.95},
-                        "encoding": {
-                            "x": {"field": "Date", "type": "temporal"},
-                            "y": {"field": "EMA_12", "type": "quantitative"},
-                        },
-                    })
-
-                layers_sg.append({
-                    "mark": {"type": "line", "strokeWidth": 2.8, "color": "#10b981"},
-                    "encoding": {
-                        "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%b %Y", "grid": False}},
-                        "y": {
-                            "field": "Cours",
-                            "type": "quantitative",
-                            "scale": {"zero": False, "padding": 25},
-                            "axis": {"title": f"Cours ({dev_sg})", "format": ",.1f"},
-                        },
-                        "tooltip": [
-                            {"field": "DateFR", "type": "nominal", "title": "📅 Séance"},
-                            {"field": "Cours", "type": "quantitative", "title": f"🏷️ Cours ({dev_sg})", "format": ",.2f"},
-                            {"field": "EMA_2", "type": "quantitative", "title": "⚡ EMA Rapide (2)", "format": ",.2f"},
-                            {"field": "EMA_12", "type": "quantitative", "title": "📈 EMA Lente (12)", "format": ",.2f"},
-                            {"field": "FairValue_3A", "type": "quantitative", "title": "📐 Fair Value 3A", "format": ",.2f"},
-                            {"field": "Support_30J", "type": "quantitative", "title": "🟢 Support 30J", "format": ",.2f"},
-                            {"field": "Resistance_30J", "type": "quantitative", "title": "🔴 Résistance 30J", "format": ",.2f"},
-                            {"field": "Prix_Cible", "type": "quantitative", "title": "🎯 Prix Cible", "format": ",.2f"},
-                        ],
-                    },
-                })
-
-                spec_station_vega = {
-                    "height": 500,
-                    "layer": layers_sg,
-                    "view": {"stroke": None},
-                }
-                st.vega_lite_chart(df_sg, spec_station_vega, use_container_width=True)
-
-                afficher_html(f"""
-                <div style="display:flex; flex-wrap:wrap; gap:14px; justify-content:center; font-size:0.80em; padding:8px 12px; background:rgba(128,128,128,0.04); border-radius:8px; margin-top:-6px;">
-                    <span><b style="color:#10b981;">━━</b> Cours ({cours_act_sg:.2f} {dev_sg})</span>
-                    <span><b style="color:#f39c12;">━━</b> EMA Rapide 2J ({ema_rapide_full[-1]:.2f})</span>
-                    <span><b style="color:#e67e22;">╍╍</b> EMA Lente 12J ({ema_lente_full[-1]:.2f})</span>
-                    <span><b style="color:#3498db;">▒▒</b> Canal Régression 3A ({canal_bas_full[-1]:.1f} - {canal_haut_full[-1]:.1f})</span>
-                    <span><b style="color:#2ecc71;">┈┈</b> Support 30J ({sup_30j_sg:.2f})</span>
-                    <span><b style="color:#e74c3c;">┈┈</b> Résistance 30J ({res_30j_sg:.2f})</span>
-                    <span><b style="color:#f39c12;">┈┈</b> Cible ({cible_sg:.2f})</span>
-                    {f'<span><b style="color:#9b59b6;">━━</b> Mon PRU ({pru_sg:.2f} {dev_sg})</span>' if (en_pf_sg and pru_sg > 0) else ''}
-                </div>
-                """)
-
-            else:
-                import streamlit.components.v1 as components
-
-                sym_up = sym_sg.upper().strip()
-                if sym_up.endswith(".PA") or sym_up.endswith(".AS") or sym_up.endswith(".BR") or sym_up.endswith(".LS"):
-                    tv_symbol = "EURONEXT:" + sym_up.split(".")[0]
-                elif sym_up.endswith(".DE"):
-                    tv_symbol = "XETR:" + sym_up.split(".")[0]
-                elif sym_up.endswith(".MI"):
-                    tv_symbol = "MIL:" + sym_up.split(".")[0]
-                elif sym_up.endswith(".MC"):
-                    tv_symbol = "BME:" + sym_up.split(".")[0]
-                elif sym_up.endswith(".L"):
-                    tv_symbol = "LSE:" + sym_up.split(".")[0]
+                if filtre_station == "💼 Mon Portefeuille":
+                    actions_dispo_sg = [
+                        k for k in toutes_actions_sg
+                        if k in pf_pack and isinstance(pf_pack.get(k), dict) and float(pf_pack[k].get("qte", 0)) > 0
+                    ]
+                elif filtre_station == "🔥 Top Scores (≥ 60)":
+                    actions_dispo_sg = [k for k in toutes_actions_sg if int(map_t1_sg.get(k, {}).get("Score", 0)) >= 60]
+                elif filtre_station == "🎯 Prix Cibles Atteints":
+                    actions_dispo_sg = [
+                        k for k in toutes_actions_sg
+                        if float(prix_tr_pack.get(k, 999999)) <= float(wl_complet_pack.get(k, {}).get("prix_cible", 0)) * 1.02
+                    ]
                 else:
-                    tv_symbol = sym_up.split(".")[0]
+                    actions_dispo_sg = toutes_actions_sg
 
-                tv_html = f"""
-                <div class="tradingview-widget-container" style="border-radius:12px; overflow:hidden; border:1px solid rgba(128,128,128,0.2);">
-                  <div id="tv_chart_boursy" style="height:520px;"></div>
-                  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-                  <script type="text/javascript">
-                  new TradingView.widget({{
-                    "autosize": true,
-                    "symbol": "{tv_symbol}",
-                    "interval": "D",
-                    "timezone": "Europe/Paris",
-                    "theme": "dark",
-                    "style": "1",
-                    "locale": "fr",
-                    "toolbar_bg": "#0f172a",
-                    "enable_publishing": false,
-                    "withdateranges": true,
-                    "hide_side_toolbar": false,
-                    "allow_symbol_change": true,
-                    "studies": [
-                      "Moving Average@tv-basicstudies",
-                      "Moving Average@tv-basicstudies",
-                      "RSI@tv-basicstudies",
-                      "MACD@tv-basicstudies"
-                    ],
-                    "container_id": "tv_chart_boursy"
-                  }});
-                  </script>
+                if not actions_dispo_sg:
+                    actions_dispo_sg = toutes_actions_sg
+
+                labels_actions_sg = []
+                map_label_vers_nom = {}
+                for nom_a_sg in actions_dispo_sg:
+                    sc_sg = map_t1_sg.get(nom_a_sg, {}).get("Score", 50)
+                    pr_sg = map_t1_sg.get(nom_a_sg, {}).get("Prix", "")
+                    lbl_sg = f"{nom_a_sg} — {pr_sg} (Score {sc_sg}/100)" if pr_sg else f"{nom_a_sg} (Score {sc_sg}/100)"
+                    labels_actions_sg.append(lbl_sg)
+                    map_label_vers_nom[lbl_sg] = nom_a_sg
+
+                with col_sg_act:
+                    choix_label_sg = st.selectbox("🎯 Action à analyser :", labels_actions_sg, key="sg360_choix_action")
+                    action_sg = map_label_vers_nom.get(choix_label_sg, actions_dispo_sg[0])
+
+                with col_sg_hor:
+                    horizon_sg = st.selectbox(
+                        "🕒 Horizon :",
+                        ["3 Mois (65 séances)", "6 Mois (130 séances)", "1 An (252 séances)", "3 Ans (Canal complet)"],
+                        index=1,
+                        key="sg360_choix_horizon",
+                    )
+
+                with col_sg_mode:
+                    moteur_sg = st.radio(
+                        "Moteur d'affichage :",
+                        ["📊 Boursy Quant", "🕯️ TradingView"],
+                        horizontal=True,
+                        key="sg360_choix_moteur",
+                    )
+
+                info_sg = wl_complet_pack.get(action_sg, WATCHLIST_DEFAUT.get(action_sg, {}))
+                sym_sg = info_sg.get("symbole", "MC.PA")
+                dev_sg = "$" if info_sg.get("devise") == "USD" else "€"
+                cible_sg = float(info_sg.get("prix_cible", 100.0))
+
+                pos_pf_sg = pf_pack.get(action_sg, {})
+                en_pf_sg = isinstance(pos_pf_sg, dict) and float(pos_pf_sg.get("qte", 0)) > 0
+                pru_sg = float(pos_pf_sg.get("pru", 0.0)) if en_pf_sg else 0.0
+                qte_sg = int(pos_pf_sg.get("qte", 0)) if en_pf_sg else 0
+
+                _, closes_sg_full, highs_sg_full, lows_sg_full = recuperer_donnees(sym_sg)
+                if not closes_sg_full or len(closes_sg_full) < 20:
+                    closes_sg_full = hist_prix_pack.get(action_sg, [cible_sg] * 60)
+                    highs_sg_full = [c * 1.01 for c in closes_sg_full]
+                    lows_sg_full = [c * 0.99 for c in closes_sg_full]
+
+                arr_c_full = [float(x) for x in closes_sg_full]
+                n_full = len(arr_c_full)
+
+                if n_full >= 2:
+                    moy_x = (n_full - 1) / 2.0
+                    moy_y = sum(arr_c_full) / n_full
+                    num_reg = sum((i - moy_x) * (arr_c_full[i] - moy_y) for i in range(n_full))
+                    den_reg = sum((i - moy_x) ** 2 for i in range(n_full))
+                    pente_3a = (num_reg / den_reg) if den_reg > 0 else 0.0
+                    intercept_3a = moy_y - pente_3a * moy_x
+                    droite_reg_full = [pente_3a * i + intercept_3a for i in range(n_full)]
+                    variance_3a = sum((arr_c_full[i] - droite_reg_full[i]) ** 2 for i in range(n_full)) / n_full
+                    ecart_type_3a = math.sqrt(max(0.0, variance_3a))
+                else:
+                    droite_reg_full = list(arr_c_full)
+                    ecart_type_3a = float(arr_c_full[-1] * 0.05)
+
+                canal_haut_full = [droite_reg_full[i] + ecart_type_3a for i in range(n_full)]
+                canal_bas_full = [max(0.01, droite_reg_full[i] - ecart_type_3a) for i in range(n_full)]
+
+                s_c_full = pd.Series(arr_c_full)
+                ema_rapide_full = s_c_full.ewm(span=2, adjust=False).mean().tolist()
+                ema_lente_full = s_c_full.ewm(span=12, adjust=False).mean().tolist()
+
+                fenetre_sr = min(30, n_full)
+                sup_30j_sg = float(min(lows_sg_full[-fenetre_sr:])) if lows_sg_full else float(min(arr_c_full[-fenetre_sr:]))
+                res_30j_sg = float(max(highs_sg_full[-fenetre_sr:])) if highs_sg_full else float(max(arr_c_full[-fenetre_sr:]))
+                cours_act_sg = float(arr_c_full[-1])
+                fair_val_act = float(droite_reg_full[-1])
+                ecart_fv_pct = ((cours_act_sg - fair_val_act) / fair_val_act * 100.0) if fair_val_act > 0 else 0.0
+
+                amp_sr_sg = max(0.01, res_30j_sg - sup_30j_sg)
+                pos_canal_30j = max(0.0, min(100.0, ((cours_act_sg - sup_30j_sg) / amp_sr_sg) * 100.0))
+                signal_ema_sg = "🟢 Haussier (EMA 2 > 12)" if ema_rapide_full[-1] >= ema_lente_full[-1] else "🔴 Baissier (EMA 2 < 12)"
+                c_ema_sg = "#2ecc71" if ema_rapide_full[-1] >= ema_lente_full[-1] else "#e74c3c"
+                c_fv_sg = "#2ecc71" if ecart_fv_pct <= 0 else "#f39c12"
+
+                txt_pru_card = (
+                    f"<div class='argon-val' style='color:{'#2ecc71' if cours_act_sg >= pru_sg else '#3498db'};'>{pru_sg:.2f} {dev_sg}</div>"
+                    f"<div class='argon-sub'>{qte_sg} titre(s) | Écart : {((cours_act_sg - pru_sg)/pru_sg*100):+.1f}%</div>"
+                    if en_pf_sg and pru_sg > 0
+                    else f"<div class='argon-val' style='color:#9b59b6;'>Hors PF</div><div class='argon-sub'>Cible : <b>{cible_sg:.2f} {dev_sg}</b></div>"
+                )
+
+                html_kpi_station = f"""
+                <div class="argon-grid" style="margin-top: 6px; margin-bottom: 14px;">
+                    <div class="argon-card" style="border-top: 3px solid #3498db;">
+                        <div class="argon-title">🏷️ Cours Live ({sym_sg})</div>
+                        <div class="argon-val">{cours_act_sg:.2f} {dev_sg}</div>
+                        <div class="argon-sub">Objectif Cible : <b>{cible_sg:.2f} {dev_sg}</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid {c_ema_sg};">
+                        <div class="argon-title">⚡ Croisement EMA 2 / 12</div>
+                        <div class="argon-val" style="color:{c_ema_sg}; font-size:1.15em;">{ema_rapide_full[-1]:.2f} / {ema_lente_full[-1]:.2f}</div>
+                        <div class="argon-sub"><b>{signal_ema_sg}</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid #2ecc71;">
+                        <div class="argon-title">🟢 Support / 🔴 Résistance 30J</div>
+                        <div class="argon-val" style="font-size:1.15em;"><span style="color:#2ecc71;">{sup_30j_sg:.2f}</span> — <span style="color:#e74c3c;">{res_30j_sg:.2f} {dev_sg}</span></div>
+                        <div class="argon-sub">Position dans le couloir 30J : <b>{pos_canal_30j:.0f}%</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid {c_fv_sg};">
+                        <div class="argon-title">📐 Canal Régression 3 Ans</div>
+                        <div class="argon-val" style="color:{c_fv_sg}; font-size:1.15em;">{ecart_fv_pct:+.1f}% vs Fair Value</div>
+                        <div class="argon-sub">Tunnel : <b>{canal_bas_full[-1]:.1f}</b> ➔ <b>{canal_haut_full[-1]:.1f} {dev_sg}</b></div>
+                    </div>
+                    <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                        <div class="argon-title">💼 Votre PRU / Cible</div>
+                        {txt_pru_card}
+                    </div>
                 </div>
                 """
-                components.html(tv_html, height=535)
-                st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
+                afficher_html(html_kpi_station)
+
+                if "Boursy Quant" in moteur_sg:
+                    col_chk1, col_chk2, col_chk3, col_chk4, col_chk5 = st.columns(5)
+                    aff_canal_3a = col_chk1.checkbox("📐 Canal 3 Ans (±1σ)", value=True, key="chk_sg360_c3a")
+                    aff_ema = col_chk2.checkbox("⚡ Courbes EMA 2 & 12", value=True, key="chk_sg360_ema")
+                    aff_sr30 = col_chk3.checkbox("🟢/🔴 Support & Résist. 30J", value=True, key="chk_sg360_sr")
+                    aff_cible = col_chk4.checkbox("🎯 Prix Cible", value=True, key="chk_sg360_cib")
+                    aff_pru = col_chk5.checkbox("💼 Mon PRU", value=en_pf_sg, disabled=not en_pf_sg, key="chk_sg360_pru")
+
+                    map_nb_j_sg = {
+                        "3 Mois (65 séances)": 65,
+                        "6 Mois (130 séances)": 130,
+                        "1 An (252 séances)": 252,
+                        "3 Ans (Canal complet)": n_full,
+                    }
+                    nb_j_sg = min(n_full, map_nb_j_sg.get(horizon_sg, 130))
+                    pas_sg = 2 if nb_j_sg > 350 else 1
+
+                    dates_sg = pd.bdate_range(end=datetime.now(), periods=nb_j_sg)
+                    lignes_vega_sg = []
+
+                    for i_s in range(0, nb_j_sg, pas_sg):
+                        idx_f = n_full - nb_j_sg + i_s
+                        d_iso = dates_sg[i_s].strftime("%Y-%m-%d")
+                        d_fr = dates_sg[i_s].strftime("%d/%m/%Y")
+
+                        row_sg = {
+                            "Date": d_iso,
+                            "DateFR": d_fr,
+                            "Cours": round(float(arr_c_full[idx_f]), 2),
+                            "EMA_2": round(float(ema_rapide_full[idx_f]), 2),
+                            "EMA_12": round(float(ema_lente_full[idx_f]), 2),
+                            "FairValue_3A": round(float(droite_reg_full[idx_f]), 2),
+                            "Canal_Haut": round(float(canal_haut_full[idx_f]), 2),
+                            "Canal_Bas": round(float(canal_bas_full[idx_f]), 2),
+                            "Support_30J": round(sup_30j_sg, 2),
+                            "Resistance_30J": round(res_30j_sg, 2),
+                            "Prix_Cible": round(cible_sg, 2),
+                        }
+                        if en_pf_sg and pru_sg > 0:
+                            row_sg["Mon_PRU"] = round(pru_sg, 2)
+                        lignes_vega_sg.append(row_sg)
+
+                    df_sg = pd.DataFrame(lignes_vega_sg)
+                    layers_sg = []
+
+                    if aff_canal_3a:
+                        layers_sg.append({
+                            "mark": {"type": "area", "opacity": 0.13, "color": "#3498db"},
+                            "encoding": {
+                                "x": {"field": "Date", "type": "temporal"},
+                                "y": {"field": "Canal_Bas", "type": "quantitative"},
+                                "y2": {"field": "Canal_Haut"},
+                            },
+                        })
+                        layers_sg.append({
+                            "mark": {"type": "line", "strokeDash": [6, 4], "strokeWidth": 1.6, "color": "#3498db", "opacity": 0.8},
+                            "encoding": {
+                                "x": {"field": "Date", "type": "temporal"},
+                                "y": {"field": "FairValue_3A", "type": "quantitative"},
+                            },
+                        })
+
+                    if aff_sr30:
+                        layers_sg.append({
+                            "mark": {"type": "rule", "strokeDash": [4, 4], "strokeWidth": 1.8, "color": "#2ecc71"},
+                            "encoding": {"y": {"field": "Support_30J", "type": "quantitative"}},
+                        })
+                        layers_sg.append({
+                            "mark": {"type": "rule", "strokeDash": [4, 4], "strokeWidth": 1.8, "color": "#e74c3c"},
+                            "encoding": {"y": {"field": "Resistance_30J", "type": "quantitative"}},
+                        })
+
+                    if aff_cible:
+                        layers_sg.append({
+                            "mark": {"type": "rule", "strokeDash": [2, 3], "strokeWidth": 1.8, "color": "#f39c12"},
+                            "encoding": {"y": {"field": "Prix_Cible", "type": "quantitative"}},
+                        })
+
+                    if aff_pru and en_pf_sg and pru_sg > 0:
+                        layers_sg.append({
+                            "mark": {"type": "rule", "strokeWidth": 2.2, "color": "#9b59b6"},
+                            "encoding": {"y": {"field": "Mon_PRU", "type": "quantitative"}},
+                        })
+
+                    if aff_ema:
+                        layers_sg.append({
+                            "mark": {"type": "line", "strokeWidth": 2.0, "color": "#f39c12", "opacity": 0.95},
+                            "encoding": {
+                                "x": {"field": "Date", "type": "temporal"},
+                                "y": {"field": "EMA_2", "type": "quantitative"},
+                            },
+                        })
+                        layers_sg.append({
+                            "mark": {"type": "line", "strokeWidth": 2.2, "color": "#e67e22", "strokeDash": [3, 2], "opacity": 0.95},
+                            "encoding": {
+                                "x": {"field": "Date", "type": "temporal"},
+                                "y": {"field": "EMA_12", "type": "quantitative"},
+                            },
+                        })
+
+                    layers_sg.append({
+                        "mark": {"type": "line", "strokeWidth": 2.8, "color": "#10b981"},
+                        "encoding": {
+                            "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%b %Y", "grid": False}},
+                            "y": {
+                                "field": "Cours",
+                                "type": "quantitative",
+                                "scale": {"zero": False, "padding": 25},
+                                "axis": {"title": f"Cours ({dev_sg})", "format": ",.1f"},
+                            },
+                            "tooltip": [
+                                {"field": "DateFR", "type": "nominal", "title": "📅 Séance"},
+                                {"field": "Cours", "type": "quantitative", "title": f"🏷️ Cours ({dev_sg})", "format": ",.2f"},
+                                {"field": "EMA_2", "type": "quantitative", "title": "⚡ EMA Rapide (2)", "format": ",.2f"},
+                                {"field": "EMA_12", "type": "quantitative", "title": "📈 EMA Lente (12)", "format": ",.2f"},
+                                {"field": "FairValue_3A", "type": "quantitative", "title": "📐 Fair Value 3A", "format": ",.2f"},
+                                {"field": "Support_30J", "type": "quantitative", "title": "🟢 Support 30J", "format": ",.2f"},
+                                {"field": "Resistance_30J", "type": "quantitative", "title": "🔴 Résistance 30J", "format": ",.2f"},
+                                {"field": "Prix_Cible", "type": "quantitative", "title": "🎯 Prix Cible", "format": ",.2f"},
+                            ],
+                        },
+                    })
+
+                    spec_station_vega = {
+                        "height": 500,
+                        "layer": layers_sg,
+                        "view": {"stroke": None},
+                    }
+                    st.vega_lite_chart(df_sg, spec_station_vega, use_container_width=True)
+
+                    afficher_html(f"""
+                    <div style="display:flex; flex-wrap:wrap; gap:14px; justify-content:center; font-size:0.80em; padding:8px 12px; background:rgba(128,128,128,0.04); border-radius:8px; margin-top:-6px;">
+                        <span><b style="color:#10b981;">━━</b> Cours ({cours_act_sg:.2f} {dev_sg})</span>
+                        <span><b style="color:#f39c12;">━━</b> EMA Rapide 2J ({ema_rapide_full[-1]:.2f})</span>
+                        <span><b style="color:#e67e22;">╍╍</b> EMA Lente 12J ({ema_lente_full[-1]:.2f})</span>
+                        <span><b style="color:#3498db;">▒▒</b> Canal Régression 3A ({canal_bas_full[-1]:.1f} - {canal_haut_full[-1]:.1f})</span>
+                        <span><b style="color:#2ecc71;">┈┈</b> Support 30J ({sup_30j_sg:.2f})</span>
+                        <span><b style="color:#e74c3c;">┈┈</b> Résistance 30J ({res_30j_sg:.2f})</span>
+                        <span><b style="color:#f39c12;">┈┈</b> Cible ({cible_sg:.2f})</span>
+                        {f'<span><b style="color:#9b59b6;">━━</b> Mon PRU ({pru_sg:.2f} {dev_sg})</span>' if (en_pf_sg and pru_sg > 0) else ''}
+                    </div>
+                    """)
+
+                else:
+                    import streamlit.components.v1 as components
+
+                    sym_up = sym_sg.upper().strip()
+                    if sym_up.endswith(".PA") or sym_up.endswith(".AS") or sym_up.endswith(".BR") or sym_up.endswith(".LS"):
+                        tv_symbol = "EURONEXT:" + sym_up.split(".")[0]
+                    elif sym_up.endswith(".DE"):
+                        tv_symbol = "XETR:" + sym_up.split(".")[0]
+                    elif sym_up.endswith(".MI"):
+                        tv_symbol = "MIL:" + sym_up.split(".")[0]
+                    elif sym_up.endswith(".MC"):
+                        tv_symbol = "BME:" + sym_up.split(".")[0]
+                    elif sym_up.endswith(".L"):
+                        tv_symbol = "LSE:" + sym_up.split(".")[0]
+                    else:
+                        tv_symbol = sym_up.split(".")[0]
+
+                    tv_html = f"""
+                    <div class="tradingview-widget-container" style="border-radius:12px; overflow:hidden; border:1px solid rgba(128,128,128,0.2);">
+                      <div id="tv_chart_boursy" style="height:520px;"></div>
+                      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                      <script type="text/javascript">
+                      new TradingView.widget({{
+                        "autosize": true,
+                        "symbol": "{tv_symbol}",
+                        "interval": "D",
+                        "timezone": "Europe/Paris",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "fr",
+                        "toolbar_bg": "#0f172a",
+                        "enable_publishing": false,
+                        "withdateranges": true,
+                        "hide_side_toolbar": false,
+                        "allow_symbol_change": true,
+                        "studies": [
+                          "Moving Average@tv-basicstudies",
+                          "Moving Average@tv-basicstudies",
+                          "RSI@tv-basicstudies",
+                          "MACD@tv-basicstudies"
+                        ],
+                        "container_id": "tv_chart_boursy"
+                      }});
+                      </script>
+                    </div>
+                    """
+                    components.html(tv_html, height=535)
+                    st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
 except Exception as e_pack:
     st.warning(f"Initialisation du Super-Pack Pro V2 ({e_pack})")
 
