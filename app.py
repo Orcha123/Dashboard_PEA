@@ -976,52 +976,106 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
             sauvegarder_dans_cloud()
             st.rerun()
 
-# --- GESTION SAAS & CONSOLE ADMIN ---
+# --- GESTION SAAS 3 NIVEAUX (GRATUIT 0€ / PREMIUM 4,90€ / PRO 8,90€) & CONSOLE ADMIN ---
 st.sidebar.markdown("---")
-st.sidebar.header("💎 Offre Boursy & Accès")
+st.sidebar.header("💎 Offres & Abonnement")
+
+if "niveau_abonnement" not in st.session_state:
+    st.session_state["niveau_abonnement"] = "pro" if st.session_state.get("est_abonne_pro", False) else "gratuit"
 
 est_admin = (
     st.session_state.get("user") is not None
     and str(st.session_state["user"].email).lower() == ADMIN_EMAIL.lower()
 )
 
-simuler_visiteur_gratuit = False
+choix_simu_admin = "👑 Vue Pro Max (8,90 €)"
 if est_admin:
     with st.sidebar.expander("👑 Console Administrateur SaaS", expanded=False):
-        simuler_visiteur_gratuit = st.checkbox("Simuler la vue Visiteur Gratuit (Freemium)", value=False)
+        choix_simu_admin = st.radio(
+            "Tester l'affichage d'un forfait :",
+            ["👑 Vue Pro Max (8,90 €)", "⚡ Simuler Premium (4,90 €)", "🌱 Simuler Gratuit (0 €)"],
+            index=0,
+            key="rad_simu_admin_saas",
+        )
         if supabase:
             try:
                 res_users = supabase.table("user_data").select("user_id, email, est_abonne_pro").execute()
                 liste_u = res_users.data if res_users.data else []
-                nb_pro = sum(1 for u in liste_u if u.get("est_abonne_pro"))
-                st.caption(f"👥 **{len(liste_u)} inscrit(s)** | 💎 **{nb_pro} Abonné(s) Pro**")
+                nb_payants = sum(1 for u in liste_u if u.get("est_abonne_pro"))
+                st.caption(f"👥 **{len(liste_u)} inscrit(s)** | 💎 **{nb_payants} Abonné(s) actif(s)**")
             except Exception:
                 pass
 
-if est_admin and not simuler_visiteur_gratuit:
-    mode_gratuit = False
-elif simuler_visiteur_gratuit:
-    mode_gratuit = True
+if est_admin:
+    if "Gratuit" in choix_simu_admin:
+        niveau_acces = "gratuit"
+    elif "Premium" in choix_simu_admin:
+        niveau_acces = "premium"
+    else:
+        niveau_acces = "pro"
 else:
-    mode_gratuit = not bool(st.session_state.get("est_abonne_pro", False))
+    pf_courant_abo = st.session_state.get("portefeuille", {})
+    abo_cloud = pf_courant_abo.get("_niveau_abo") if isinstance(pf_courant_abo, dict) else None
+    if abo_cloud in ("premium", "pro"):
+        niveau_acces = abo_cloud
+    elif st.session_state.get("est_abonne_pro", False):
+        niveau_acces = st.session_state.get("niveau_abonnement", "pro")
+        if niveau_acces == "gratuit":
+            niveau_acces = "pro"
+    else:
+        niveau_acces = "gratuit"
 
-quota_ia_max = 2 if mode_gratuit else 15
+mode_gratuit = (niveau_acces == "gratuit")
+est_premium_ou_pro = (niveau_acces in ("premium", "pro"))
+est_pro_max = (niveau_acces == "pro")
+
+quota_ia_max = 1 if mode_gratuit else (3 if niveau_acces == "premium" else 15)
+
+def _construire_url_stripe(cle_secret_nom, defaut_secret=""):
+    if not hasattr(st, "secrets"):
+        return ""
+    url_b = str(st.secrets.get(cle_secret_nom, st.secrets.get(defaut_secret, ""))).strip()
+    if not url_b:
+        return ""
+    if st.session_state.get("user") is not None:
+        em_q = urllib.parse.quote(str(st.session_state["user"].email))
+        sep = "&" if "?" in url_b else "?"
+        return f"{url_b}{sep}prefilled_email={em_q}"
+    return url_b
+
+url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_CHECKOUT_URL")
+url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL")
 
 if mode_gratuit:
     actions_autorisees = list(WATCHLIST.keys())[:2]
-    st.sidebar.info("🔒 **Offre Découverte (Freemium)** : 2 valeurs débloquées & 2 audits IA/jour.")
-    lien_stripe_base = str(st.secrets.get("STRIPE_CHECKOUT_URL", "")).strip() if hasattr(st, "secrets") else ""
-    if lien_stripe_base:
-        if st.session_state.get("user") is not None:
-            email_client_url = urllib.parse.quote(str(st.session_state["user"].email))
-            sep = "&" if "?" in lien_stripe_base else "?"
-            lien_stripe_final = f"{lien_stripe_base}{sep}prefilled_email={email_client_url}"
-        else:
-            lien_stripe_final = lien_stripe_base
-        st.sidebar.link_button("💎 S'abonner à Boursy Pro (Stripe)", lien_stripe_final, type="primary", use_container_width=True)
+    st.sidebar.info("🌱 **Forfait Gratuit (0 €)** : 2 valeurs max & 1 audit IA/jour.")
+    if url_stripe_premium:
+        st.sidebar.link_button("⚡ Passer à Premium — 4,90 €/mois", url_stripe_premium, use_container_width=True)
+    if url_stripe_pro:
+        st.sidebar.link_button("👑 Passer à Pro Max — 8,90 €/mois", url_stripe_pro, type="primary", use_container_width=True)
+elif niveau_acces == "premium":
+    actions_autorisees = list(WATCHLIST.keys())
+    st.sidebar.warning(f"⚡ **Abonné Premium (4,90 €/mois)** : {len(WATCHLIST)} valeurs débloquées & 3 audits IA/jour.")
+    if url_stripe_pro:
+        st.sidebar.link_button("👑 Débloquer Pro Max (8,90 €/mois)", url_stripe_pro, type="primary", use_container_width=True)
 else:
     actions_autorisees = list(WATCHLIST.keys())
-    st.sidebar.success(f"💎 **Abonné Boursy Pro actif** : {len(WATCHLIST)} valeurs débloquées & 15 audits IA/jour.")
+    st.sidebar.success(f"👑 **Abonné Pro Max (8,90 €/mois)** : Accès intégral ({len(WATCHLIST)} valeurs & 15 audits IA/jour).")
+
+def afficher_verrou_saas(titre_module, palier_requis="👑 Offre Pro (8,90 €/mois)", description=""):
+    """Affiche une bannière Argon élégante pour les fonctionnalités verrouillées."""
+    couleur_v = "#f39c12" if "4,90" in palier_requis else "#9b59b6"
+    afficher_html(f"""
+    <div class="argon-card" style="text-align:left; border-left: 4px solid {couleur_v}; margin: 12px 0; padding: 14px 18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <span style="font-weight:900; font-size:0.98em;">🔒 {titre_module}</span>
+            <span class="b-purple" style="background:rgba(155,89,182,0.18); color:{couleur_v};">Réservé {palier_requis}</span>
+        </div>
+        <div style="font-size:0.86em; opacity:0.88; margin-top:6px; line-height:1.45;">
+            {description} Passez au forfait <b>{palier_requis}</b> depuis le menu de gauche (<b>💎 Offres & Abonnement</b>) pour débloquer instantanément ce module.
+        </div>
+    </div>
+    """)
 # ==============================================================================
 # MOTEUR ALGORITHMIQUE ÉLEVÉ & INDICATEURS TECHNIQUES AVANCÉS
 # ==============================================================================
