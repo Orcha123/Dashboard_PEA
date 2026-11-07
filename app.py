@@ -1061,37 +1061,37 @@ est_pro_max = (niveau_acces == "pro")
 
 quota_ia_max = 1 if mode_gratuit else (3 if niveau_acces == "premium" else 15)
 
-def _construire_url_stripe(cle_secret_nom, defaut_secret=""):
-    if not hasattr(st, "secrets"):
-        return ""
-    url_b = str(st.secrets.get(cle_secret_nom, st.secrets.get(defaut_secret, ""))).strip()
+def _construire_url_stripe(*cles_possibles):
+    url_b = ""
+    if hasattr(st, "secrets"):
+        for k_s in cles_possibles:
+            val_s = str(st.secrets.get(k_s, "")).strip()
+            if val_s:
+                url_b = val_s
+                break
     if not url_b:
-        return ""
+        return "https://buy.stripe.com/"
     if st.session_state.get("user") is not None:
         em_q = urllib.parse.quote(str(st.session_state["user"].email))
         sep = "&" if "?" in url_b else "?"
         return f"{url_b}{sep}prefilled_email={em_q}"
     return url_b
 
-url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_CHECKOUT_URL")
-url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL")
+url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PRO_URL")
+url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL")
 
 if mode_gratuit:
     actions_autorisees = list(WATCHLIST.keys())[:2]
     st.sidebar.info("🌱 **Forfait Gratuit (0 €)** : 2 valeurs max & 1 audit IA/jour.")
-    if url_stripe_premium:
-        st.sidebar.link_button("⚡ Passer à Premium — 4,90 €/mois", url_stripe_premium, use_container_width=True)
-    if url_stripe_pro:
-        st.sidebar.link_button("👑 Passer à Pro Max — 8,90 €/mois", url_stripe_pro, type="primary", use_container_width=True)
+    st.sidebar.link_button("⚡ Passer à Premium — 4,90 €/mois", url_stripe_premium, use_container_width=True)
+    st.sidebar.link_button("👑 Passer à Pro Max — 8,90 €/mois", url_stripe_pro, type="primary", use_container_width=True)
 elif niveau_acces == "premium":
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.warning(f"⚡ **Abonné Premium (4,90 €/mois)** : {len(WATCHLIST)} valeurs débloquées & 3 audits IA/jour.")
-    if url_stripe_pro:
-        st.sidebar.link_button("👑 Débloquer Pro Max (8,90 €/mois)", url_stripe_pro, type="primary", use_container_width=True)
+    st.sidebar.link_button("👑 Débloquer Pro Max (8,90 €/mois)", url_stripe_pro, type="primary", use_container_width=True)
 else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"👑 **Abonné Pro Max (8,90 €/mois)** : Accès intégral ({len(WATCHLIST)} valeurs & 15 audits IA/jour).")
-
 def afficher_verrou_saas(titre_module, palier_requis="👑 Offre Pro (8,90 €/mois)", description=""):
     """Affiche une bannière Argon élégante pour les fonctionnalités verrouillées."""
     couleur_v = "#f39c12" if "4,90" in palier_requis else "#9b59b6"
