@@ -82,38 +82,64 @@ def init_supabase():
 supabase = init_supabase()
 
 def verifier_abonnement_stripe(email_client):
-    """Vérifie sur Stripe si le client possède un abonnement actif et détecte le palier (premium ou pro)."""
+    """
+    Vérifie en direct sur Stripe l'état de l'abonnement du client :
+    - Retourne True si un abonnement est actif (et met à jour le palier 'premium' ou 'pro').
+    - Retourne False si le client a résilié et que son abonnement est expiré.
+    - Retourne None si la clé Stripe n'est pas configurée ou en cas d'erreur réseau.
+    """
     if not email_client or not hasattr(st, "secrets"):
-        return False
+        return None
     cle_stripe = str(st.secrets.get("STRIPE_SECRET_KEY", "")).strip().strip('"').strip("'")
     if not cle_stripe:
-        return False
+        return None
     try:
         url_cust = f"https://api.stripe.com/v1/customers?email={urllib.parse.quote(email_client.strip())}&limit=5"
         req_cust = urllib.request.Request(url_cust, headers={"Authorization": f"Bearer {cle_stripe}"})
         with urllib.request.urlopen(req_cust, timeout=8) as resp:
             data_cust = json.loads(resp.read().decode("utf-8"))
-        for client in data_cust.get("data", []):
+
+        clients = data_cust.get("data", [])
+        if not clients:
+            return False
+
+        meilleur_palier = None
+        date_fin_programmée = None
+
+        for client in clients:
             cid = client.get("id")
-            url_sub = f"https://api.stripe.com/v1/subscriptions?customer={cid}&status=all&limit=5"
+            url_sub = f"https://api.stripe.com/v1/subscriptions?customer={cid}&status=all&limit=10"
             req_sub = urllib.request.Request(url_sub, headers={"Authorization": f"Bearer {cle_stripe}"})
             with urllib.request.urlopen(req_sub, timeout=8) as resp_s:
                 data_sub = json.loads(resp_s.read().decode("utf-8"))
                 for sub in data_sub.get("data", []):
                     if sub.get("status") in ("active", "trialing"):
+                        palier_detecte = "pro"
                         try:
                             montant_cts = int(sub["items"]["data"][0]["price"]["unit_amount"] or 0)
                             if 0 < montant_cts <= 600:
-                                st.session_state["niveau_abonnement"] = "premium"
-                            else:
-                                st.session_state["niveau_abonnement"] = "pro"
+                                palier_detecte = "premium"
                         except Exception:
-                            st.session_state["niveau_abonnement"] = "pro"
-                        return True
+                            palier_detecte = "pro"
+
+                        if meilleur_palier != "pro":
+                            meilleur_palier = palier_detecte
+
+                        if sub.get("cancel_at_period_end") and sub.get("current_period_end"):
+                            try:
+                                date_fin_programmée = datetime.fromtimestamp(int(sub["current_period_end"])).strftime("%d/%m/%Y")
+                            except Exception:
+                                pass
+
+        if meilleur_palier in ("premium", "pro"):
+            st.session_state["niveau_abonnement"] = meilleur_palier
+            st.session_state["abo_fin_periode"] = date_fin_programmée
+            return True
+
+        st.session_state["abo_fin_periode"] = None
         return False
     except Exception:
-        return False
-
+        return None
 def envoyer_email_alerte(destinataire, liste_alertes):
     if not hasattr(st, "secrets"):
         return False, "Secrets Streamlit non disponibles."
@@ -1009,7 +1035,7 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
             sauvegarder_dans_cloud()
             st.rerun()
 
-# --- GESTION SAAS 3 NIVEAUX (GRATUIT 0€ / PREMIUM 4,90€ / PRO 8,90€) & CONSOLE ADMIN ---
+# --- GESTION SAAS 3 NIVEAUX (GRATUIT 0€ / PREMIUM 4,90€ / PRO 8,90€) & PORTAIL STRIPE ---
 st.sidebar.markdown("---")
 st.sidebar.header("💎 Offres & Abonnement")
 
@@ -1017,6 +1043,31 @@ est_admin = (
     st.session_state.get("user") is not None
     and str(st.session_state["user"].email).lower() == ADMIN_EMAIL.lower()
 )
+
+# Synchronisation automatique Stripe (détecte les désabonnements et les changements 4,90€ <-> 8,90€)
+if st.session_state.get("user") is not None and not est_admin:
+    if not st.session_state.get("_stripe_sync_session_ok", False):
+        email_verif = str(st.session_state["user"].email).lower()
+        etat_stripe = verifier_abonnement_stripe(email_verif)
+        st.session_state["_stripe_sync_session_ok"] = True
+
+        if etat_stripe is True:
+            niv_detecte = st.session_state.get("niveau_abonnement", "pro")
+            if not st.session_state.get("est_abonne_pro", False) or st.session_state.get("portefeuille", {}).get("_niveau_abo") != niv_detecte:
+                st.session_state["est_abonne_pro"] = True
+                if isinstance(st.session_state.get("portefeuille"), dict):
+                    st.session_state["portefeuille"]["_niveau_abo"] = niv_detecte
+                sauvegarder_dans_cloud()
+        elif etat_stripe is False:
+            # L'utilisateur n'a plus d'abonnement actif sur Stripe -> Rétrogradation automatique en Gratuit
+            abo_actuel_pf = st.session_state.get("portefeuille", {}).get("_niveau_abo", "gratuit") if isinstance(st.session_state.get("portefeuille"), dict) else "gratuit"
+            if st.session_state.get("est_abonne_pro", False) or abo_actuel_pf in ("premium", "pro"):
+                st.session_state["est_abonne_pro"] = False
+                st.session_state["niveau_abonnement"] = "gratuit"
+                if isinstance(st.session_state.get("portefeuille"), dict):
+                    st.session_state["portefeuille"]["_niveau_abo"] = "gratuit"
+                sauvegarder_dans_cloud()
+                st.sidebar.info("ℹ️ Votre abonnement est arrivé à échéance. Votre compte est repassé en forfait Gratuit.")
 
 choix_simu_admin = "👑 Vue Pro Max (8,90 €)"
 if est_admin:
@@ -1046,11 +1097,12 @@ if est_admin:
 else:
     pf_courant_abo = st.session_state.get("portefeuille", {})
     abo_cloud = pf_courant_abo.get("_niveau_abo") if isinstance(pf_courant_abo, dict) else None
-    if abo_cloud in ("premium", "pro"):
-        niveau_acces = abo_cloud
-    elif st.session_state.get("est_abonne_pro", False):
-        niveau_acces = st.session_state.get("niveau_abonnement", "pro")
-        if niveau_acces == "gratuit":
+    if st.session_state.get("est_abonne_pro", False):
+        if st.session_state.get("niveau_abonnement") in ("premium", "pro"):
+            niveau_acces = st.session_state["niveau_abonnement"]
+        elif abo_cloud in ("premium", "pro"):
+            niveau_acces = abo_cloud
+        else:
             niveau_acces = "pro"
     else:
         niveau_acces = "gratuit"
@@ -1079,6 +1131,7 @@ def _construire_url_stripe(*cles_possibles):
 
 url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PRO_URL")
 url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL")
+url_portail_stripe = _construire_url_stripe("STRIPE_PORTAL_URL", "STRIPE_BILLING_URL")
 
 if mode_gratuit:
     actions_autorisees = list(WATCHLIST.keys())[:2]
@@ -1088,10 +1141,17 @@ if mode_gratuit:
 elif niveau_acces == "premium":
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.warning(f"⚡ **Abonné Premium (4,90 €/mois)** : {len(WATCHLIST)} valeurs débloquées & 3 audits IA/jour.")
+    if st.session_state.get("abo_fin_periode"):
+        st.sidebar.caption(f"⏳ *Résiliation programmée — accès actif jusqu'au {st.session_state['abo_fin_periode']}.*")
     st.sidebar.link_button("👑 Débloquer Pro Max (8,90 €/mois)", url_stripe_pro, type="primary", use_container_width=True)
+    st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, use_container_width=True)
 else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"👑 **Abonné Pro Max (8,90 €/mois)** : Accès intégral ({len(WATCHLIST)} valeurs & 15 audits IA/jour).")
+    if st.session_state.get("abo_fin_periode"):
+        st.sidebar.caption(f"⏳ *Résiliation programmée — accès actif jusqu'au {st.session_state['abo_fin_periode']}.*")
+    st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, use_container_width=True)
+
 def afficher_verrou_saas(titre_module, palier_requis="👑 Offre Pro (8,90 €/mois)", description=""):
     """Affiche une bannière Argon élégante pour les fonctionnalités verrouillées."""
     couleur_v = "#f39c12" if "4,90" in palier_requis else "#9b59b6"
