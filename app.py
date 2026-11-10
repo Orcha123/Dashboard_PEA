@@ -22,8 +22,7 @@ st.set_page_config(
 )
 
 ADMIN_EMAIL = "orcha12345@gmail.com"
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo")
-
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul")
 def afficher_html(html_brut):
     """Supprime les indentations pour empêcher Streamlit d'afficher le HTML en bloc de code."""
     html_propre = "\n".join(ligne.strip() for ligne in html_brut.splitlines() if ligne.strip())
@@ -329,6 +328,8 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
             st.session_state["historique_ventes"] = list(portefeuille_cloud["_historique_ventes"])
         if portefeuille_cloud.get("_niveau_abo") in ("gratuit", "premium", "pro"):
             st.session_state["niveau_abonnement"] = portefeuille_cloud["_niveau_abo"]
+        if "_div_encaisses_cumul" in portefeuille_cloud:
+            st.session_state["dividendes_encaisses_cumul"] = float(portefeuille_cloud.get("_div_encaisses_cumul", 0.0))
         # Restauration anti-triche (F5) du quota IA journalier depuis le Cloud
         quota_str = str(portefeuille_cloud.get("_quota_ia", ""))
         if "|" in quota_str:
@@ -396,9 +397,11 @@ def sauvegarder_dans_cloud():
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
             pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
             pf_a_sauver["_niveau_abo"] = niv_abo_sauve
+            pf_a_sauver["_div_encaisses_cumul"] = round(float(st.session_state.get("dividendes_encaisses_cumul", pf_a_sauver.get("_div_encaisses_cumul", 0.0))), 2)
             st.session_state["portefeuille"]["_historique_ventes"] = hist_ventes_actuel
             st.session_state["portefeuille"]["_quota_ia"] = pf_a_sauver["_quota_ia"]
             st.session_state["portefeuille"]["_niveau_abo"] = niv_abo_sauve
+            st.session_state["portefeuille"]["_div_encaisses_cumul"] = pf_a_sauver["_div_encaisses_cumul"]
 
             payload = {
                 "user_id": user_id_str,
@@ -546,14 +549,17 @@ else:
             st.session_state["niveau_abonnement"] = "pro"
 
         param_paiement = str(st.query_params.get("paiement", "")).lower()
-        if param_paiement in ("succes", "premium", "pro") and not st.session_state.get("est_abonne_pro", False):
+        if param_paiement in ("succes", "premium", "pro"):
             if verifier_abonnement_stripe(email_courant):
                 st.session_state["est_abonne_pro"] = True
                 if param_paiement == "premium":
                     st.session_state["niveau_abonnement"] = "premium"
                 elif param_paiement == "pro":
                     st.session_state["niveau_abonnement"] = "pro"
+                if isinstance(st.session_state.get("portefeuille"), dict):
+                    st.session_state["portefeuille"]["_niveau_abo"] = st.session_state["niveau_abonnement"]
                 sauvegarder_dans_cloud()
+                st.query_params.clear()
                 st.balloons()
                 st.sidebar.success("🎉 Paiement validé ! Votre abonnement est actif.")
 
@@ -586,6 +592,8 @@ else:
             st.session_state["user"] = None
             st.session_state["est_abonne_pro"] = False
             st.session_state["niveau_abonnement"] = "gratuit"
+            st.session_state.pop("_stripe_sync_session_ok", None)
+            st.session_state.pop("abo_fin_periode", None)
             st.rerun()
 
 WATCHLIST = st.session_state["watchlist"]
@@ -2250,7 +2258,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -2599,7 +2607,7 @@ with onglet_portefeuille:
             dates_bourse = pd.bdate_range(end=datetime.now(), periods=nb_jours_reels)
             pas_echantillon = 3 if nb_jours_reels > 300 else 1
 
-            _, closes_cw8_brut, _, _ = recuperer_donnees("CW8.PA")
+            _, closes_cw8_brut, _, _ = recuperer_donnees("CW8.PA") if afficher_bench_cw8 else (None, None, None, None)
             serie_cw8 = closes_cw8_brut if closes_cw8_brut else []
 
             val_esp_fixe = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
@@ -4900,13 +4908,16 @@ try:
         )
 
     contenu_csv_bytes = "\n".join(lignes_csv).encode("utf-8")
-    st.sidebar.download_button(
-        label="📥 Sauvegarde Locale (Excel / CSV)",
-        data=contenu_csv_bytes,
-        file_name=f"nano_bilan_{datetime.now().strftime('%Y-%m-%d')}.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    if est_premium_ou_pro:
+        st.sidebar.download_button(
+            label="📥 Sauvegarde Locale (Excel / CSV)",
+            data=contenu_csv_bytes,
+            file_name=f"Boursy_Bilan_Complet_{datetime.now().strftime('%Y-%m-%d')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    else:
+        st.sidebar.button("🔒 Sauvegarde CSV (Offre Premium/Pro)", disabled=True, use_container_width=True)
 
     alertes_surpond = []
     if total_val_actions_pack > 0:
@@ -4928,8 +4939,7 @@ try:
             div_enc_pea = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
             versements_nets_pea_unifie = max(0.0, cap_inv_pea - max(0.0, pv_actees_tot_pea + div_enc_pea))
             marge_pea_dispo = max(0.0, plafond_pea_legal - versements_nets_pea_unifie)
-            pct_plafond_pea = min(100.0, (versements_nets_pea_unifie / plafond_legal_pea) * 100.0)
-
+            pct_plafond_pea = min(100.0, (versements_nets_pea_unifie / plafond_pea_legal) * 100.0)
             pv_pea = val_act_pea - cap_inv_pea
             pv_cto = val_act_cto - cap_inv_cto
             c_pv_pea = "#2ecc71" if pv_pea >= 0 else "#e74c3c"
