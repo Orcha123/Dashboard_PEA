@@ -421,7 +421,7 @@ def sauvegarder_dans_cloud():
             prix_tr = st.session_state.get("prix_temps_reel", {})
 
             for nom_a, pos_a in pf_a_sauver.items():
-                if nom_a in CLES_TECHNIQUES_PF or not isinstance(pos_a, dict):
+                if (nom_a in CLES_TECHNIQUES_PF and nom_a != "Espèces") or not isinstance(pos_a, dict):
                     continue
                 q_a = float(pos_a.get("qte", 0.0))
                 p_a = float(pos_a.get("pru", 0.0))
@@ -438,7 +438,6 @@ def sauvegarder_dans_cloud():
                     cap_investi += q_a * p_a * fact_a
                     val_totale += q_a * cours_a * fact_a
                     rente_tot += q_a * div_a * fact_a
-
             if val_totale > 0:
                 snapshot_payload = {
                     "user_id": user_id_str,
@@ -1140,6 +1139,7 @@ def _construire_url_stripe(*cles_possibles):
 url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PRO_URL")
 url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL")
 url_portail_stripe = _construire_url_stripe("STRIPE_PORTAL_URL", "STRIPE_BILLING_URL")
+portail_configure = (url_portail_stripe and not url_portail_stripe.startswith("https://buy.stripe.com/?") and url_portail_stripe != "https://buy.stripe.com/")
 
 if mode_gratuit:
     actions_autorisees = list(WATCHLIST.keys())[:2]
@@ -1152,14 +1152,15 @@ elif niveau_acces == "premium":
     if st.session_state.get("abo_fin_periode"):
         st.sidebar.caption(f"⏳ *Résiliation programmée — accès actif jusqu'au {st.session_state['abo_fin_periode']}.*")
     st.sidebar.link_button("👑 Débloquer Pro Max (8,90 €/mois)", url_stripe_pro, type="primary", use_container_width=True)
-    st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, use_container_width=True)
+    if portail_configure:
+        st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, use_container_width=True)
 else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"👑 **Abonné Pro Max (8,90 €/mois)** : Accès intégral ({len(WATCHLIST)} valeurs & 15 audits IA/jour).")
     if st.session_state.get("abo_fin_periode"):
         st.sidebar.caption(f"⏳ *Résiliation programmée — accès actif jusqu'au {st.session_state['abo_fin_periode']}.*")
-    st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, use_container_width=True)
-
+    if portail_configure:
+        st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, use_container_width=True)
 def afficher_verrou_saas(titre_module, palier_requis="👑 Offre Pro (8,90 €/mois)", description=""):
     """Affiche une bannière Argon élégante pour les fonctionnalités verrouillées."""
     couleur_v = "#f39c12" if "4,90" in palier_requis else "#9b59b6"
@@ -2271,6 +2272,13 @@ with onglet_portefeuille:
         st.markdown("#### 🎯 Choisir les actions à afficher dans mon portefeuille")
 
         actions_deja_detenues = [k for k in st.session_state["portefeuille"].keys() if k not in CLES_TECHNIQUES_PF]
+        for k_det in actions_deja_detenues:
+            if k_det not in WATCHLIST_DEFAUT:
+                WATCHLIST_DEFAUT[k_det] = {
+                    "symbole": k_det.upper(), "prix_cible": float(st.session_state["portefeuille"][k_det].get("pru", 50.0)),
+                    "secteur": "Action Portefeuille", "div_eur": 0.0, "payout_ratio": 0.50,
+                    "croissance_5a": "+5.0%", "mois_div": ["Mai"], "devise": "EUR",
+                }
         actions_radar = [k for k in st.session_state["watchlist"].keys() if k not in CLES_TECHNIQUES_PF]
         selection_par_defaut = sorted(list(set(actions_deja_detenues + actions_radar)))
 
@@ -2321,7 +2329,7 @@ with onglet_portefeuille:
 
     actions_actives_pf = [
         k for k, v in portefeuille_utilisateur.items()
-        if k not in ("_historique_ventes", "_quota_ia", "_niveau_abo") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
+        if k not in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul") and isinstance(v, dict) and float(v.get("qte", 0)) > 0
     ]
 
     if not actions_actives_pf:
@@ -2338,7 +2346,7 @@ with onglet_portefeuille:
         nb_actions_comptees_gratuit = 0
 
         for nom_act, data_pos in portefeuille_utilisateur.items():
-            if nom_act in ("_historique_ventes", "_quota_ia", "_niveau_abo") or not isinstance(data_pos, dict):
+            if nom_act in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul") or not isinstance(data_pos, dict):
                 continue
 
             if nom_act == "Espèces":
@@ -4024,7 +4032,12 @@ with onglet_ia:
 
         if not cle_gemini:
             return generer_audit_expert_hybride(question_utilisateur, code_audit)
+    def appeler_gemini_coach(question_utilisateur, code_audit=""):
+        # Protection anti-abus API : si le visiteur n'est pas connecté à un compte, utilise le moteur local gratuit
+        if st.session_state.get("user") is None:
+            return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
+        cle_gemini = ""
         resume_pf = []
         for l_it in lignes_triees:
             if l_it["est_especes"]:
@@ -4797,7 +4810,7 @@ try:
     lignes_csv.append("Enveloppe;Action;Symbole;Quantite;PRU;Devise;Cours Actuel;Valorisation EUR;Plus-Value Latente EUR;Rendement Marche %;Rendement sur PRU (YoC) %;Rente Annuelle EUR")
 
     for nom_p, pos_p in pf_pack.items():
-        if nom_p in CLES_TECHNIQUES_PF or not isinstance(pos_p, dict):
+        if (nom_p in CLES_TECHNIQUES_PF and nom_p != "Espèces") or not isinstance(pos_p, dict):
             continue
         q_p = float(pos_p.get("qte", 0.0))
         pru_p = float(pos_p.get("pru", 0.0))
