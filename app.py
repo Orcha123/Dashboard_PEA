@@ -5616,14 +5616,80 @@ except Exception as e_pack:
 
 
 # ==============================================================================
-# FOOTER & MENTIONS LÉGALES
+# FOOTER, MENTIONS LÉGALES, CGV, DROIT DE RÉTRACTATION & CONFORMITÉ AMF (NON-CIF)
 # ==============================================================================
+NOM_APP_LEGAL = "Boursy"  # Changez ici en "Nano" dès que votre nom final est choisi
+NOM_EDITEUR = "Éditeur Indépendant (Micro-Entreprise)"
+NUMERO_SIRET = "En cours d'immatriculation"
+
 st.markdown("---")
-with st.expander("⚖️ Mentions Légales, Fiscalité & Conditions Générales d'Utilisation (Non-CIF)"):
-    st.caption(
-        "**Avertissement légal :** La plateforme Boursy (`boursy.streamlit.app`) est un outil logiciel d'analyse statistique, "
-        "technique et patrimoniale à vocation strictement pédagogique. Les scores algorithmiques, indicateurs (RSI, Stochastique, Bollinger, MACD, EMA) "
-        "et réponses générées par l'intelligence artificielle ne constituent en aucun cas un Conseil en Investissement Financier (CIF) ni une incitation "
-        "à l'achat ou à la vente d'instruments financiers. Les performances passées ne préjugent pas des performances futures."
-    )
-afficher_html("<div style='text-align: center; font-size: 0.82em; opacity: 0.72;'>⚖️ Boursy SaaS — Suite Boursière PEA, US & Dividendes | Version Argon Ultime Complète</div>")
+with st.expander(f"⚖️ Mentions Légales, CGV, Droit de Rétractation & Avertissement AMF ({NOM_APP_LEGAL} SaaS)", expanded=False):
+    tab_leg_amf, tab_leg_cgv, tab_leg_retract, tab_leg_rgpd = st.tabs([
+        "🛡️ 1. Avertissement AMF (Non-CIF)",
+        "💳 2. CGV & Abonnements (4,90 € / 8,90 €)",
+        "⏳ 3. Droit de Rétractation (L221-28)",
+        "🏛️ 4. Mentions Légales & RGPD",
+    ])
+
+    with tab_leg_amf:
+        afficher_html(f"""
+        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
+            <b>1. Absence de Conseil en Investissement Financier (Statut Non-CIF)</b><br>
+            La plateforme <b>{NOM_APP_LEGAL}</b> est un outil logiciel d'analyse statistique, quantitative et de suivi patrimonial à vocation strictement <b>pédagogique et informative</b>. L'éditeur n'agit en aucun cas en qualité de Conseiller en Investissements Financiers (CIF) au sens des articles L.541-1 et suivants du Code monétaire et financier, ni en tant que prestataire de services d'investissement (PSI) agréé par l'Autorité des Marchés Financiers (AMF).<br><br>
+            <b>2. Nature des indicateurs algorithmiques et de l'Intelligence Artificielle</b><br>
+            Les scores (/100), signaux techniques (RSI, Stochastique, Bandes de Bollinger, MACD, croisements EMA 2/12, ATR, canaux de régression linéaire à 3 ans), simulations d'allocation DCA et synthèses générées par le module <b>Coach IA (Google Gemini)</b> constituent des traitements mathématiques automatisés. Ils ne sauraient être interprétés comme une recommandation personnalisée d'achat, de vente ou de conservation d'instruments financiers.<br><br>
+            <b>3. Responsabilité de l'utilisateur et exactitude des flux de marché</b><br>
+            Les cotations, historiques de cours, taux de change (EUR/USD) et calendriers de dividendes proviennent de flux tiers publics (notamment Yahoo Finance) fournis « en l'état », pouvant comporter des délais ou des imprécisions. L'investissement en bourse (PEA / CTO) comporte un <b>risque de perte en capital</b>. L'utilisateur demeure seul maître et responsable de ses décisions d'investissement auprès de son établissement bancaire ou courtier. Les performances passées ne préjugent pas des performances futures.
+        </div>
+        """)
+
+    with tab_leg_cgv:
+        afficher_html(f"""
+        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
+            <b>Article 1 — Objet et Architecture des Offres</b><br>
+            Les présentes Conditions Générales de Vente (CGV) régissent la souscription aux services numériques de la plateforme <b>{NOM_APP_LEGAL}</b>, déclinés en trois formules :<br>
+            • <b>🌱 Forfait Gratuit (0,00 € / mois) :</b> Accès découverte limité à 2 valeurs dans le radar/portefeuille et 1 crédit d'audit IA par jour.<br>
+            • <b>⚡ Forfait Premium (4,90 € TTC / mois) :</b> Accès au catalogue complet (+100 valeurs PEA/US & recherche Yahoo Live), Tableaux 1 à 4 débloqués, gestion de portefeuille illimitée, export CSV, simulateur PRU, guichet d'encaissement espèces et 3 crédits d'audit IA par jour.<br>
+            • <b>👑 Forfait Pro Max (8,90 € TTC / mois) :</b> Accès intégral incluant les fonctionnalités Premium ainsi que le Journal des Arbitrages & Calendrier 12 mois des Plus-Values Actées, la Station Graphique Interactive 360° (Quant & TradingView), l'Import Magique IA par capture d'écran, le Duel de performance vs ETF, le Radar de détachements à 90 jours, les alertes par email et 15 crédits d'audit IA par jour.<br><br>
+            <b>Article 2 — Paiement Sécurisé et Facturation</b><br>
+            Les règlements sont opérés par carte bancaire via notre prestataire certifié PCI-DSS <b>Stripe</b>. Aucune coordonnée bancaire n'est stockée sur les serveurs de {NOM_APP_LEGAL}. Le prix est exigible comptant à la souscription, puis renouvelé par tacite reconduction mensuelle à la date anniversaire.<br><br>
+            <b>Article 3 — Absence d'Engagement et Résiliation en 1 Clic</b><br>
+            Les abonnements <b>Premium</b> et <b>Pro Max</b> sont <b>sans aucun engagement de durée</b>. L'abonné peut résilier ou modifier sa formule à tout moment en un clic depuis le menu latéral gauche via le bouton <b>« ⚙️ Gérer mon abonnement / Factures »</b> (Portail Client officiel Stripe). Toute résiliation prend effet à l'issue de la période mensuelle en cours : l'utilisateur conserve l'intégralité de ses accès payants jusqu'au dernier jour de la période facturée, puis son compte repasse automatiquement en Forfait Gratuit sans perte de ses données enregistrées.
+        </div>
+        """)
+
+    with tab_leg_retract:
+        afficher_html(f"""
+        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
+            <b>Renoncement exprès au droit de rétractation (Article L221-28 13° du Code de la consommation)</b><br>
+            Conformément aux dispositions de l'article L221-28 13° du Code de la consommation français, le droit de rétractation de quatorze (14) jours ne peut être exercé pour les contrats de fourniture d'un contenu numérique non fourni sur un support matériel dont l'exécution a commencé après accord préalable exprès du consommateur et renoncement exprès à son droit de rétractation.<br><br>
+            En validant son paiement sur l'interface Stripe et en accédant instantanément aux fonctionnalités débloquées des offres <b>Premium (4,90 €/mois)</b> ou <b>Pro Max (8,90 €/mois)</b>, le Client :
+            <ul style="margin:6px 0 8px 18px;">
+                <li>Demande expressément l'activation immédiate de son abonnement numérique avant l'expiration du délai légal de rétractation ;</li>
+                <li>Reconnaît qu'il renonce expressément à son droit de rétractation pour la période mensuelle entamée.</li>
+            </ul>
+            En conséquence, aucun remboursement prorata temporis ne sera effectué pour le mois en cours en cas d'annulation, l'accès aux outils Pro/Premium demeurant pleinement actif jusqu'à l'échéance mensuelle.
+        </div>
+        """)
+
+    with tab_leg_rgpd:
+        afficher_html(f"""
+        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
+            <b>1. Éditeur et Hébergement (Loi LCEN)</b><br>
+            • <b>Éditeur du service :</b> {NOM_EDITEUR} — SIRET : {NUMERO_SIRET}<br>
+            • <b>Contact & Support Client :</b> <a href="mailto:{ADMIN_EMAIL}">{ADMIN_EMAIL}</a><br>
+            • <b>Hébergement de l'application :</b> Streamlit Cloud / Snowflake Inc. (San Mateo, Californie, USA)<br>
+            • <b>Hébergement de la base de données chiffrée :</b> Supabase Inc. (Infrastructure Cloud sécurisée avec protocole Row Level Security)<br><br>
+            <b>2. Protection des Données Personnelles (RGPD)</b><br>
+            Dans le cadre de son fonctionnement, {NOM_APP_LEGAL} collecte uniquement l'adresse email de connexion et les données patrimoniales saisies volontairement par l'utilisateur (lignes de portefeuille, PRU, historique d'arbitrages). Ces données sont strictement cloisonnées par identifiant unique (UUID) et ne sont jamais vendues ni cédées à des tiers.<br><br>
+            <b>3. Sous-traitants techniques et Droits de l'Utilisateur</b><br>
+            L'application s'appuie sur trois sous-traitants de confiance : <b>Supabase</b> (authentification et sauvegarde), <b>Stripe</b> (gestion des abonnements) et <b>Google Gemini API</b> (génération des diagnostics IA à la demande). Conformément au Règlement Général sur la Protection des Données (RGPD), vous disposez d'un droit d'accès, de rectification, de portabilité (via le bouton d'export CSV) et de suppression intégrale de votre compte sur simple demande envoyée à <b>{ADMIN_EMAIL}</b>.
+        </div>
+        """)
+
+afficher_html(
+    f"<div style='text-align: center; font-size: 0.80em; opacity: 0.72; padding: 6px 0 14px 0;'>"
+    f"⚖️ <b>{NOM_APP_LEGAL} SaaS</b> — Suite Boursière PEA, US & Dividendes | "
+    f"Outil d'analyse statistique et pédagogique (Non-CIF) • Paiements sécurisés par Stripe • Contact : {ADMIN_EMAIL}"
+    f"</div>"
+)
