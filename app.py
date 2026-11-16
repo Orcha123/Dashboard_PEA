@@ -3,7 +3,7 @@ import urllib.error
 import urllib.parse
 import json
 import math
-import io
+import re
 import smtplib
 from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
@@ -128,7 +128,8 @@ def _palier_depuis_abonnement_stripe(sub):
     """
     Déduit le palier ('premium' ou 'pro') d'un abonnement Stripe.
     - Fiable : par identifiant de prix, via les secrets STRIPE_PRICE_PREMIUM et STRIPE_PRICE_PRO.
-    - Repli (comportement historique) : par montant, <= 6,00 EUR = Premium, sinon Pro.
+    - Repli (si ces secrets sont absents) : par montant RAMENÉ AU MOIS (un abonnement annuel est divisé par 12),
+      <= 6,00 EUR/mois = Premium, au-delà = Pro. Un montant inconnu ou nul donne Premium (jamais Pro par défaut).
     """
     prix_premium = _ids_prix_stripe("STRIPE_PRICE_PREMIUM")
     prix_pro = _ids_prix_stripe("STRIPE_PRICE_PRO")
@@ -142,14 +143,23 @@ def _palier_depuis_abonnement_stripe(sub):
             palier_ligne = "premium"
         else:
             try:
-                montant_cts = int(prix.get("unit_amount") or 0)
+                montant_cts = float(prix.get("unit_amount") or prix.get("unit_amount_decimal") or 0)
             except Exception:
-                montant_cts = 0
-            palier_ligne = "premium" if 0 < montant_cts <= 600 else "pro"
+                montant_cts = 0.0
+            recurrence = prix.get("recurring") or {}
+            try:
+                nb_periodes = max(1, int(recurrence.get("interval_count") or 1))
+            except Exception:
+                nb_periodes = 1
+            mois_par_periode = {"day": 1.0 / 30.0, "week": 12.0 / 52.0, "month": 1.0, "year": 12.0}.get(
+                str(recurrence.get("interval") or "month"), 1.0
+            )
+            montant_mensuel_cts = montant_cts / (mois_par_periode * nb_periodes)
+            palier_ligne = "pro" if montant_mensuel_cts > 600 else "premium"
         if palier_ligne == "pro":
             return "pro"
         palier = palier_ligne
-    return palier or "pro"
+    return palier or "premium"
 
 
 def _fin_programmee_abonnement_stripe(sub):
@@ -974,9 +984,20 @@ def _recuperer_donnees_yahoo(symbole):
                 data = json.loads(response.read().decode("utf-8"))
                 result = data["chart"]["result"][0]
                 quote = result.get("indicators", {}).get("quote", [{}])[0]
-                closes = [float(p) for p in quote.get("close", []) if p is not None]
-                hauts = [float(h) for h in quote.get("high", []) if h is not None]
-                bas = [float(l) for l in quote.get("low", []) if l is not None]
+                # Les 3 séries restent alignées séance par séance : une séance sans clôture est écartée des trois,
+                # et un plus haut / plus bas manquant est remplacé par la clôture du jour.
+                bruts_c = quote.get("close") or []
+                bruts_h = quote.get("high") or []
+                bruts_b = quote.get("low") or []
+                closes, hauts, bas = [], [], []
+                for i_s, c_s in enumerate(bruts_c):
+                    if c_s is None:
+                        continue
+                    h_s = bruts_h[i_s] if i_s < len(bruts_h) and bruts_h[i_s] is not None else c_s
+                    b_s = bruts_b[i_s] if i_s < len(bruts_b) and bruts_b[i_s] is not None else c_s
+                    closes.append(float(c_s))
+                    hauts.append(float(h_s))
+                    bas.append(float(b_s))
                 prix_actuel = float(result.get("meta", {}).get("regularMarketPrice") or (closes[-1] if closes else 0.0))
                 if prix_actuel > 0 and closes:
                     return prix_actuel, closes, hauts, bas
@@ -3008,7 +3029,14 @@ with onglet_portefeuille:
         st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
         total_pv_actees_pf = sum(float(v.get("plus_value_eur", 0.0)) for v in st.session_state.get("historique_ventes", []))
         div_encaisses_cumul = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
-        capital_autofinance = max(0.0, total_pv_actees_pf + div_encaisses_cumul)
+        # Plafond PEA : seules les plus-values actées DANS le PEA (ventes en €) réduisent les versements estimés.
+        # Cette valeur est réutilisée telle quelle par la carte « Plafond Légal PEA » plus bas dans l'onglet.
+        pv_actees_pea_pf = sum(
+            float(v.get("plus_value_eur", 0.0))
+            for v in st.session_state.get("historique_ventes", [])
+            if v.get("devise", "€") != "$"
+        )
+        capital_autofinance = max(0.0, pv_actees_pea_pf + div_encaisses_cumul)
         cout_pru_pea_seul = sum(l["cout_eur"] for l in lignes_triees if l["devise"] == "EUR")
         versements_nets_pea = max(0.0, cout_pru_pea_seul - capital_autofinance)
         plafond_legal_pea = 150000.0
@@ -4061,7 +4089,9 @@ with onglet_ia:
                 ("repartition", "répartition"), ("sante", "santé"),
                 ("impot", "impôt"), ("fiscalite", "fiscalité"),
             ]:
-                question_utilisateur = question_utilisateur.replace(s_a, a_a).replace(s_a.capitalize(), a_a.capitalize())
+                # Mots entiers uniquement : « puissante » ou « croissante » ne doivent pas devenir « puissanté »
+                question_utilisateur = re.sub(rf"\b{s_a}(s?)\b", rf"{a_a}\1", question_utilisateur)
+                question_utilisateur = re.sub(rf"\b{s_a.capitalize()}(s?)\b", rf"{a_a.capitalize()}\1", question_utilisateur)
 
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
@@ -4458,7 +4488,14 @@ with onglet_ventes:
         # --- RECHARGEMENT AUTOMATIQUE DES VENTES DEPUIS SUPABASE À LA CONNEXION ---
         if supabase and st.session_state.get("user"):
             uid_connecte = str(st.session_state["user"].id)
-            if not st.session_state.get("historique_ventes") and not st.session_state.get("_ventes_videes_volontairement", False):
+            # Une seule tentative par compte et par session (avant : une requête Supabase à CHAQUE rafraîchissement
+            # tant que l'historique des ventes était vide)
+            if (
+                not st.session_state.get("historique_ventes")
+                and not st.session_state.get("_ventes_videes_volontairement", False)
+                and st.session_state.get("_ventes_rechargees_pour") != uid_connecte
+            ):
+                st.session_state["_ventes_rechargees_pour"] = uid_connecte
                 try:
                     rep_v = supabase.table("user_data").select("portefeuille").eq("user_id", uid_connecte).execute()
                     if rep_v.data and len(rep_v.data) > 0:
@@ -5027,6 +5064,7 @@ try:
     lignes_csv = ["\ufeff=== 1. MON PORTEFEUILLE ACTUEL (PEA & CTO) ==="]
     lignes_csv.append("Enveloppe;Action;Symbole;Quantite;PRU;Devise;Cours Actuel;Valorisation EUR;Plus-Value Latente EUR;Rendement Marche %;Rendement sur PRU (YoC) %;Rente Annuelle EUR")
 
+    nb_lignes_pack_gratuit = 0
     for nom_p, pos_p in pf_pack.items():
         if (nom_p in CLES_TECHNIQUES_PF and nom_p != "Espèces") or not isinstance(pos_p, dict):
             continue
@@ -5034,6 +5072,14 @@ try:
         pru_p = float(pos_p.get("pru", 0.0))
         if q_p <= 0:
             continue
+
+        # Forfait Gratuit : mêmes 2 premières lignes d'actions que le tableau de l'onglet Portefeuille
+        if nom_p != "Espèces":
+            if nom_p not in WATCHLIST_DEFAUT:
+                continue
+            if mode_gratuit and nb_lignes_pack_gratuit >= 2:
+                continue
+            nb_lignes_pack_gratuit += 1
 
         if nom_p == "Espèces":
             cap_inv_pea += pru_p
@@ -5168,7 +5214,11 @@ try:
             plafond_pea_legal = 150000.0
             pv_actees_tot_pea = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack if v.get("devise", "€") != "$")
             div_enc_pea = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
-            versements_nets_pea_unifie = max(0.0, cap_inv_pea - max(0.0, pv_actees_tot_pea + div_enc_pea))
+            # Même valeur que la « Jauge Officielle Plafond PEA » de l'onglet (calcul local seulement en repli)
+            versements_nets_pea_unifie = float(globals().get(
+                "versements_nets_pea",
+                max(0.0, cap_inv_pea - max(0.0, pv_actees_tot_pea + div_enc_pea)),
+            ))
             marge_pea_dispo = max(0.0, plafond_pea_legal - versements_nets_pea_unifie)
             pct_plafond_pea = min(100.0, (versements_nets_pea_unifie / plafond_pea_legal) * 100.0)
             pv_pea = val_act_pea - cap_inv_pea
