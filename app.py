@@ -1,4 +1,5 @@
 import urllib.request
+import urllib.error
 import urllib.parse
 import json
 import math
@@ -22,7 +23,29 @@ st.set_page_config(
 )
 
 ADMIN_EMAIL = "orcha12345@gmail.com"
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id")
+
+
+def _lire_secret(nom, defaut=""):
+    """Lit un secret Streamlit sans jamais lever d'erreur (fichier de secrets absent, clé manquante...)."""
+    try:
+        return str(st.secrets.get(nom, defaut)).strip().strip('"').strip("'")
+    except Exception:
+        return defaut
+
+
+def est_compte_admin(user):
+    """
+    Reconnaît le compte administrateur à partir d'un utilisateur AUTHENTIFIÉ (jamais d'une simple saisie).
+    - Recommandé : ajoutez le secret ADMIN_USER_ID (UUID de votre compte, visible dans Supabase > Authentication > Users).
+    - Sinon, repli sur l'adresse e-mail du compte connecté.
+    """
+    if user is None:
+        return False
+    id_admin = _lire_secret("ADMIN_USER_ID")
+    if id_admin:
+        return str(getattr(user, "id", "")) == id_admin
+    return str(getattr(user, "email", "") or "").lower() == ADMIN_EMAIL.lower()
 def afficher_html(html_brut):
     """Supprime les indentations pour empêcher Streamlit d'afficher le HTML en bloc de code."""
     html_propre = "\n".join(ligne.strip() for ligne in html_brut.splitlines() if ligne.strip())
@@ -69,70 +92,183 @@ afficher_html(STYLE_ARGON)
 # ==============================================================================
 # CONNEXION SUPABASE, STRIPE & EMAILS D'ALERTE
 # ==============================================================================
-@st.cache_resource
 def init_supabase():
-    try:
-        url = str(st.secrets["SUPABASE_URL"]).strip().rstrip("/")
-        key = str(st.secrets["SUPABASE_KEY"]).strip()
-        return create_client(url, key)
-    except Exception:
-        return None
+    """
+    Un client Supabase PAR session utilisateur.
+    (Avec @st.cache_resource, un seul client était partagé par tous les visiteurs : chaque connexion
+    écrasait le jeton de la précédente et une déconnexion déconnectait tout le monde.)
+    """
+    if "_supabase_client" not in st.session_state:
+        try:
+            url = str(st.secrets["SUPABASE_URL"]).strip().rstrip("/")
+            key = str(st.secrets["SUPABASE_KEY"]).strip()
+            st.session_state["_supabase_client"] = create_client(url, key)
+        except Exception:
+            st.session_state["_supabase_client"] = None
+    return st.session_state["_supabase_client"]
 
 supabase = init_supabase()
 
-def verifier_abonnement_stripe(email_client):
+def _stripe_get(chemin, cle_stripe):
+    """Appel GET authentifié à l'API Stripe (lève une exception en cas d'erreur HTTP ou réseau)."""
+    req = urllib.request.Request(
+        f"https://api.stripe.com/v1/{chemin}",
+        headers={"Authorization": f"Bearer {cle_stripe}"},
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _ids_prix_stripe(nom_secret):
+    """Identifiants de prix Stripe (price_...) déclarés dans un secret, séparés par des virgules."""
+    return {p.strip() for p in _lire_secret(nom_secret).split(",") if p.strip()}
+
+
+def _palier_depuis_abonnement_stripe(sub):
+    """
+    Déduit le palier ('premium' ou 'pro') d'un abonnement Stripe.
+    - Fiable : par identifiant de prix, via les secrets STRIPE_PRICE_PREMIUM et STRIPE_PRICE_PRO.
+    - Repli (comportement historique) : par montant, <= 6,00 EUR = Premium, sinon Pro.
+    """
+    prix_premium = _ids_prix_stripe("STRIPE_PRICE_PREMIUM")
+    prix_pro = _ids_prix_stripe("STRIPE_PRICE_PRO")
+    palier = None
+    for ligne in ((sub.get("items") or {}).get("data") or []):
+        prix = ligne.get("price") or {}
+        id_prix = str(prix.get("id") or "")
+        if id_prix and id_prix in prix_pro:
+            palier_ligne = "pro"
+        elif id_prix and id_prix in prix_premium:
+            palier_ligne = "premium"
+        else:
+            try:
+                montant_cts = int(prix.get("unit_amount") or 0)
+            except Exception:
+                montant_cts = 0
+            palier_ligne = "premium" if 0 < montant_cts <= 600 else "pro"
+        if palier_ligne == "pro":
+            return "pro"
+        palier = palier_ligne
+    return palier or "pro"
+
+
+def _fin_programmee_abonnement_stripe(sub):
+    """Date (JJ/MM/AAAA) de fin d'accès si une résiliation est programmée, sinon None."""
+    if not (sub.get("cancel_at_period_end") or sub.get("cancel_at")):
+        return None
+    ts_fin = sub.get("cancel_at") or sub.get("current_period_end")
+    if not ts_fin:
+        # Versions récentes de l'API Stripe : la fin de période est portée par les lignes de l'abonnement
+        lignes = (sub.get("items") or {}).get("data") or []
+        if lignes:
+            ts_fin = lignes[0].get("current_period_end")
+    try:
+        return datetime.fromtimestamp(int(ts_fin)).strftime("%d/%m/%Y") if ts_fin else None
+    except Exception:
+        return None
+
+
+def _etat_abonnements_client_stripe(id_client, cle_stripe):
+    """(palier, date_fin_programmée) du meilleur abonnement actif d'un client Stripe ; (None, None) si aucun."""
+    try:
+        data_sub = _stripe_get(
+            f"subscriptions?customer={urllib.parse.quote(str(id_client))}&status=all&limit=10", cle_stripe
+        )
+    except urllib.error.HTTPError as err_http:
+        if err_http.code in (400, 404):  # client Stripe supprimé ou inconnu : aucun abonnement
+            return None, None
+        raise
+    palier, date_fin = None, None
+    for sub in data_sub.get("data", []):
+        if sub.get("status") not in ("active", "trialing"):
+            continue
+        if palier != "pro":
+            palier = _palier_depuis_abonnement_stripe(sub)
+            date_fin = _fin_programmee_abonnement_stripe(sub)
+    return palier, date_fin
+
+
+def _clients_stripe_par_reference(user_id, cle_stripe):
+    """
+    Clients Stripe ayant finalisé un paiement lancé depuis CE compte Boursy.
+    Les liens de paiement transportent client_reference_id = UUID du compte : l'abonné est donc retrouvé
+    même s'il a payé avec une autre adresse e-mail que celle de son compte.
+    """
+    try:
+        try:
+            data_cs = _stripe_get("checkout/sessions?limit=100&status=complete", cle_stripe)
+        except urllib.error.HTTPError:
+            data_cs = _stripe_get("checkout/sessions?limit=100", cle_stripe)
+    except Exception:
+        return []
+    trouves = []
+    for cs in data_cs.get("data", []):
+        if cs.get("status") == "complete" and str(cs.get("client_reference_id") or "") == str(user_id):
+            id_c = cs.get("customer")
+            if isinstance(id_c, dict):
+                id_c = id_c.get("id")
+            if id_c and id_c not in trouves:
+                trouves.append(id_c)
+    return trouves
+
+
+def verifier_abonnement_stripe(email_client, user_id=None):
     """
     Vérifie en direct sur Stripe l'état de l'abonnement du client :
     - Retourne True si un abonnement est actif (et met à jour le palier 'premium' ou 'pro').
-    - Retourne False si le client a résilié et que son abonnement est expiré.
+    - Retourne False si le client n'a pas (ou plus) d'abonnement actif.
     - Retourne None si la clé Stripe n'est pas configurée ou en cas d'erreur réseau.
+
+    Le client Stripe est recherché dans cet ordre :
+    1. identifiant client déjà mémorisé pour ce compte ;
+    2. adresse e-mail du compte ;
+    3. paiements portant le client_reference_id du compte (paiement fait avec une autre adresse).
     """
-    if not email_client or not hasattr(st, "secrets"):
+    cle_stripe = _lire_secret("STRIPE_SECRET_KEY")
+    if not email_client or not cle_stripe:
         return None
-    cle_stripe = str(st.secrets.get("STRIPE_SECRET_KEY", "")).strip().strip('"').strip("'")
-    if not cle_stripe:
-        return None
+    uid = str(user_id) if user_id else ""
+    pf_session = st.session_state.get("portefeuille")
     try:
-        url_cust = f"https://api.stripe.com/v1/customers?email={urllib.parse.quote(email_client.strip())}&limit=5"
-        req_cust = urllib.request.Request(url_cust, headers={"Authorization": f"Bearer {cle_stripe}"})
-        with urllib.request.urlopen(req_cust, timeout=8) as resp:
-            data_cust = json.loads(resp.read().decode("utf-8"))
+        ids_clients = []
 
-        clients = data_cust.get("data", [])
-        if not clients:
-            return False
+        # 1. Identifiant mémorisé : accepté uniquement s'il a été enregistré pour CE compte ("<uuid>|cus_...")
+        memo = pf_session.get("_stripe_customer_id") if isinstance(pf_session, dict) else None
+        if uid and isinstance(memo, str) and "|" in memo:
+            uid_memo, id_memo = memo.split("|", 1)
+            if uid_memo == uid and id_memo.startswith("cus_"):
+                ids_clients.append(id_memo)
 
-        meilleur_palier = None
-        date_fin_programmée = None
+        # 2. Recherche par adresse e-mail
+        data_cust = _stripe_get(f"customers?email={urllib.parse.quote(email_client.strip())}&limit=5", cle_stripe)
+        for client in data_cust.get("data", []):
+            id_c = client.get("id")
+            if id_c and id_c not in ids_clients:
+                ids_clients.append(id_c)
 
-        for client in clients:
-            cid = client.get("id")
-            url_sub = f"https://api.stripe.com/v1/subscriptions?customer={cid}&status=all&limit=10"
-            req_sub = urllib.request.Request(url_sub, headers={"Authorization": f"Bearer {cle_stripe}"})
-            with urllib.request.urlopen(req_sub, timeout=8) as resp_s:
-                data_sub = json.loads(resp_s.read().decode("utf-8"))
-                for sub in data_sub.get("data", []):
-                    if sub.get("status") in ("active", "trialing"):
-                        palier_detecte = "pro"
-                        try:
-                            montant_cts = int(sub["items"]["data"][0]["price"]["unit_amount"] or 0)
-                            if 0 < montant_cts <= 600:
-                                palier_detecte = "premium"
-                        except Exception:
-                            palier_detecte = "pro"
+        meilleur_palier, date_fin_programmee, id_retenu = None, None, None
 
-                        if meilleur_palier != "pro":
-                            meilleur_palier = palier_detecte
+        def _evaluer(id_c):
+            nonlocal meilleur_palier, date_fin_programmee, id_retenu
+            palier_c, fin_c = _etat_abonnements_client_stripe(id_c, cle_stripe)
+            if palier_c and meilleur_palier != "pro":
+                meilleur_palier, date_fin_programmee, id_retenu = palier_c, fin_c, id_c
 
-                        if sub.get("cancel_at_period_end") and sub.get("current_period_end"):
-                            try:
-                                date_fin_programmée = datetime.fromtimestamp(int(sub["current_period_end"])).strftime("%d/%m/%Y")
-                            except Exception:
-                                pass
+        for id_c in ids_clients:
+            _evaluer(id_c)
+
+        # 3. Aucun abonnement trouvé : recherche par référence de compte
+        if meilleur_palier is None and uid:
+            for id_c in _clients_stripe_par_reference(uid, cle_stripe):
+                if id_c not in ids_clients:
+                    ids_clients.append(id_c)
+                    _evaluer(id_c)
 
         if meilleur_palier in ("premium", "pro"):
             st.session_state["niveau_abonnement"] = meilleur_palier
-            st.session_state["abo_fin_periode"] = date_fin_programmée
+            st.session_state["abo_fin_periode"] = date_fin_programmee
+            if uid and id_retenu and isinstance(pf_session, dict):
+                pf_session["_stripe_customer_id"] = f"{uid}|{id_retenu}"
             return True
 
         st.session_state["abo_fin_periode"] = None
@@ -196,6 +332,9 @@ def recuperer_taux_change():
         except Exception:
             continue
     return 1.08
+
+# Défini dès maintenant : sauvegarder_dans_cloud() en a besoin dès la connexion et au retour de paiement Stripe
+TAUX_USD_EUR = recuperer_taux_change()
 
 @st.cache_data(ttl=1800)
 def recuperer_indice_meteo(symbole):
@@ -367,7 +506,7 @@ def sauvegarder_dans_cloud():
             watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
             date_du_jour = datetime.now().strftime("%Y-%m-%d")
 
-            est_pro_val = True if email_str.lower() == ADMIN_EMAIL.lower() else bool(st.session_state.get("est_abonne_pro", False))
+            est_pro_val = True if est_compte_admin(st.session_state["user"]) else bool(st.session_state.get("est_abonne_pro", False))
             st.session_state["est_abonne_pro"] = est_pro_val
 
             hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
@@ -392,7 +531,7 @@ def sauvegarder_dans_cloud():
                 except Exception:
                     pass
 
-            niv_abo_sauve = "pro" if email_str.lower() == ADMIN_EMAIL.lower() else str(st.session_state.get("niveau_abonnement", "pro" if est_pro_val else "gratuit"))
+            niv_abo_sauve = "pro" if est_compte_admin(st.session_state["user"]) else str(st.session_state.get("niveau_abonnement", "pro" if est_pro_val else "gratuit"))
             pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
             pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
@@ -490,10 +629,10 @@ else:
                         st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
 
                         est_pro_bdd = bool(profil.get("est_abonne_pro", False))
-                        if email_connecte == ADMIN_EMAIL.lower():
+                        if est_compte_admin(res.user):
                             est_pro_bdd = True
                             st.session_state["niveau_abonnement"] = "pro"
-                        elif not est_pro_bdd and verifier_abonnement_stripe(email_connecte):
+                        elif not est_pro_bdd and verifier_abonnement_stripe(email_connecte, res.user.id):
                             est_pro_bdd = True
                             supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(res.user.id)).execute()
                         elif est_pro_bdd:
@@ -503,7 +642,7 @@ else:
                         st.session_state["est_abonne_pro"] = est_pro_bdd
                         synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
                     else:
-                        est_adm = (email_connecte == ADMIN_EMAIL.lower())
+                        est_adm = est_compte_admin(res.user)
                         st.session_state["est_abonne_pro"] = est_adm
                         st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
                         sauvegarder_dans_cloud()
@@ -516,16 +655,23 @@ else:
             if st.sidebar.button("✨ S'inscrire gratuitement", type="primary", use_container_width=True):
                 try:
                     res = supabase.auth.sign_up({"email": email_input, "password": password_input})
-                    if res.user:
+                    # Connexion uniquement si Supabase a ouvert une VRAIE session. Sans session (e-mail à confirmer,
+                    # ou adresse déjà inscrite : Supabase renvoie alors un utilisateur factice), on ne connecte personne.
+                    if res.user and getattr(res, "session", None):
                         st.session_state["user"] = res.user
                         st.session_state["watchlist"] = WATCHLIST_DEFAUT.copy()
                         st.session_state["portefeuille"] = PORTEFEUILLE_DEFAUT.copy()
-                        est_adm = (str(res.user.email).lower() == ADMIN_EMAIL.lower())
+                        est_adm = est_compte_admin(res.user)
                         st.session_state["est_abonne_pro"] = est_adm
                         st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
                         sauvegarder_dans_cloud()
                         st.sidebar.success("Compte créé avec succès !")
                         st.rerun()
+                    elif res.user:
+                        st.sidebar.info(
+                            "📧 Presque terminé ! Cliquez sur le lien de confirmation reçu par e-mail, puis connectez-vous. "
+                            "Si un compte existe déjà avec cette adresse, utilisez « Se connecter » ou « Mot de passe oublié »."
+                        )
                 except Exception as e:
                     st.sidebar.error(f"Erreur d'inscription : {e}")
 
@@ -542,19 +688,16 @@ else:
                         st.sidebar.error(f"Erreur : {e}")
     else:
         email_courant = str(st.session_state["user"].email)
-        est_admin_connecte = (email_courant.lower() == ADMIN_EMAIL.lower())
+        est_admin_connecte = est_compte_admin(st.session_state["user"])
         if est_admin_connecte:
             st.session_state["est_abonne_pro"] = True
             st.session_state["niveau_abonnement"] = "pro"
 
         param_paiement = str(st.query_params.get("paiement", "")).lower()
         if param_paiement in ("succes", "premium", "pro"):
-            if verifier_abonnement_stripe(email_courant):
+            if verifier_abonnement_stripe(email_courant, st.session_state["user"].id):
                 st.session_state["est_abonne_pro"] = True
-                if param_paiement == "premium":
-                    st.session_state["niveau_abonnement"] = "premium"
-                elif param_paiement == "pro":
-                    st.session_state["niveau_abonnement"] = "pro"
+                # Le palier (premium / pro) est celui constaté sur Stripe, jamais celui indiqué dans l'URL
                 if isinstance(st.session_state.get("portefeuille"), dict):
                     st.session_state["portefeuille"]["_niveau_abo"] = st.session_state["niveau_abonnement"]
                 sauvegarder_dans_cloud()
@@ -1046,16 +1189,13 @@ with st.sidebar.expander("🗑️ Supprimer une action du radar"):
 st.sidebar.markdown("---")
 st.sidebar.header("💎 Offres & Abonnement")
 
-est_admin = (
-    st.session_state.get("user") is not None
-    and str(st.session_state["user"].email).lower() == ADMIN_EMAIL.lower()
-)
+est_admin = est_compte_admin(st.session_state.get("user"))
 
 # Synchronisation automatique Stripe (détecte les désabonnements et les changements 4,90€ <-> 8,90€)
 if st.session_state.get("user") is not None and not est_admin:
     if not st.session_state.get("_stripe_sync_session_ok", False):
         email_verif = str(st.session_state["user"].email).lower()
-        etat_stripe = verifier_abonnement_stripe(email_verif)
+        etat_stripe = verifier_abonnement_stripe(email_verif, st.session_state["user"].id)
         st.session_state["_stripe_sync_session_ok"] = True
 
         if etat_stripe is True:
@@ -1120,25 +1260,28 @@ est_pro_max = (niveau_acces == "pro")
 
 quota_ia_max = 1 if mode_gratuit else (3 if niveau_acces == "premium" else 15)
 
-def _construire_url_stripe(*cles_possibles):
+def _construire_url_stripe(*cles_possibles, avec_reference=True):
     url_b = ""
-    if hasattr(st, "secrets"):
-        for k_s in cles_possibles:
-            val_s = str(st.secrets.get(k_s, "")).strip()
-            if val_s:
-                url_b = val_s
-                break
+    for k_s in cles_possibles:
+        val_s = _lire_secret(k_s)
+        if val_s:
+            url_b = val_s
+            break
     if not url_b:
         return "https://buy.stripe.com/"
     if st.session_state.get("user") is not None:
         em_q = urllib.parse.quote(str(st.session_state["user"].email))
         sep = "&" if "?" in url_b else "?"
-        return f"{url_b}{sep}prefilled_email={em_q}"
+        url_f = f"{url_b}{sep}prefilled_email={em_q}"
+        if avec_reference:
+            # Relie le paiement au compte Boursy, même si l'adresse saisie chez Stripe est différente
+            url_f += f"&client_reference_id={urllib.parse.quote(str(st.session_state['user'].id))}"
+        return url_f
     return url_b
 
 url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PRO_URL")
 url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL")
-url_portail_stripe = _construire_url_stripe("STRIPE_PORTAL_URL", "STRIPE_BILLING_URL")
+url_portail_stripe = _construire_url_stripe("STRIPE_PORTAL_URL", "STRIPE_BILLING_URL", avec_reference=False)
 portail_configure = (url_portail_stripe and not url_portail_stripe.startswith("https://buy.stripe.com/?") and url_portail_stripe != "https://buy.stripe.com/")
 
 if mode_gratuit:
@@ -2259,7 +2402,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -4022,22 +4165,19 @@ with onglet_ia:
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
     def appeler_gemini_coach(question_utilisateur, code_audit=""):
-        cle_gemini = ""
-        if hasattr(st, "secrets"):
-            for nom_secret in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
-                val_s = str(st.secrets.get(nom_secret, "")).strip().strip('"').strip("'")
-                if val_s:
-                    cle_gemini = val_s
-                    break
-
-        if not cle_gemini:
-            return generer_audit_expert_hybride(question_utilisateur, code_audit)
-    def appeler_gemini_coach(question_utilisateur, code_audit=""):
         # Protection anti-abus API : si le visiteur n'est pas connecté à un compte, utilise le moteur local gratuit
         if st.session_state.get("user") is None:
             return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
         cle_gemini = ""
+        for nom_secret in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"]:
+            val_s = _lire_secret(nom_secret)
+            if val_s:
+                cle_gemini = val_s
+                break
+        if not cle_gemini:
+            return generer_audit_expert_hybride(question_utilisateur, code_audit)
+
         resume_pf = []
         for l_it in lignes_triees:
             if l_it["est_especes"]:
@@ -4092,7 +4232,9 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
             if not any(ex in m for ex in ["tts", "audio", "image", "vision", "embedding", "bis", "exp"])
         ]
         modeles_ordonnes = []
-        for m_prio in priorite_modeles + modeles_propres + modeles_candidats:
+        # Les modèles "prioritaires" ne sont tentés que s'ils existent encore chez Google (évite des appels voués à l'échec)
+        priorites_valides = [m for m in priorite_modeles if (not modeles_candidats or m in modeles_candidats)]
+        for m_prio in priorites_valides + modeles_propres + modeles_candidats:
             if m_prio not in modeles_ordonnes:
                 modeles_ordonnes.append(m_prio)
 
@@ -4289,7 +4431,8 @@ with onglet_ventes:
             st.session_state["portefeuille"]["_historique_ventes"] = st.session_state["historique_ventes"]
             st.session_state["_ventes_videes_volontairement"] = False
 
-            # 1. Déduction immédiate des actions dans l'Onglet 2
+ 
+           # 1. Déduction immédiate des actions dans l'Onglet 2
             nouvelle_qte = max(0, int(qte_det_v) - qte_vendue)
             st.session_state[f"qte_{act_v}"] = nouvelle_qte
             if nouvelle_qte <= 0:
