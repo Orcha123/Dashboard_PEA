@@ -1,0 +1,7 @@
+# Thème Boursy : sombre par défaut (chaque visiteur peut repasser en clair via le menu ⋮ > Settings)
+[theme]
+base = "dark"
+primaryColor = "#10b981"
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#111a2e"
+textColor = "#e6edf7"
