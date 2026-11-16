@@ -345,6 +345,29 @@ def _taux_change_yahoo():
     raise RuntimeError("Taux EUR/USD indisponible")
 
 
+def facteur_cout_usd(position):
+    """
+    Facteur de conversion $ -> € du COÛT D'ACHAT d'une ligne en dollars.
+    Utilise le taux €/$ du jour de l'achat s'il a été saisi pour la ligne ("taux_achat" : 1 € = x $), ce qui fait
+    apparaître l'effet de change dans la plus-value. Sinon, repli sur le taux du jour (effet de change nul).
+    """
+    try:
+        taux_a = float(position.get("taux_achat") or 0.0) if isinstance(position, dict) else 0.0
+    except Exception:
+        taux_a = 0.0
+    return 1.0 / (taux_a if taux_a > 0 else TAUX_USD_EUR)
+
+
+def construire_position(nom_action, qte, pru):
+    """Position {qte, pru} qui conserve le taux €/$ d'achat déjà enregistré pour cette ligne, s'il existe."""
+    position = {"qte": qte, "pru": pru}
+    pf_courant = st.session_state.get("portefeuille")
+    ancienne = pf_courant.get(nom_action) if isinstance(pf_courant, dict) else None
+    if isinstance(ancienne, dict) and ancienne.get("taux_achat"):
+        position["taux_achat"] = ancienne["taux_achat"]
+    return position
+
+
 def recuperer_taux_change():
     """Taux EUR/USD ; en cas d'échec Yahoo, dernier taux connu de la session (sinon 1,08), retenté au prochain affichage."""
     try:
@@ -507,7 +530,12 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
         if nom_act in portefeuille_cloud and isinstance(portefeuille_cloud[nom_act], dict):
             st.session_state[f"qte_{nom_act}"] = int(portefeuille_cloud[nom_act].get("qte", 0))
             st.session_state[f"pru_{nom_act}"] = float(portefeuille_cloud[nom_act].get("pru", 0.0))
+            try:
+                st.session_state[f"txa_{nom_act}"] = min(5.0, max(0.0, float(portefeuille_cloud[nom_act].get("taux_achat") or 0.0)))
+            except Exception:
+                st.session_state[f"txa_{nom_act}"] = 0.0
         else:
+            st.session_state[f"txa_{nom_act}"] = 0.0
             st.session_state[f"qte_{nom_act}"] = 0
             cible_def = float(watchlist_courante.get(nom_act, {}).get("prix_cible", 50.0))
             st.session_state[f"pru_{nom_act}"] = cible_def
@@ -594,13 +622,14 @@ def sauvegarder_dans_cloud():
                 else:
                     info_a = watchlist_actuelle.get(nom_a, WATCHLIST_DEFAUT.get(nom_a, {}))
                     fact_a = (1.0 / TAUX_USD_EUR) if info_a.get("devise") == "USD" else 1.0
+                    fact_cout_a = facteur_cout_usd(pos_a) if info_a.get("devise") == "USD" else 1.0
                     if nom_a in prix_tr:
                         cours_a = float(prix_tr[nom_a])
                     else:
                         cours_a = p_a
                         snapshot_fiable = False
                     div_a = float(info_a.get("div_eur", 0.0))
-                    cap_investi += q_a * p_a * fact_a
+                    cap_investi += q_a * p_a * fact_cout_a
                     val_totale += q_a * cours_a * fact_a
                     rente_tot += q_a * div_a * fact_a
             if val_totale > 0 and snapshot_fiable:
@@ -1158,7 +1187,7 @@ if mode_ajout == "📚 Catalogue (+100 valeurs)":
                 st.session_state["watchlist"][nom_propre] = nouvel_objet_act
                 WATCHLIST_DEFAUT[nom_propre] = nouvel_objet_act
                 if qte_ajout_pf > 0:
-                    st.session_state["portefeuille"][nom_propre] = {"qte": int(qte_ajout_pf), "pru": float(pru_ajout_pf)}
+                    st.session_state["portefeuille"][nom_propre] = construire_position(nom_propre, int(qte_ajout_pf), float(pru_ajout_pf))
                     st.session_state[f"qte_{nom_propre}"] = int(qte_ajout_pf)
                     st.session_state[f"pru_{nom_propre}"] = float(pru_ajout_pf)
                 sauvegarder_dans_cloud()
@@ -1249,7 +1278,7 @@ else:
                 st.session_state["watchlist"][nom_final] = nouvel_act_l
                 WATCHLIST_DEFAUT[nom_final] = nouvel_act_l
                 if qte_libre_pf > 0:
-                    st.session_state["portefeuille"][nom_final] = {"qte": int(qte_libre_pf), "pru": float(pru_libre_pf)}
+                    st.session_state["portefeuille"][nom_final] = construire_position(nom_final, int(qte_libre_pf), float(pru_libre_pf))
                     st.session_state[f"qte_{nom_final}"] = int(qte_libre_pf)
                     st.session_state[f"pru_{nom_final}"] = float(pru_libre_pf)
                 sauvegarder_dans_cloud()
@@ -2530,8 +2559,28 @@ with onglet_portefeuille:
                 qte_saisie = st.number_input(f"Quantité ({nom_act})", min_value=0, value=int(st.session_state.get(f"qte_{nom_act}", qte_defaut)), key=f"qte_{nom_act}")
                 pru_saisi = st.number_input(f"PRU Unitaire ({devise_a})", min_value=0.0, value=float(st.session_state.get(f"pru_{nom_act}", pru_defaut)), step=0.5, key=f"pru_{nom_act}")
 
+                taux_achat_saisi = 0.0
+                if devise_a == "USD":
+                    try:
+                        taux_achat_defaut = float(pos_existante.get("taux_achat") or 0.0) if isinstance(pos_existante, dict) else 0.0
+                    except Exception:
+                        taux_achat_defaut = 0.0
+                    taux_achat_saisi = st.number_input(
+                        "Taux €/$ à l'achat (1 € = ? $)",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=min(5.0, max(0.0, float(st.session_state.get(f"txa_{nom_act}", taux_achat_defaut)))),
+                        step=0.01,
+                        format="%.4f",
+                        key=f"txa_{nom_act}",
+                        help="Taux de change moyen de vos achats (ex. 1,0850). Il sert à convertir votre PRU en euros, pour que "
+                             "la plus-value tienne compte de l'effet de change. Laissez 0 pour utiliser le taux du jour.",
+                    )
+
                 if qte_saisie > 0:
                     nouveau_portefeuille_temp[nom_act] = {"qte": qte_saisie, "pru": pru_saisi}
+                    if taux_achat_saisi > 0:
+                        nouveau_portefeuille_temp[nom_act]["taux_achat"] = round(float(taux_achat_saisi), 4)
                     if nom_act not in st.session_state["watchlist"]:
                         st.session_state["watchlist"][nom_act] = info_act.copy()
                 st.markdown("---")
@@ -2627,7 +2676,9 @@ with onglet_portefeuille:
                 lignes_sans_cours.append(nom_act)
 
             val_ligne_eur = qte * prix_jour * facteur
-            cout_ligne_eur = qte * pru * facteur
+            # Coût d'achat converti au taux €/$ du jour de l'achat s'il est renseigné (sinon taux du jour)
+            facteur_cout = facteur_cout_usd(data_pos) if devise == "USD" else 1.0
+            cout_ligne_eur = qte * pru * facteur_cout
             pv_eur = val_ligne_eur - cout_ligne_eur
             pv_pct = (pv_eur / cout_ligne_eur * 100) if cout_ligne_eur > 0 else 0.0
             div_brut_eur = qte * float(info_act["div_eur"]) * facteur
@@ -3043,7 +3094,9 @@ with onglet_portefeuille:
         pct_plafond_pea = min(100.0, (versements_nets_pea / plafond_legal_pea) * 100.0)
         marge_restante_pea = max(0.0, plafond_legal_pea - versements_nets_pea)
 
-        richesse_totale_creee = plus_value_globale + total_pv_actees_pf + dividendes_nets_totaux_eur
+        # Richesse réellement créée : plus-values latentes + plus-values actées + dividendes DÉJÀ encaissés
+        # (et non la rente annuelle prévue, qui n'a pas encore été perçue)
+        richesse_totale_creee = plus_value_globale + total_pv_actees_pf + div_encaisses_cumul
         tri_global_pct = (richesse_totale_creee / cout_total_achat * 100.0) if cout_total_achat > 0 else 0.0
         c_rich = "#2ecc71" if richesse_totale_creee >= 0 else "#e74c3c"
 
@@ -3064,12 +3117,12 @@ with onglet_portefeuille:
             </div>
             <div class="argon-card" style="text-align:left; border-left: 4px solid {c_rich};">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span class="argon-title" style="color:{c_rich}; margin:0;">🏆 Richesse Totale Créée (Latent + Acté + Rente)</span>
+                    <span class="argon-title" style="color:{c_rich}; margin:0;">🏆 Richesse Totale Créée (Latent + Acté + Dividendes encaissés)</span>
                     <span class="{'b-green' if richesse_totale_creee >= 0 else 'b-red'}">Rendement Global : {tri_global_pct:+.1f}%</span>
                 </div>
                 <div style="font-size:1.35em; font-weight:900; color:{c_rich}; margin:4px 0;">{richesse_totale_creee:+,.2f} €</div>
                 <div style="font-size:0.80em; opacity:0.85;">
-                    PV Latente : <b>{plus_value_globale:+,.0f} €</b> | PV Actées : <b>{total_pv_actees_pf:+,.0f} €</b> | Rente Nette/an : <b style="color:#2ecc71;">+{dividendes_nets_totaux_eur:,.0f} €</b>
+                    PV Latente : <b>{plus_value_globale:+,.0f} €</b> | PV Actées : <b>{total_pv_actees_pf:+,.0f} €</b> | Dividendes encaissés : <b style="color:#2ecc71;">+{div_encaisses_cumul:,.0f} €</b> <span style="opacity:0.75;">(rente prévue : {dividendes_nets_totaux_eur:,.0f} €/an, non comptée)</span>
                 </div>
             </div>
         </div>
@@ -3217,7 +3270,7 @@ with onglet_portefeuille:
                 qte_e = int(float(item_ext.get("qte", 0)))
                 pru_e = round(float(item_ext.get("pru", 0.0)), 2)
                 if nom_e and qte_e > 0:
-                    st.session_state["portefeuille"][nom_e] = {"qte": qte_e, "pru": pru_e}
+                    st.session_state["portefeuille"][nom_e] = construire_position(nom_e, qte_e, pru_e)
                     st.session_state[f"qte_{nom_e}"] = qte_e
                     st.session_state[f"pru_{nom_e}"] = pru_e
                     if nom_e not in st.session_state["watchlist"] and nom_e in WATCHLIST_DEFAUT:
@@ -4515,7 +4568,11 @@ with onglet_ventes:
             facteur_v = (1.0 / TAUX_USD_EUR) if dev_sym_v == "$" else 1.0
             montant_brut_eur = qte_vendue * prix_vente * facteur_v
             montant_net_eur = round(montant_brut_eur - frais_v, 2)
-            cout_init_eur = round(qte_vendue * pru_v * facteur_v, 2)
+            # Coût d'achat au taux €/$ du jour de l'achat (s'il est renseigné) : la plus-value actée inclut l'effet de change
+            pos_avant_vente = st.session_state["portefeuille"].get(act_v)
+            facteur_cout_v = facteur_cout_usd(pos_avant_vente) if dev_sym_v == "$" else 1.0
+            taux_achat_v = pos_avant_vente.get("taux_achat") if isinstance(pos_avant_vente, dict) else None
+            cout_init_eur = round(qte_vendue * pru_v * facteur_cout_v, 2)
             pv_eur = round(montant_net_eur - cout_init_eur, 2)
             perf_pct = round((pv_eur / cout_init_eur * 100.0) if cout_init_eur > 0 else 0.0, 2)
 
@@ -4537,6 +4594,8 @@ with onglet_ventes:
                 "perf_pct": perf_pct,
                 "credite_especes": crediter_esp,
             }
+            if taux_achat_v:
+                nouvelle_vente["taux_achat"] = taux_achat_v
             if "historique_ventes" not in st.session_state or not isinstance(st.session_state["historique_ventes"], list):
                 st.session_state["historique_ventes"] = []
             st.session_state["historique_ventes"].insert(0, nouvelle_vente)
@@ -4553,7 +4612,7 @@ with onglet_ventes:
                 if act_v in st.session_state["portefeuille"] and isinstance(st.session_state["portefeuille"][act_v], dict):
                     st.session_state["portefeuille"][act_v]["qte"] = nouvelle_qte
                 else:
-                    st.session_state["portefeuille"][act_v] = {"qte": nouvelle_qte, "pru": float(pru_v)}
+                    st.session_state["portefeuille"][act_v] = construire_position(act_v, nouvelle_qte, float(pru_v))
 
             # 2. Crédit automatique de la poche Espèces
             if crediter_esp:
@@ -4593,7 +4652,15 @@ with onglet_ventes:
                     pru_rest = float(st.session_state.get(f"pru_{act_s}", pru_s))
                     st.session_state[f"qte_{act_s}"] = qte_restauree
                     st.session_state[f"pru_{act_s}"] = pru_rest
-                    st.session_state["portefeuille"][act_s] = {"qte": qte_restauree, "pru": pru_rest}
+                    pos_restauree = construire_position(act_s, qte_restauree, pru_rest)
+                    if v_suppr.get("taux_achat") and "taux_achat" not in pos_restauree:
+                        # La ligne avait été entièrement vendue : on lui rend le taux €/$ d'achat mémorisé avec la vente
+                        pos_restauree["taux_achat"] = v_suppr["taux_achat"]
+                        try:
+                            st.session_state[f"txa_{act_s}"] = min(5.0, max(0.0, float(v_suppr["taux_achat"])))
+                        except Exception:
+                            pass
+                    st.session_state["portefeuille"][act_s] = pos_restauree
 
                 if avait_credite_esp and mt_s > 0:
                     esp_d = st.session_state["portefeuille"].get("Espèces", {})
@@ -4684,7 +4751,8 @@ with onglet_ventes:
 
                 facteur_apercu = (1.0 / TAUX_USD_EUR) if dev_v == "$" else 1.0
                 net_apercu_eur = round((qte_a_vendre * prix_vente_saisi * facteur_apercu) - frais_vente_eur, 2)
-                cout_apercu_eur = round(qte_a_vendre * pru_actuel * facteur_apercu, 2)
+                facteur_cout_apercu = facteur_cout_usd(pos_actuelle_v) if dev_v == "$" else 1.0
+                cout_apercu_eur = round(qte_a_vendre * pru_actuel * facteur_cout_apercu, 2)
                 pv_apercu_eur = round(net_apercu_eur - cout_apercu_eur, 2)
                 perf_apercu_pct = (pv_apercu_eur / cout_apercu_eur * 100.0) if cout_apercu_eur > 0 else 0.0
                 c_apercu = "#2ecc71" if pv_apercu_eur >= 0 else "#e74c3c"
@@ -5098,7 +5166,7 @@ try:
             fact_p = (1.0 / TAUX_USD_EUR) if est_cto_usd else 1.0
 
             val_eur_p = q_p * cours_p * fact_p
-            cout_eur_p = q_p * pru_p * fact_p
+            cout_eur_p = q_p * pru_p * (facteur_cout_usd(pos_p) if est_cto_usd else 1.0)
             pv_lat_p = val_eur_p - cout_eur_p
             rente_eur_p = q_p * div_p * fact_p
 
@@ -5309,13 +5377,34 @@ try:
                         "Comparez votre performance globale réelle (Total Return : PV + Rente) face aux grands indices passifs."
                     )
                 else:
-                    st.caption("Comparaison de votre performance globale réelle (Plus-values latentes + Plus-values actées + Dividendes annuels) face aux grands indices passifs sur 1 an glissant.")
+                    st.caption(
+                        "Comparaison sur la MÊME période d'1 an glissant : évolution du cours de vos lignes actuelles sur 1 an "
+                        "+ leurs dividendes annuels, face aux indices sur 1 an. Le CW8 capitalise ses dividendes ; "
+                        "le CAC 40 et le S&P 500 sont affichés hors dividendes."
+                    )
 
-                    pv_lat_tot = (val_act_pea + val_act_cto) - (cap_inv_pea + cap_inv_cto)
-                    pv_actee_tot = sum(float(v.get("plus_value_eur", 0.0)) for v in hist_ventes_pack)
-                    gain_total_return_eur = pv_lat_tot + pv_actee_tot + total_rente_actions_pack
-                    cap_base_total = max(1.0, cap_inv_pea + cap_inv_cto)
-                    perf_user_tot_pct = (gain_total_return_eur / cap_base_total) * 100.0
+                    # Performance 1 an des lignes ACTUELLES (mêmes quantités qu'aujourd'hui, hors espèces et hors ventes passées),
+                    # calculée comme celle des indices : cours d'il y a 252 séances -> cours actuel.
+                    val_actuelle_duel = 0.0
+                    val_il_y_a_1an_duel = 0.0
+                    rente_duel = 0.0
+                    lignes_hors_duel = []
+                    for l_duel in lignes_yoc_details:
+                        cl_duel = hist_prix_pack.get(l_duel["nom"]) or []
+                        if len(cl_duel) >= 30 and float(cl_duel[-1]) > 0:
+                            idx_deb_duel = max(0, len(cl_duel) - min(252, len(cl_duel)))
+                            ratio_duel = float(cl_duel[idx_deb_duel]) / float(cl_duel[-1])
+                            val_actuelle_duel += l_duel["val_eur"]
+                            val_il_y_a_1an_duel += l_duel["val_eur"] * ratio_duel
+                            rente_duel += l_duel["rente_eur"]
+                        else:
+                            lignes_hors_duel.append(l_duel["nom"])
+
+                    gain_total_return_eur = (val_actuelle_duel - val_il_y_a_1an_duel) + rente_duel
+                    cap_base_total = max(1.0, val_il_y_a_1an_duel)
+                    perf_user_tot_pct = (gain_total_return_eur / cap_base_total) * 100.0 if val_il_y_a_1an_duel > 0 else 0.0
+                    if lignes_hors_duel:
+                        st.caption("ℹ️ Lignes exclues du duel (historique de cours indisponible) : " + ", ".join(lignes_hors_duel) + ".")
 
                     def _perf_1an_indice(sym_idx, defaut_pct):
                         try:
@@ -5346,9 +5435,9 @@ try:
                     afficher_html(f"""
                     <div class="argon-grid" style="margin-top:6px;">
                         <div class="argon-card" style="border-top: 3px solid {c_user_duel};">
-                            <div class="argon-title">🏆 Votre Portefeuille (Total Return)</div>
+                            <div class="argon-title">🏆 Vos Lignes Actuelles (1 An, dividendes inclus)</div>
                             <div class="argon-val" style="color:{c_user_duel};">{perf_user_tot_pct:+.2f}%</div>
-                            <div class="argon-sub">Gain global (PV + Rente) : <b>{gain_total_return_eur:+,.0f} €</b></div>
+                            <div class="argon-sub">Gain 1 an (cours + rente) : <b>{gain_total_return_eur:+,.0f} €</b></div>
                         </div>
                         <div class="argon-card" style="border-top: 3px solid #3498db;">
                             <div class="argon-title">🌍 ETF MSCI World (CW8.PA - 1 An)</div>
@@ -5356,7 +5445,7 @@ try:
                             <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cw8:+,.0f} €</b></div>
                         </div>
                         <div class="argon-card" style="border-top: 3px solid #9b59b6;">
-                            <div class="argon-title">🇫🇷 Indice CAC 40 (1 An)</div>
+                            <div class="argon-title">🇫🇷 Indice CAC 40 (1 An, hors dividendes)</div>
                             <div class="argon-val" style="color:#9b59b6;">{perf_cac_1a:+.2f}%</div>
                             <div class="argon-sub">Simulé sur votre capital : <b>{gain_sim_cac:+,.0f} €</b></div>
                         </div>
