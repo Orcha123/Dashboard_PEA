@@ -319,7 +319,8 @@ HEADERS_YAHOO_PRO = {
 }
 
 @st.cache_data(ttl=1800)
-def recuperer_taux_change():
+def _taux_change_yahoo():
+    """Taux EUR/USD lu sur Yahoo. Lève une erreur en cas d'échec : un échec n'est ainsi jamais mis en cache."""
     for srv in ("query1", "query2"):
         try:
             url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/EURUSD=X?range=1d&interval=1d"
@@ -331,7 +332,17 @@ def recuperer_taux_change():
                     return taux
         except Exception:
             continue
-    return 1.08
+    raise RuntimeError("Taux EUR/USD indisponible")
+
+
+def recuperer_taux_change():
+    """Taux EUR/USD ; en cas d'échec Yahoo, dernier taux connu de la session (sinon 1,08), retenté au prochain affichage."""
+    try:
+        taux = _taux_change_yahoo()
+        st.session_state["_dernier_taux_change_ok"] = taux
+        return taux
+    except Exception:
+        return float(st.session_state.get("_dernier_taux_change_ok", 1.08))
 
 # Défini dès maintenant : sauvegarder_dans_cloud() en a besoin dès la connexion et au retour de paiement Stripe
 TAUX_USD_EUR = recuperer_taux_change()
@@ -558,6 +569,7 @@ def sauvegarder_dans_cloud():
             val_totale = 0.0
             rente_tot = 0.0
             prix_tr = st.session_state.get("prix_temps_reel", {})
+            snapshot_fiable = True  # Faux dès qu'une ligne détenue n'a pas de cours réel : pas de snapshot faussé
 
             for nom_a, pos_a in pf_a_sauver.items():
                 if (nom_a in CLES_TECHNIQUES_PF and nom_a != "Espèces") or not isinstance(pos_a, dict):
@@ -572,12 +584,16 @@ def sauvegarder_dans_cloud():
                 else:
                     info_a = watchlist_actuelle.get(nom_a, WATCHLIST_DEFAUT.get(nom_a, {}))
                     fact_a = (1.0 / TAUX_USD_EUR) if info_a.get("devise") == "USD" else 1.0
-                    cours_a = float(prix_tr.get(nom_a, info_a.get("prix_cible", p_a)))
+                    if nom_a in prix_tr:
+                        cours_a = float(prix_tr[nom_a])
+                    else:
+                        cours_a = p_a
+                        snapshot_fiable = False
                     div_a = float(info_a.get("div_eur", 0.0))
                     cap_investi += q_a * p_a * fact_a
                     val_totale += q_a * cours_a * fact_a
                     rente_tot += q_a * div_a * fact_a
-            if val_totale > 0:
+            if val_totale > 0 and snapshot_fiable:
                 snapshot_payload = {
                     "user_id": user_id_str,
                     "date": date_du_jour,
@@ -588,7 +604,10 @@ def sauvegarder_dans_cloud():
                 supabase.table("portfolio_history").delete().eq("user_id", user_id_str).eq("date", date_du_jour).execute()
                 supabase.table("portfolio_history").insert(snapshot_payload).execute()
 
-            st.sidebar.success("✅ Sauvegardé & Snapshot du jour mis à jour !")
+            if snapshot_fiable:
+                st.sidebar.success("✅ Sauvegardé & Snapshot du jour mis à jour !")
+            else:
+                st.sidebar.success("✅ Sauvegardé ! (Snapshot du jour non mis à jour : cours indisponible pour au moins une ligne.)")
             return True
         except Exception as e:
             st.sidebar.error(f"Erreur Supabase : {e}")
@@ -613,12 +632,20 @@ else:
         if choix_auth == "Se connecter":
             password_input = st.sidebar.text_input("Mot de passe", type="password")
             if st.sidebar.button("🔓 Connexion", type="primary", use_container_width=True):
+                res = None
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email_input, "password": password_input})
-                    st.session_state["user"] = res.user
+                except Exception:
+                    st.sidebar.error("Identifiants incorrects ou compte inexistant.")
+
+                # Le compte n'est marqué « connecté » qu'une fois ses données chargées : si le chargement échoue,
+                # personne n'est connecté et le portefeuille de démonstration ne peut pas écraser les données du Cloud.
+                if res is not None and getattr(res, "user", None) is not None:
+                  try:
                     email_connecte = str(res.user.email).lower()
 
                     data = supabase.table("user_data").select("*").eq("user_id", res.user.id).execute()
+                    st.session_state["user"] = res.user
                     if data.data:
                         profil = data.data[0]
                         wl_cloud = profil.get("watchlist")
@@ -647,8 +674,17 @@ else:
                         st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
                         sauvegarder_dans_cloud()
                     st.rerun()
-                except Exception:
-                    st.sidebar.error("Identifiants incorrects ou compte inexistant.")
+                  except Exception:
+                    st.session_state["user"] = None
+                    st.session_state["watchlist"] = WATCHLIST_DEFAUT.copy()
+                    st.session_state["portefeuille"] = PORTEFEUILLE_DEFAUT.copy()
+                    st.session_state["est_abonne_pro"] = False
+                    st.session_state["niveau_abonnement"] = "gratuit"
+                    try:
+                        supabase.auth.sign_out()
+                    except Exception:
+                        pass
+                    st.sidebar.error("⚠️ Connexion réussie, mais vos données n'ont pas pu être chargées. Vous n'êtes pas connecté : réessayez dans un instant.")
 
         elif choix_auth == "Créer un compte":
             password_input = st.sidebar.text_input("Choisir un mot de passe (6 car. min.)", type="password")
@@ -919,8 +955,16 @@ for nom_e, (sym_e, dev_e, sec_e, cib_e, div_e, pay_e, cr_e, mois_e) in ENRICHISS
 
 WATCHLIST_DEFAUT.update(st.session_state["watchlist"])
 
-@st.cache_data(ttl=3600)
 def recuperer_donnees(symbole):
+    """Cours + historique 3 ans. Un échec Yahoo renvoie (None, None, None, None) sans être mis en cache."""
+    try:
+        return _recuperer_donnees_yahoo(symbole)
+    except Exception:
+        return None, None, None, None
+
+
+@st.cache_data(ttl=3600)
+def _recuperer_donnees_yahoo(symbole):
     sym_enc = urllib.parse.quote(str(symbole).strip())
     for srv in ("query1", "query2"):
         url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?range=3y&interval=1d"
@@ -938,7 +982,7 @@ def recuperer_donnees(symbole):
                     return prix_actuel, closes, hauts, bas
         except Exception:
             continue
-    return None, None, None, None
+    raise RuntimeError(f"Cours indisponible pour {symbole}")
 
 @st.cache_data(ttl=1800)
 def inspecter_dividende_yahoo_live(symbole):
@@ -958,8 +1002,8 @@ def inspecter_dividende_yahoo_live(symbole):
                 meta = res0.get("meta", {})
                 closes = [float(x) for x in res0.get("indicators", {}).get("quote", [{}])[0].get("close", []) if x is not None]
                 cours_live = float(meta.get("regularMarketPrice") or (closes[-1] if closes else 50.0))
-                dev_raw = str(meta.get("currency", "EUR")).upper()
-                devise = "USD" if dev_raw == "USD" else "EUR"
+                # Devise RÉELLE de cotation (EUR, USD, mais aussi GBP, CHF, DKK...) : l'appelant refuse celles non gérées
+                devise = str(meta.get("currency") or "EUR").upper()
 
                 divs_dict = res0.get("events", {}).get("dividends", {})
                 div_annuel = 0.0
@@ -1017,8 +1061,10 @@ def rechercher_actions_yahoo_live(requete):
                         secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
                         est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
                         dev_y = "EUR" if est_eur else "USD"
+                        # Suffixe de place inconnu (.L, .SW, .CO...) : la devise réelle est vérifiée sur Yahoo à la sélection
+                        dev_lbl = dev_y if (est_eur or "." not in sym) else "devise à vérifier"
                         resultats.append({
-                            "label": f"{nom_long} ({sym} — {bourse} | {dev_y})",
+                            "label": f"{nom_long} ({sym} — {bourse} | {dev_lbl})",
                             "nom": nom_long,
                             "symbole": sym,
                             "devise": dev_y,
@@ -1117,15 +1163,25 @@ else:
 
     info_connue_y = WATCHLIST_DEFAUT.get(nom_defaut_y, {})
     prix_detecte, dev_detectee, div_detecte, mois_detectes = inspecter_dividende_yahoo_live(sym_defaut_y) if sym_defaut_y else (None, "EUR", 0.0, ["Mai"])
-    if not info_connue_y and dev_detectee:
+    # La devise lue sur Yahoo fait foi dès que le cours a été trouvé. Seuls l'euro et le dollar sont gérés :
+    # une autre devise (GBP, CHF, DKK...) serait comptée à 1 pour 1 et fausserait toute la valorisation.
+    devise_non_geree = bool(prix_detecte) and dev_detectee not in ("EUR", "USD")
+    if prix_detecte and not devise_non_geree:
         dev_defaut_y = dev_detectee
 
     cible_auto = float(info_connue_y.get("prix_cible", round(prix_detecte * 0.95, 2) if prix_detecte else 100.0))
-    div_auto = float(info_connue_y.get("div_eur", div_detecte if div_detecte > 0 else round(cible_auto * 0.035, 2)))
+    # Aucun dividende trouvé = 0 (action de croissance, ETF capitalisant...) : on n'invente plus de rendement
+    div_auto = float(info_connue_y.get("div_eur", div_detecte))
     payout_auto = float(info_connue_y.get("payout_ratio", 0.50))
 
-    if prix_detecte:
-        st.sidebar.success(f"⚡ Cours live : **{prix_detecte:.2f} {dev_defaut_y}** | Div. détecté : **{div_auto:.2f} {dev_defaut_y}**")
+    if devise_non_geree:
+        st.sidebar.error(
+            f"⚠️ `{sym_defaut_y}` est cotée en **{dev_detectee}**. Seules les valeurs cotées en euros (€) ou en dollars ($) "
+            "sont gérées pour l'instant : choisissez une cotation en EUR ou en USD de cette action."
+        )
+    elif prix_detecte:
+        txt_div_detecte = f"Div. détecté : **{div_auto:.2f} {dev_defaut_y}**" if div_auto > 0 else "Aucun dividende détecté"
+        st.sidebar.success(f"⚡ Cours live : **{prix_detecte:.2f} {dev_defaut_y}** | {txt_div_detecte}")
 
     nom_libre = st.sidebar.text_input("Nom de l'action", value=nom_defaut_y, key=f"yl_nom_{sym_defaut_y}").strip()
     sym_libre = st.sidebar.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y, key=f"yl_sym_{sym_defaut_y}").strip().upper()
@@ -1150,9 +1206,15 @@ else:
             st.sidebar.error("⚠️ Veuillez saisir un nom ou un ticker Yahoo.")
         else:
             test_p, _, _, _ = recuperer_donnees(sym_final)
+            # Devise réelle du ticker FINAL (il a pu être modifié à la main dans le formulaire)
+            prix_verif, dev_reelle, _, _ = inspecter_dividende_yahoo_live(sym_final)
             if test_p is None:
                 st.sidebar.error(f"❌ Ticker `{sym_final}` introuvable sur Yahoo Finance. Vérifiez le suffixe (ex: `.PA` pour Paris).")
+            elif prix_verif and dev_reelle not in ("EUR", "USD"):
+                st.sidebar.error(f"❌ `{sym_final}` est cotée en **{dev_reelle}** : seules les valeurs en euros (€) ou en dollars ($) peuvent être ajoutées.")
             else:
+                if prix_verif:
+                    dev_libre = dev_reelle
                 nouvel_act_l = {
                     "symbole": sym_final,
                     "prix_cible": cible_libre,
@@ -2486,6 +2548,7 @@ with onglet_portefeuille:
         taux_net_usd = 0.70
 
         lignes_detaillees = []
+        lignes_sans_cours = []
         nb_actions_comptees_gratuit = 0
 
         for nom_act, data_pos in portefeuille_utilisateur.items():
@@ -2535,7 +2598,12 @@ with onglet_portefeuille:
             sym = "$" if devise == "USD" else "€"
             env_label = "CTO US" if devise == "USD" else "PEA"
             facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
-            prix_jour = float(prix_temps_reel.get(nom_act, info_act["prix_cible"]))
+            if nom_act in prix_temps_reel:
+                prix_jour = float(prix_temps_reel[nom_act])
+            else:
+                # Cours indisponible : la ligne est valorisée à son PRU (plus-value nulle) et signalée, jamais au prix cible
+                prix_jour = pru if pru > 0 else float(info_act.get("prix_cible", 0.0))
+                lignes_sans_cours.append(nom_act)
 
             val_ligne_eur = qte * prix_jour * facteur
             cout_ligne_eur = qte * pru * facteur
@@ -2575,6 +2643,13 @@ with onglet_portefeuille:
             })
 
         lignes_triees = sorted(lignes_detaillees, key=lambda x: x["val_eur"], reverse=True)
+
+        if lignes_sans_cours:
+            st.warning(
+                "⚠️ Cours indisponible pour : **" + ", ".join(lignes_sans_cours) + "**. "
+                "Ces lignes sont valorisées à leur PRU (plus-value affichée à 0) en attendant le retour des cours. "
+                "Cliquez sur « 🔄 Actualiser les cours Bourse » pour réessayer."
+            )
 
         lignes_export_csv = []
         for l_item in lignes_triees:
@@ -2785,7 +2860,7 @@ with onglet_portefeuille:
                     if serie_c:
                         p_hist = serie_c[offset_fin] if abs(offset_fin) <= len(serie_c) else serie_c[0]
                     else:
-                        p_hist = float(prix_temps_reel.get(nom_a, WATCHLIST_DEFAUT[nom_a]["prix_cible"]))
+                        p_hist = float(prix_temps_reel.get(nom_a, d_pos.get("pru", 0.0)))
                     val_jour_eur += q_a * p_hist * fact_a
 
                 if idx_j >= nb_jours_reels - pas_echantillon:
@@ -3565,7 +3640,7 @@ with onglet_dividendes:
         with col_sl1:
             horizon_annees = st.slider("⏳ Horizon (Années)", min_value=5, max_value=30, value=15, step=1)
         with col_sl2:
-            dca_simule = st.slider("💶 Apport DCA Mensuel (€)", min_value=0, max_value=3000, value=int(BUDGET_MENSUEL), step=50)
+            dca_simule = st.slider("💶 Apport DCA Mensuel (€)", min_value=0, max_value=10000, value=int(min(10000, max(0, BUDGET_MENSUEL))), step=50)
         with col_sl3:
             rendement_simule_pct = st.slider("🌱 Rendement Dividende (%)", min_value=1.0, max_value=12.0, value=rendement_defaut_slider, step=0.2)
         with col_sl4:
@@ -4966,7 +5041,7 @@ try:
             lignes_csv.append(f"PEA (EUR);Especes;CASH;1;{pru_p:.2f};EUR;{pru_p:.2f};{pru_p:.2f};0.00;0.00%;0.00%;0.00")
         else:
             inf_base = wl_complet_pack.get(nom_p, WATCHLIST_DEFAUT.get(nom_p, {}))
-            cours_p = float(prix_tr_pack.get(nom_p, inf_base.get("prix_cible", pru_p)))
+            cours_p = float(prix_tr_pack.get(nom_p, pru_p if pru_p > 0 else inf_base.get("prix_cible", 0.0)))
             inf_p, div_p, _ = _extraire_infos_div_et_mois(nom_p, cours_p)
 
             sym_p = inf_p.get("symbole", "")
