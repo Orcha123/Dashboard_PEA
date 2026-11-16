@@ -22,7 +22,7 @@ st.set_page_config(
     layout="wide",
 )
 
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees")
 
 
 def _lire_secret(nom, defaut=""):
@@ -54,13 +54,42 @@ def est_compte_admin(user):
     if not ADMIN_EMAIL:
         return False
     return str(getattr(user, "email", "") or "").lower() == ADMIN_EMAIL.lower()
+_MOTIF_NOMBRE_FR = re.compile(r"(?<![\w.,/])(?<!IA )(?<!Boursy )(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?!\w|[.,/]\d)")
+
+
+def nombres_fr(texte):
+    """
+    Met les nombres d'un texte au format français : 11,709.45 -> 11 709,45 (espace insécable et virgule décimale).
+    Seul le texte affiché est touché : les balises HTML, leurs attributs et les blocs <style>/<script> restent intacts.
+    """
+    if not isinstance(texte, str) or not texte:
+        return texte
+    morceaux = re.split(r"(<[^>]+>)", texte)
+    hors_texte = False
+    for i_m, morceau in enumerate(morceaux):
+        if morceau.startswith("<"):
+            debut_balise = morceau[1:8].lower()
+            if debut_balise.startswith(("style", "script")):
+                hors_texte = True
+            elif debut_balise.startswith(("/style", "/script")):
+                hors_texte = False
+        elif not hors_texte:
+            morceaux[i_m] = _MOTIF_NOMBRE_FR.sub(lambda m: m.group(1).replace(",", "\u00a0").replace(".", ","), morceau)
+    return "".join(morceaux)
+
+
+def markdown_fr(texte, **options):
+    """st.markdown avec les nombres au format français."""
+    st.markdown(nombres_fr(texte), **options)
+
+
 def afficher_html(html_brut):
     """Supprime les indentations pour empêcher Streamlit d'afficher le HTML en bloc de code."""
     html_propre = "\n".join(ligne.strip() for ligne in html_brut.splitlines() if ligne.strip())
     # Chaque tableau est placé dans un cadre défilant : lisible sur mobile sans élargir toute la page
     html_propre = re.sub(r"<table\s+class=(['\"])r-table\1", r'<div class="r-wrap"><table class="r-table"', html_propre)
     html_propre = html_propre.replace("</table>", "</table></div>")
-    st.markdown(html_propre, unsafe_allow_html=True)
+    st.markdown(nombres_fr(html_propre), unsafe_allow_html=True)
 
 STYLE_ARGON = """
 <style>
@@ -655,6 +684,15 @@ def sauvegarder_dans_cloud():
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
             pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
             pf_a_sauver["_niveau_abo"] = niv_abo_sauve
+            if pf_a_sauver.get("_alertes_auto"):
+                try:
+                    res_al = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
+                    pf_al = (res_al.data[0].get("portefeuille") or {}) if res_al.data else {}
+                    if isinstance(pf_al, dict) and isinstance(pf_al.get("_alertes_envoyees"), list):
+                        pf_a_sauver["_alertes_envoyees"] = pf_al["_alertes_envoyees"]
+                        st.session_state["portefeuille"]["_alertes_envoyees"] = pf_al["_alertes_envoyees"]
+                except Exception:
+                    pass
             pf_a_sauver["_div_encaisses_cumul"] = round(float(st.session_state.get("dividendes_encaisses_cumul", pf_a_sauver.get("_div_encaisses_cumul", 0.0))), 2)
             st.session_state["portefeuille"]["_historique_ventes"] = hist_ventes_actuel
             st.session_state["portefeuille"]["_quota_ia"] = pf_a_sauver["_quota_ia"]
@@ -712,6 +750,7 @@ def sauvegarder_dans_cloud():
                 }
                 supabase.table("portfolio_history").delete().eq("user_id", user_id_str).eq("date", date_du_jour).execute()
                 supabase.table("portfolio_history").insert(snapshot_payload).execute()
+                st.session_state.pop("_historique_snapshots", None)  # la courbe réelle sera relue avec ce nouveau point
 
             if snapshot_fiable:
                 st.sidebar.success("✅ Sauvegardé & Snapshot du jour mis à jour !")
@@ -880,6 +919,7 @@ else:
             st.session_state["est_abonne_pro"] = False
             st.session_state["niveau_abonnement"] = "gratuit"
             st.session_state.pop("_stripe_sync_session_ok", None)
+            st.session_state.pop("_historique_snapshots", None)
             st.session_state.pop("abo_fin_periode", None)
             st.rerun()
 
@@ -1301,7 +1341,7 @@ else:
         )
     elif prix_detecte:
         txt_div_detecte = f"Div. détecté : **{div_auto:.2f} {dev_defaut_y}**" if div_auto > 0 else "Aucun dividende détecté"
-        st.sidebar.success(f"⚡ Cours live : **{prix_detecte:.2f} {dev_defaut_y}** | {txt_div_detecte}")
+        st.sidebar.success(nombres_fr(f"⚡ Cours live : **{prix_detecte:.2f} {dev_defaut_y}** | {txt_div_detecte}"))
 
     nom_libre = st.sidebar.text_input("Nom de l'action", value=nom_defaut_y, key=f"yl_nom_{sym_defaut_y}").strip()
     sym_libre = st.sidebar.text_input("Ticker Yahoo (ex: OR.PA, ASML.AS, NVDA)", value=sym_defaut_y, key=f"yl_sym_{sym_defaut_y}").strip().upper()
@@ -2068,7 +2108,7 @@ with onglet_radar:
                 st.info("Aucune valeur n'est actuellement sous son prix cible ou en signal d'Achat Fort.")
             else:
                 for al in alertes_detectees[:4]:
-                    st.markdown(f"• **{al['Actif']}** à **{al['Prix']}** (Cible : `{al['Cible']}`) — **{al['Motif']}**")
+                    markdown_fr(f"• **{al['Actif']}** à **{al['Prix']}** (Cible : `{al['Cible']}`) — **{al['Motif']}**")
                 email_dest = str(st.session_state["user"].email) if st.session_state.get("user") else ADMIN_EMAIL
                 if st.button(f"📧 M'envoyer ce rapport d'alertes par email ({email_dest})", width="stretch"):
                     ok_mail, msg_mail = envoyer_email_alerte(email_dest, alertes_detectees)
@@ -2076,6 +2116,19 @@ with onglet_radar:
                         st.success(msg_mail)
                     else:
                         st.info(msg_mail)
+
+            # --- ALERTES AUTOMATIQUES : envoi chaque soir de bourse par la tâche planifiée (alertes_quotidiennes.py) ---
+            if est_pro_max and st.session_state.get("user") is not None and isinstance(st.session_state.get("portefeuille"), dict):
+                alertes_auto_actuel = bool(st.session_state["portefeuille"].get("_alertes_auto", False))
+                alertes_auto_voulu = st.toggle(
+                    "📬 Recevoir automatiquement un e-mail dès qu'une valeur de mon radar passe sous son prix cible",
+                    value=alertes_auto_actuel,
+                    help="Vérification chaque soir de bourse, même sans ouvrir Boursy. Un seul e-mail par valeur, "
+                         "renvoyé au plus une fois par semaine tant qu'elle reste sous son prix cible.",
+                )
+                if alertes_auto_voulu != alertes_auto_actuel:
+                    st.session_state["portefeuille"]["_alertes_auto"] = bool(alertes_auto_voulu)
+                    sauvegarder_dans_cloud()
 
     # --- TITRE DU TABLEAU 1 PLEINE LARGEUR (GAUCHE) + BOUTON ACTUALISER (DROITE) ---
     col_titre_t1, col_btn_t1 = st.columns([4, 1])
@@ -2607,7 +2660,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -2888,7 +2941,7 @@ with onglet_portefeuille:
         with col_btn_csv:
             if est_premium_ou_pro:
                 df_export = pd.DataFrame(lignes_export_csv)
-                csv_bytes = df_export.to_csv(index=False, sep=";").encode("utf-8-sig")
+                csv_bytes = df_export.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
                 st.download_button(
                     label="📥 Exporter Bilan CSV (Excel)",
                     data=csv_bytes,
@@ -3188,6 +3241,139 @@ with onglet_portefeuille:
                 </div>
                 """
                 afficher_html(html_bilan_traj)
+
+        # ======================================================================
+        # ÉVOLUTION RÉELLE DU PORTEFEUILLE (SNAPSHOTS ENREGISTRÉS À CHAQUE SAUVEGARDE)
+        # ======================================================================
+        if supabase and st.session_state.get("user") is not None:
+            with st.expander("📈 Évolution réelle de mon portefeuille (historique de mes sauvegardes)", expanded=True):
+                if mode_gratuit:
+                    afficher_verrou_saas(
+                        "Évolution réelle du portefeuille (historique jour par jour)",
+                        "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                        "Suivez la vraie trajectoire de votre patrimoine, versements et plus-values séparés."
+                    )
+                else:
+                    uid_hist = str(st.session_state["user"].id)
+                    cache_hist = st.session_state.get("_historique_snapshots")
+                    if not isinstance(cache_hist, dict) or cache_hist.get("uid") != uid_hist:
+                        try:
+                            rep_hist = (
+                                supabase.table("portfolio_history")
+                                .select("date, capital_investi, valorisation_pea, rente_annuelle")
+                                .eq("user_id", uid_hist)
+                                .order("date")
+                                .execute()
+                            )
+                            cache_hist = {"uid": uid_hist, "lignes": list(rep_hist.data or []), "erreur": False}
+                        except Exception:
+                            cache_hist = {"uid": uid_hist, "lignes": [], "erreur": True}
+                        st.session_state["_historique_snapshots"] = cache_hist
+
+                    points_hist = []
+                    for ligne_h in cache_hist.get("lignes", []):
+                        try:
+                            points_hist.append({
+                                "date": str(ligne_h.get("date", ""))[:10],
+                                "valo": float(ligne_h.get("valorisation_pea") or 0.0),
+                                "capital": float(ligne_h.get("capital_investi") or 0.0),
+                                "rente": float(ligne_h.get("rente_annuelle") or 0.0),
+                            })
+                        except Exception:
+                            continue
+                    points_hist = sorted((pt for pt in points_hist if len(pt["date"]) == 10 and pt["valo"] > 0), key=lambda pt: pt["date"])
+
+                    if cache_hist.get("erreur"):
+                        st.info("L'historique n'a pas pu être lu pour le moment.")
+                        if st.button("🔄 Réessayer", key="btn_relire_historique"):
+                            st.session_state.pop("_historique_snapshots", None)
+                            st.rerun()
+                    elif len(points_hist) < 2:
+                        st.info(
+                            "Votre historique se construit tout seul : un point est enregistré chaque jour où vous sauvegardez "
+                            "votre portefeuille. La courbe apparaîtra dès le deuxième jour enregistré."
+                        )
+                    else:
+                        choix_periode_hist = st.radio(
+                            "Période affichée :",
+                            ["3 mois", "1 an", "Tout l'historique"],
+                            index=2,
+                            horizontal=True,
+                            key="rad_periode_historique",
+                        )
+                        if choix_periode_hist != "Tout l'historique":
+                            nb_jours_hist = 92 if choix_periode_hist == "3 mois" else 366
+                            date_min_hist = (pd.Timestamp(points_hist[-1]["date"]) - pd.Timedelta(days=nb_jours_hist)).strftime("%Y-%m-%d")
+                            points_periode = [pt for pt in points_hist if pt["date"] >= date_min_hist]
+                            if len(points_periode) < 2:
+                                points_periode = points_hist[-2:]
+                        else:
+                            points_periode = points_hist
+
+                        pt_deb, pt_fin = points_periode[0], points_periode[-1]
+                        delta_valo_h = pt_fin["valo"] - pt_deb["valo"]
+                        delta_capital_h = pt_fin["capital"] - pt_deb["capital"]
+                        gain_marche_h = delta_valo_h - delta_capital_h
+                        gain_marche_pct_h = (gain_marche_h / pt_deb["valo"] * 100.0) if pt_deb["valo"] > 0 else 0.0
+                        delta_rente_h = pt_fin["rente"] - pt_deb["rente"]
+                        c_gain_h = "#2ecc71" if gain_marche_h >= 0 else "#e74c3c"
+                        date_deb_fr = f"{pt_deb['date'][8:10]}/{pt_deb['date'][5:7]}/{pt_deb['date'][0:4]}"
+
+                        afficher_html(f"""
+                        <div class="argon-grid">
+                            <div class="argon-card">
+                                <div class="argon-title">💼 Valorisation enregistrée</div>
+                                <div class="argon-val">{pt_fin['valo']:,.2f} €</div>
+                                <div class="argon-sub">Depuis le {date_deb_fr} : <b>{delta_valo_h:+,.0f} €</b></div>
+                            </div>
+                            <div class="argon-card">
+                                <div class="argon-title">💶 Versements sur la période</div>
+                                <div class="argon-val" style="color:#3498db;">{delta_capital_h:+,.0f} €</div>
+                                <div class="argon-sub">Capital investi : <b>{pt_fin['capital']:,.0f} €</b></div>
+                            </div>
+                            <div class="argon-card">
+                                <div class="argon-title">📈 Gain dû aux marchés</div>
+                                <div class="argon-val" style="color:{c_gain_h};">{gain_marche_h:+,.0f} €</div>
+                                <div class="argon-sub" style="color:{c_gain_h};">Hors versements : <b>{gain_marche_pct_h:+.1f}%</b></div>
+                            </div>
+                            <div class="argon-card">
+                                <div class="argon-title">💰 Rente annuelle</div>
+                                <div class="argon-val" style="color:#2ecc71;">{pt_fin['rente']:,.0f} € / an</div>
+                                <div class="argon-sub">Évolution : <b>{delta_rente_h:+,.0f} € / an</b></div>
+                            </div>
+                        </div>
+                        """)
+
+                        donnees_hist_graph = []
+                        for pt in points_periode:
+                            date_fr_h = f"{pt['date'][8:10]}/{pt['date'][5:7]}/{pt['date'][0:4]}"
+                            donnees_hist_graph.append({"Date": pt["date"], "DateFR": date_fr_h, "Série": "Valorisation réelle (€)", "Montant (€)": round(pt["valo"], 2)})
+                            donnees_hist_graph.append({"Date": pt["date"], "DateFR": date_fr_h, "Série": "Capital investi (€)", "Montant (€)": round(pt["capital"], 2)})
+                        series_hist = ["Valorisation réelle (€)", "Capital investi (€)"]
+                        st.vega_lite_chart(
+                            pd.DataFrame(donnees_hist_graph),
+                            {
+                                "height": 300,
+                                "mark": {"type": "line", "interpolate": "monotone", "point": len(points_periode) <= 40},
+                                "encoding": {
+                                    "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%d/%m/%y", "grid": False}},
+                                    "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 18}, "axis": {"title": "Valeur (€)", "format": ",.0f"}},
+                                    "color": {"field": "Série", "type": "nominal", "scale": {"domain": series_hist, "range": ["#2ecc71", "#3498db"]}, "legend": {"orient": "top", "title": None}},
+                                    "strokeDash": {"field": "Série", "type": "nominal", "scale": {"domain": series_hist, "range": [[1, 0], [6, 4]]}, "legend": None},
+                                    "tooltip": [
+                                        {"field": "DateFR", "type": "nominal", "title": "Sauvegarde du"},
+                                        {"field": "Série", "type": "nominal", "title": "Courbe"},
+                                        {"field": "Montant (€)", "type": "quantitative", "format": ",.2f"},
+                                    ],
+                                },
+                                "view": {"stroke": None},
+                            },
+                            width="stretch",
+                        )
+                        st.caption(
+                            f"{len(points_hist)} jour(s) enregistré(s). Contrairement à la trajectoire simulée ci-dessus, cette courbe "
+                            "reflète vos vraies valorisations, versements et ventes inclus, telles qu'enregistrées à chaque sauvegarde."
+                        )
 
         # ======================================================================
         # COMPTEUR OFFICIEL PLAFOND PEA (150 000 €) & RICHESSE TOTALE CRÉÉE
@@ -3623,7 +3809,7 @@ with onglet_dividendes:
                 st.session_state["_notif_div_encaisse"] = f"✅ +{mt_enc:,.2f} € de dividendes ({act_enc}) crédités dans votre poche Espèces (Nouveau solde Espèces : {nouveau_esp:,.2f} €) !"
 
         if st.session_state.get("_notif_div_encaisse"):
-            st.success(st.session_state.pop("_notif_div_encaisse"))
+            st.success(nombres_fr(st.session_state.pop("_notif_div_encaisse")))
 
         actions_div_pf = [
             k for k, v in portefeuille_utilisateur.items()
@@ -4605,13 +4791,13 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
     if st.session_state.get("reponse_ia_coach"):
         afficher_html("<div class='ia-box'><b>📋 Dernier Rapport d'Audit de votre Coach IA 2.0 :</b></div>")
-        st.markdown(st.session_state["reponse_ia_coach"])
+        markdown_fr(st.session_state["reponse_ia_coach"])
 
     if len(st.session_state.get("historique_chat_ia", [])) > 1:
         with st.expander(f"🕒 Consulter l'historique de vos {len(st.session_state['historique_chat_ia'])} analyses IA de la session", expanded=False):
             for idx_h, item_h in enumerate(st.session_state["historique_chat_ia"]):
                 st.markdown(f"#### {idx_h + 1}. {item_h['titre']} *(à {item_h['heure']})*")
-                st.markdown(item_h["reponse"])
+                markdown_fr(item_h["reponse"])
                 st.markdown("---")
 
 
@@ -4793,7 +4979,7 @@ with onglet_ventes:
                 st.session_state["_derniere_notif_vente"] = f"🔄 Arbitrage annulé : +{qte_s} action(s) {act_s} restaurée(s) en portefeuille."
 
         if st.session_state.get("_derniere_notif_vente"):
-            st.success(st.session_state.pop("_derniere_notif_vente"))
+            st.success(nombres_fr(st.session_state.pop("_derniere_notif_vente")))
 
         # --- BANDEAU DE CONTRÔLE EN DIRECT (ACTIONS vs ESPÈCES vs TOTAL) ---
         esp_dispo_actuel = float(portefeuille_utilisateur.get("Espèces", {}).get("pru", 0.0)) if isinstance(portefeuille_utilisateur.get("Espèces"), dict) else 0.0
@@ -4842,7 +5028,7 @@ with onglet_ventes:
                 dev_v = "$" if info_w_v.get("devise") == "USD" else "€"
                 cours_actuel_v = float(st.session_state.get("prix_temps_reel", {}).get(action_vendue, pru_actuel))
 
-                st.markdown(
+                markdown_fr(
                     f"<div style='background:rgba(52,152,219,0.08); border-left:4px solid #3498db; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:0.9em;'>"
                     f"📌 En portefeuille : <b>{qte_detenue} action(s) {action_vendue}</b> | Votre PRU : <b>{pru_actuel:.2f} {dev_v}</b> | Cours actuel : <b>{cours_actuel_v:.2f} {dev_v}</b>"
                     f"</div>",
@@ -4873,7 +5059,7 @@ with onglet_ventes:
                 perf_apercu_pct = (pv_apercu_eur / cout_apercu_eur * 100.0) if cout_apercu_eur > 0 else 0.0
                 c_apercu = "#2ecc71" if pv_apercu_eur >= 0 else "#e74c3c"
 
-                st.markdown(
+                markdown_fr(
                     f"<div style='background:rgba(128,128,128,0.05); border:1px dashed {c_apercu}; padding:10px 14px; border-radius:8px; margin:8px 0 12px 0; font-size:0.88em;'>"
                     f"🔎 <b>Aperçu de l'opération :</b> Reste après vente : <b>{qte_detenue - qte_a_vendre} titre(s) {action_vendue}</b> | "
                     f"Cash net encaissé : <b>+{net_apercu_eur:,.2f} €</b> | "
@@ -5098,11 +5284,11 @@ with onglet_ventes:
                     col_h1, col_h2, col_h3 = st.columns([3, 2, 1])
                     with col_h1:
                         badge_esp = "💶 Crédité en Espèces" if item_h.get("credite_especes") else "📤 Hors Espèces"
-                        st.markdown(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
-                        st.caption(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} € ({badge_esp})")
+                        markdown_fr(f"**{item_h['action']}** — **{item_h['qte']} action(s)** vendue(s) à **{item_h['prix_vente']:.2f} {item_h['devise']}** *(PRU : {item_h['pru']:.2f} {item_h['devise']})*")
+                        st.caption(nombres_fr(f"Date : {item_h['date']} | Encaissé net : {item_h['montant_eur']:,.2f} € ({badge_esp})"))
                     with col_h2:
                         col_pv_s = "#2ecc71" if item_h["plus_value_eur"] >= 0 else "#e74c3c"
-                        st.markdown(f"Plus/Moins-Value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
+                        markdown_fr(f"Plus/Moins-Value : <span style='color:{col_pv_s}; font-weight:800;'>{item_h['plus_value_eur']:+,.2f} € ({item_h['perf_pct']:+.2f}%)</span>", unsafe_allow_html=True)
                     with col_h3:
                         st.button(
                             "🗑️ Annuler",
@@ -6113,7 +6299,7 @@ try:
                     </div>
                     """
                     components.html(tv_html, height=535)
-                    st.caption(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**.")
+                    st.caption(nombres_fr(f"💡 Terminal TradingView synchronisé sur **{tv_symbol}** avec indicateurs pré-chargés. Repères Boursy : Support 30J = **{sup_30j_sg:.2f} {dev_sg}** | Résistance 30J = **{res_30j_sg:.2f} {dev_sg}** | Cible = **{cible_sg:.2f} {dev_sg}**."))
 except Exception as e_pack:
     st.warning(f"Initialisation du Super-Pack Pro V2 ({e_pack})")
 

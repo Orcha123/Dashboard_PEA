@@ -37,6 +37,26 @@ Deux tables : `user_data` (une ligne par compte : watchlist, portefeuille, budge
 `portfolio_history` (un snapshot par jour). Activez la sécurité par ligne (RLS) sur les deux, avec une règle
 limitant chaque utilisateur à ses propres lignes.
 
+## Alertes automatiques par e-mail
+
+`alertes_quotidiennes.py` est lancé chaque soir de bourse par GitHub Actions (`.github/workflows/alertes.yml`),
+même si personne n'ouvre l'application. Il prévient par e-mail les abonnés Pro qui ont activé l'option dans le
+Centre d'Alertes dès qu'une valeur de leur radar passe sous son prix cible (une relance au plus par semaine).
+
+À renseigner dans GitHub : *Settings > Secrets and variables > Actions*.
+
+| Secret GitHub | Rôle |
+| --- | --- |
+| `SUPABASE_URL` | Même valeur que dans Streamlit |
+| `SUPABASE_SERVICE_KEY` | Clé `service_role` de Supabase (*Project Settings > API*). Elle donne accès à tous les comptes : ne la mettez que dans les secrets GitHub, jamais dans le code ni dans Streamlit |
+| `SMTP_EMAIL`, `SMTP_PASSWORD` | Compte Gmail d'envoi et son mot de passe d'application |
+
+Variable facultative `APP_URL` (onglet *Variables*) : adresse de l'application, ajoutée en bouton dans l'e-mail.
+
+Pour tester sans rien envoyer : onglet *Actions* > *Alertes prix cibles Boursy* > *Run workflow*, ou en local
+`ALERTES_DRY_RUN=1 python alertes_quotidiennes.py`. GitHub suspend les tâches planifiées d'un dépôt resté
+60 jours sans activité ; il suffit alors de les réactiver dans l'onglet *Actions*.
+
 ## Apparence
 
 Le thème (sombre par défaut) est défini dans `.streamlit/config.toml` ; le reste de l'habillage est dans le bloc
