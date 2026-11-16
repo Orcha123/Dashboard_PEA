@@ -5,6 +5,7 @@ import json
 import math
 import re
 import smtplib
+import time
 from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -419,8 +420,46 @@ HEADERS_YAHOO_PRO = {
     "Accept": "application/json,text/plain,*/*",
 }
 
-@st.cache_data(ttl=1800)
-def _taux_change_yahoo():
+# ------------------------------------------------------------------------------
+# FRAÎCHEUR DES COURS : toutes les 5 minutes en séance, toutes les heures marchés fermés
+# ------------------------------------------------------------------------------
+RAFRAICHISSEMENT_SEANCE_SECONDES = 300
+
+
+def heure_paris():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/Paris"))
+    except Exception:
+        return datetime.now()
+
+
+def marches_ouverts():
+    """Vrai du lundi au vendredi entre l'ouverture de Paris (9h00) et la clôture de New York (22h05), heure de Paris."""
+    maintenant = heure_paris()
+    minutes = maintenant.hour * 60 + maintenant.minute
+    return maintenant.weekday() < 5 and 9 * 60 <= minutes < 22 * 60 + 5
+
+
+def creneau_cours():
+    """
+    Étiquette du créneau de cours en vigueur. Les lectures Yahoo sont mises en cache PAR créneau :
+    un nouveau créneau toutes les 5 minutes en séance (cours rafraîchis), toutes les heures sinon.
+    """
+    instant = int(time.time())
+    if marches_ouverts():
+        return f"S{instant // RAFRAICHISSEMENT_SEANCE_SECONDES}"
+    return f"F{instant // 3600}"
+
+
+@st.cache_data(ttl=7200, max_entries=64)
+def heure_maj_cours(creneau):
+    """Heure (Paris) à laquelle les cours du créneau ont été lus pour la première fois."""
+    return heure_paris().strftime("%H:%M")
+
+
+@st.cache_data(ttl=1800, max_entries=32)
+def _taux_change_yahoo(creneau):
     """Taux EUR/USD lu sur Yahoo. Lève une erreur en cas d'échec : un échec n'est ainsi jamais mis en cache."""
     for srv in ("query1", "query2"):
         try:
@@ -462,7 +501,7 @@ def construire_position(nom_action, qte, pru):
 def recuperer_taux_change():
     """Taux EUR/USD ; en cas d'échec Yahoo, dernier taux connu de la session (sinon 1,08), retenté au prochain affichage."""
     try:
-        taux = _taux_change_yahoo()
+        taux = _taux_change_yahoo(creneau_cours())
         st.session_state["_dernier_taux_change_ok"] = taux
         return taux
     except Exception:
@@ -474,13 +513,13 @@ TAUX_USD_EUR = recuperer_taux_change()
 def recuperer_indice_meteo(symbole):
     """Niveau et variation du jour d'un indice ; (None, 0.0) en cas d'échec, sans mise en cache de l'échec."""
     try:
-        return _indice_meteo_yahoo(symbole)
+        return _indice_meteo_yahoo(symbole, creneau_cours())
     except Exception:
         return None, 0.0
 
 
-@st.cache_data(ttl=1800)
-def _indice_meteo_yahoo(symbole):
+@st.cache_data(ttl=1800, max_entries=64)
+def _indice_meteo_yahoo(symbole, creneau):
     for srv in ("query1", "query2"):
         try:
             url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=5d&interval=1d"
@@ -933,6 +972,28 @@ if st.sidebar.button("🔄 Actualiser les cours Bourse", width="stretch"):
     st.toast("⚡ Cours boursiers, indices et taux EUR/USD actualisés !")
     st.rerun()
 
+# --- RAFRAÎCHISSEMENT AUTOMATIQUE : la page se relit seule toutes les 5 minutes pendant les heures de bourse ---
+st.session_state["_dernier_affichage_complet"] = time.time()
+rafraichissement_auto = st.sidebar.toggle(
+    "⏱️ Rafraîchir les cours automatiquement",
+    value=True,
+    key="tog_rafraichissement_auto",
+    help="Pendant les heures de bourse, la page se met à jour seule toutes les 5 minutes. "
+         "Désactivez l'option si vous préférez actualiser à la main.",
+)
+
+
+@st.fragment(run_every=RAFRAICHISSEMENT_SEANCE_SECONDES if (rafraichissement_auto and marches_ouverts()) else None)
+def _minuteur_rafraichissement():
+    # Ce minuteur ne dessine rien. À chaque échéance, il relance l'affichage complet si la page n'a pas déjà été
+    # réaffichée entre-temps (par une action de l'utilisateur, par exemple).
+    ecoule = time.time() - float(st.session_state.get("_dernier_affichage_complet", 0.0))
+    if ecoule >= RAFRAICHISSEMENT_SEANCE_SECONDES - 10:
+        st.rerun()
+
+
+_minuteur_rafraichissement()
+
 # --- PARAMÈTRES DCA ---
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Paramètres DCA")
@@ -1107,13 +1168,13 @@ WATCHLIST_DEFAUT.update(st.session_state["watchlist"])
 def recuperer_donnees(symbole):
     """Cours + historique 3 ans. Un échec Yahoo renvoie (None, None, None, None) sans être mis en cache."""
     try:
-        return _recuperer_donnees_yahoo(symbole)
+        return _recuperer_donnees_yahoo(symbole, creneau_cours())
     except Exception:
         return None, None, None, None
 
 
-@st.cache_data(ttl=3600)
-def _recuperer_donnees_yahoo(symbole):
+@st.cache_data(ttl=3600, max_entries=1500)
+def _recuperer_donnees_yahoo(symbole, creneau):
     sym_enc = urllib.parse.quote(str(symbole).strip())
     for srv in ("query1", "query2"):
         url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?range=3y&interval=1d"
@@ -1675,11 +1736,14 @@ def calculer_regression_lineaire(clotures):
 # ==============================================================================
 # EN-TÊTE PRINCIPAL, MÉTÉO DES MARCHÉS & BANNIÈRE D'ACCUEIL
 # ==============================================================================
-try:
-    from zoneinfo import ZoneInfo
-    _maintenant_paris = datetime.now(ZoneInfo("Europe/Paris"))
-except Exception:
-    _maintenant_paris = datetime.now()
+_seance_ouverte = marches_ouverts()
+_heure_maj = heure_maj_cours(creneau_cours())
+if _seance_ouverte:
+    _texte_puce_cours = f"Cours différés (jusqu'à 15 min) · mis à jour à {_heure_maj}"
+    _style_point_cours = ""
+else:
+    _texte_puce_cours = f"Marchés fermés · derniers cours connus, relevés à {_heure_maj}"
+    _style_point_cours = " style='background:#95a5a6; box-shadow:0 0 0 4px rgba(149,165,166,0.18);'"
 afficher_html(f"""
 <div class="bz-hero">
     <div class="bz-logo">
@@ -1690,7 +1754,7 @@ afficher_html(f"""
         <div class="bz-slogan">Votre copilote PEA, actions US &amp; dividendes</div>
     </div>
     <div class="bz-hero-droite">
-        <span class="bz-puce"><span class="bz-point"></span>Cours à jour · {_maintenant_paris.strftime('%d/%m/%Y')} à {_maintenant_paris.strftime('%H:%M')}</span>
+        <span class="bz-puce"><span class="bz-point"{_style_point_cours}></span>{_texte_puce_cours}</span>
     </div>
 </div>
 """)

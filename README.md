@@ -37,6 +37,14 @@ Deux tables : `user_data` (une ligne par compte : watchlist, portefeuille, budge
 `portfolio_history` (un snapshot par jour). Activez la sécurité par ligne (RLS) sur les deux, avec une règle
 limitant chaque utilisateur à ses propres lignes.
 
+## Fraîcheur des cours
+
+Les cours viennent de Yahoo Finance et sont relus toutes les 5 minutes pendant les heures de bourse (du lundi au
+vendredi, de 9h00 à 22h05, heure de Paris), toutes les heures le reste du temps. La page se rafraîchit seule en
+séance ; chaque visiteur peut couper ce rafraîchissement dans la barre latérale. Les cours d'Euronext restent
+différés d'environ 15 minutes par Yahoo : ce n'est pas du temps réel. Le rythme se règle avec la constante
+`RAFRAICHISSEMENT_SEANCE_SECONDES` de `app.py`.
+
 ## Alertes automatiques par e-mail
 
 `alertes_quotidiennes.py` est lancé chaque soir de bourse par GitHub Actions (`.github/workflows/alertes.yml`),
