@@ -3065,6 +3065,14 @@ with onglet_radar:
                         valeurs = [v for v in valeurs if v is not None]
                         return (sum(valeurs) / len(valeurs)) if valeurs else None
 
+                    choix_periode_bilan = st.radio(
+                        "Période étudiée :", ["Tout l'historique", "Sans l'année 2020 (krach du Covid et rebond)"],
+                        horizontal=True, key="rad_periode_bilan",
+                    )
+                    observations_toutes = observations_bilan
+                    if choix_periode_bilan.startswith("Sans"):
+                        observations_bilan = [o for o in observations_toutes if not str(o["date"]).startswith("2020")] or observations_toutes
+
                     categories_bilan = ["🟢 SIGNAL FORT", "🔵 SIGNAL FAVORABLE", "⚪ SIGNAL NEUTRE"]
                     lignes_bilan = []
                     for categorie in categories_bilan + ["Toutes les observations"]:
@@ -3105,24 +3113,135 @@ with onglet_radar:
                     html_bilan += "</tbody></table>"
                     afficher_html(html_bilan)
 
-                    # Lecture factuelle du résultat, sans enjoliver
-                    fort_b = lignes_bilan[0]
-                    nb_fort_r6 = sum(1 for o in observations_bilan if o["decision"] == categories_bilan[0] and o["r6"] is not None)
-                    if nb_fort_r6 < 30 or fort_b["r6"] is None or reference_r6 is None:
+                    st.caption(
+                        "La colonne « Écart à 6 mois vs ensemble » mélange toutes les valeurs : une valeur qui a beaucoup monté et "
+                        "souvent signalé peut à elle seule faire paraître le signal meilleur. Les vérifications ci-dessous sont plus fiables."
+                    )
+
+                    # --- VÉRIFICATIONS 2 ET 3 : CHAQUE ACTION COMPARÉE À ELLE-MÊME, AVEC UNE FOURCHETTE D'INCERTITUDE ---
+                    moyennes_par_valeur = {}
+                    for nom_v in {o["action"] for o in observations_bilan}:
+                        obs_v = [o for o in observations_bilan if o["action"] == nom_v]
+                        for cle_r in ("r1", "r3", "r6"):
+                            moyennes_par_valeur[(nom_v, cle_r)] = _moyenne(o[cle_r] for o in obs_v)
+
+                    def _indice_mois(date_iso):
+                        return int(str(date_iso)[:4]) * 12 + int(str(date_iso)[5:7]) - 1
+
+                    mois_observes = [_indice_mois(o["date"]) for o in observations_bilan]
+                    premier_mois_b, dernier_mois_b = min(mois_observes), max(mois_observes)
+
+                    def _ecart_ajuste(categorie, cle_r, horizon_mois):
+                        """
+                        Écart moyen entre la performance après le signal et la performance moyenne de LA MÊME action, avec une
+                        fourchette à 95 %. L'incertitude tient compte de ce que les actions d'un même mois évoluent ensemble
+                        (regroupement par mois) et de ce que des périodes de plusieurs mois se chevauchent d'un mois à l'autre
+                        (estimateur de Newey-West, décalages jusqu'à l'horizon moins un mois).
+                        """
+                        ecarts = [
+                            (_indice_mois(o["date"]), o[cle_r] - moyennes_par_valeur[(o["action"], cle_r)])
+                            for o in observations_bilan
+                            if o["decision"] == categorie and o[cle_r] is not None and moyennes_par_valeur.get((o["action"], cle_r)) is not None
+                        ]
+                        if not ecarts:
+                            return None
+                        nombre = len(ecarts)
+                        moyenne_e = sum(e for _, e in ecarts) / nombre
+                        if nombre < 3:
+                            return {"moyenne": moyenne_e, "bas": None, "haut": None, "nombre": nombre}
+                        contributions = [0.0] * (dernier_mois_b - premier_mois_b + 1)
+                        for mois_e, e in ecarts:
+                            contributions[mois_e - premier_mois_b] += e - moyenne_e
+                        decalage_max = max(0, int(horizon_mois) - 1)
+
+                        def _autocovariance(decalage):
+                            return sum(contributions[t] * contributions[t - decalage] for t in range(decalage, len(contributions)))
+
+                        variance_somme = _autocovariance(0) + 2.0 * sum(
+                            (1.0 - d / (decalage_max + 1.0)) * _autocovariance(d) for d in range(1, decalage_max + 1)
+                        )
+                        erreur_type = math.sqrt(max(variance_somme, 0.0)) / nombre
+                        return {"moyenne": moyenne_e, "bas": moyenne_e - 1.96 * erreur_type,
+                                "haut": moyenne_e + 1.96 * erreur_type, "nombre": nombre}
+
+                    def _cellule_ecart(resultat):
+                        if resultat is None:
+                            return "<td>—</td>"
+                        couleur = "#2ecc71" if resultat["moyenne"] >= 0 else "#e74c3c"
+                        fourchette = (f"<br><span style='font-size:0.8em; opacity:0.75;'>[{resultat['bas'] * 100:+.1f} ; {resultat['haut'] * 100:+.1f}]</span>"
+                                      if resultat["bas"] is not None else "")
+                        return f"<td><b style='color:{couleur};'>{resultat['moyenne'] * 100:+.1f} pt</b>{fourchette}</td>"
+
+                    def _verdict(resultat):
+                        if resultat is None or resultat["bas"] is None or resultat["nombre"] < 30:
+                            return "<span class='b-neutral'>Trop peu de données</span>"
+                        if resultat["bas"] > 0:
+                            return "<span class='b-green'>✅ Avantage net</span>"
+                        if resultat["haut"] < 0:
+                            return "<span class='b-red'>❌ Désavantage net</span>"
+                        return "<span class='b-yellow'>〰️ Dans la marge d'incertitude</span>"
+
+                    st.markdown("##### 🧪 Vérification : chaque action comparée à elle-même")
+                    verifications_bilan = {c: (_ecart_ajuste(c, "r1", 1), _ecart_ajuste(c, "r6", 6)) for c in categories_bilan}
+                    html_verif = (
+                        "<table class='r-table'><thead><tr><th style='text-align:left;'>Signal du radar</th>"
+                        "<th>Écart vs la même action à 1 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
+                        "<th>Lecture à 1 mois</th>"
+                        "<th>Écart vs la même action à 6 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
+                        "<th>Lecture à 6 mois</th></tr></thead><tbody>"
+                    )
+                    for categorie in categories_bilan:
+                        v1, v6 = verifications_bilan[categorie]
+                        html_verif += (f"<tr><td class='r-name'>{categorie}</td>" + _cellule_ecart(v1) + f"<td>{_verdict(v1)}</td>"
+                                       + _cellule_ecart(v6) + f"<td>{_verdict(v6)}</td></tr>")
+                    html_verif += "</tbody></table>"
+                    afficher_html(html_verif)
+
+                    # Lecture factuelle, fondée sur la comparaison de chaque action à elle-même
+                    v_fort_1, v_fort_6 = verifications_bilan[categories_bilan[0]]
+                    if v_fort_6 is None or v_fort_6["bas"] is None or v_fort_6["nombre"] < 30:
+                        nb_fort_r6 = v_fort_6["nombre"] if v_fort_6 else 0
                         lecture_b = (f"Trop peu de signaux forts suivis de 6 mois d'historique ({nb_fort_r6}) pour en tirer une conclusion : "
                                      "ajoutez des valeurs au radar ou revenez quand l'historique sera plus long.")
                     else:
-                        ecart_fort = (fort_b["r6"] - reference_r6) * 100
-                        if ecart_fort >= 1:
-                            lecture_b = (f"Sur cette période, les signaux forts ont été suivis en moyenne d'une performance à 6 mois supérieure "
-                                         f"de {ecart_fort:.1f} point(s) à la moyenne de toutes les observations.")
-                        elif ecart_fort <= -1:
-                            lecture_b = (f"Sur cette période, les signaux forts ont été suivis en moyenne d'une performance à 6 mois inférieure "
-                                         f"de {abs(ecart_fort):.1f} point(s) à la moyenne de toutes les observations : le signal n'a pas apporté d'avantage.")
+                        lecture_b = (f"Comparés à la même action, les signaux forts ont été suivis à 6 mois d'un écart moyen de "
+                                     f"{v_fort_6['moyenne'] * 100:+.1f} point(s) (fourchette à 95 % : {v_fort_6['bas'] * 100:+.1f} à {v_fort_6['haut'] * 100:+.1f}). ")
+                        if v_fort_6["bas"] > 0:
+                            lecture_b += "Même le bas de la fourchette est positif : l'avantage est net sur cette période."
+                        elif v_fort_6["haut"] < 0:
+                            lecture_b += "Même le haut de la fourchette est négatif : sur cette période, le signal a desservi."
                         else:
-                            lecture_b = ("Sur cette période, les signaux forts ont été suivis d'une performance à 6 mois comparable à la moyenne : "
-                                         "le signal n'a pas fait de différence nette.")
+                            lecture_b += "La fourchette contient zéro : l'avantage n'est pas démontré, il peut venir du hasard."
+                        if v_fort_1 is not None and v_fort_1["bas"] is not None and v_fort_1["nombre"] >= 30:
+                            lecture_b += (f" À 1 mois : {v_fort_1['moyenne'] * 100:+.1f} point(s) (fourchette {v_fort_1['bas'] * 100:+.1f} "
+                                          f"à {v_fort_1['haut'] * 100:+.1f}), " + ("avantage net." if v_fort_1["bas"] > 0 else "non démontré."))
+                    if choix_periode_bilan.startswith("Sans"):
+                        lecture_b += " (Période étudiée : sans l'année 2020.)"
                     st.info(nombres_fr("📊 " + lecture_b))
+
+                    # --- VÉRIFICATION 1 : ANNÉE PAR ANNÉE (comparaison dans la même année, donc dans le même contexte de marché) ---
+                    st.markdown("##### 📅 Année par année")
+                    html_annees = (
+                        "<table class='r-table'><thead><tr><th>Année</th><th>Observations</th><th>Signaux forts</th>"
+                        "<th>6 mois après un signal fort</th><th>6 mois, toutes les observations de l'année</th><th>Écart</th></tr></thead><tbody>"
+                    )
+                    for annee_b in sorted({str(o["date"])[:4] for o in observations_toutes}):
+                        obs_a = [o for o in observations_toutes if str(o["date"]).startswith(annee_b)]
+                        forts_a = [o for o in obs_a if o["decision"] == categories_bilan[0]]
+                        r6_fort_a = _moyenne(o["r6"] for o in forts_a)
+                        r6_tous_a = _moyenne(o["r6"] for o in obs_a)
+                        ecart_a = (r6_fort_a - r6_tous_a) if (r6_fort_a is not None and r6_tous_a is not None) else None
+                        cellule_ecart_a = ("<td>—</td>" if ecart_a is None else
+                                           f"<td><span class='{'b-green' if ecart_a >= 0 else 'b-red'}'>{ecart_a * 100:+.1f} pt</span></td>")
+                        html_annees += (f"<tr><td><b>{annee_b}</b></td><td>{len(obs_a)}</td><td>{len(forts_a)}</td>"
+                                        + _cellule_perf(r6_fort_a) + _cellule_perf(r6_tous_a) + cellule_ecart_a + "</tr>")
+                    html_annees += "</tbody></table>"
+                    afficher_html(html_annees)
+                    st.caption(
+                        "Chaque année compare les signaux forts aux autres observations de la même année : l'effet du marché de "
+                        "l'époque est ainsi neutralisé. Un avantage qui ne vient que d'une ou deux années est fragile. La dernière "
+                        "année est incomplète : ses signaux récents n'ont pas encore 6 mois de recul."
+                    )
 
                     if st.toggle("Voir le détail par valeur", key="tog_bilan_detail"):
                         lignes_detail = []
