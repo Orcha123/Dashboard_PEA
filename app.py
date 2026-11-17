@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 from supabase import create_client
@@ -1390,7 +1390,7 @@ def _recuperer_donnees_yahoo(symbole, creneau):
     raise RuntimeError(f"Cours indisponible pour {symbole}")
 
 def historique_long(symbole):
-    """(dates ISO, clôtures, dividendes [(date ISO, montant)]) sur 10 ans ; None si indisponible (échec non mis en cache)."""
+    """(dates ISO, clôtures, dividendes [(date ISO, montant)], plus hauts, plus bas) sur 10 ans ; None si indisponible."""
     try:
         return _historique_long_yahoo(str(symbole).strip())
     except Exception:
@@ -1410,21 +1410,78 @@ def _historique_long_yahoo(symbole):
                 resultat = json.loads(response.read().decode("utf-8"))["chart"]["result"][0]
             horodatages = resultat.get("timestamp") or []
             clotures = (resultat.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
-            dates, valeurs = [], []
-            for horodatage, cloture in zip(horodatages, clotures):
+            series_quote = (resultat.get("indicators", {}).get("quote") or [{}])[0]
+            plus_hauts_bruts = series_quote.get("high") or []
+            plus_bas_bruts = series_quote.get("low") or []
+            dates, valeurs, plus_hauts, plus_bas = [], [], [], []
+            for rang, (horodatage, cloture) in enumerate(zip(horodatages, clotures)):
                 if cloture is not None and float(cloture) > 0:
                     dates.append(datetime.fromtimestamp(int(horodatage)).date().isoformat())
                     valeurs.append(float(cloture))
+                    haut_r = plus_hauts_bruts[rang] if rang < len(plus_hauts_bruts) and plus_hauts_bruts[rang] is not None else cloture
+                    bas_r = plus_bas_bruts[rang] if rang < len(plus_bas_bruts) and plus_bas_bruts[rang] is not None else cloture
+                    plus_hauts.append(float(haut_r))
+                    plus_bas.append(float(bas_r))
             dividendes = sorted(
                 (datetime.fromtimestamp(int(d["date"])).date().isoformat(), float(d["amount"]))
                 for d in ((resultat.get("events") or {}).get("dividends") or {}).values()
                 if d.get("date") and float(d.get("amount") or 0) > 0
             )
             if dates:
-                return dates, valeurs, dividendes
+                return dates, valeurs, dividendes, plus_hauts, plus_bas
         except Exception:
             continue
     raise RuntimeError(f"Historique indisponible : {symbole}")
+
+
+def bilan_signaux_symbole(symbole, payout_r):
+    """Observations mensuelles du radar rejoué sur le passé pour une action ; None si l'historique est indisponible."""
+    try:
+        return _bilan_signaux_symbole(str(symbole).strip(), round(float(payout_r), 4))
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=21600, max_entries=300)
+def _bilan_signaux_symbole(symbole, payout_r):
+    """
+    Rejoue le score du radar une fois par mois sur l'historique : à chaque date, seuls les cours et les dividendes
+    connus à cette date sont utilisés (3 ans de cours, dividendes des 12 derniers mois). Le prix cible, inconnu dans
+    le passé, n'est pas compté. Mesure ensuite la performance des 1, 3 et 6 mois suivants, dividendes inclus.
+    """
+    historique = historique_long(symbole)
+    if historique is None or len(historique) < 5:
+        raise RuntimeError(f"Historique indisponible : {symbole}")
+    dates, clotures, dividendes, plus_hauts, plus_bas = historique
+    fenetre, pas, horizons = 756, 21, (21, 63, 126)
+    observations = []
+    for rang in range(fenetre - 1, len(clotures) - horizons[0], pas):
+        c = clotures[rang - fenetre + 1:rang + 1]
+        h = plus_hauts[rang - fenetre + 1:rang + 1]
+        b = plus_bas[rang - fenetre + 1:rang + 1]
+        prix = c[-1]
+        date_t = dates[rang]
+        il_y_a_un_an = (datetime.fromisoformat(date_t) - timedelta(days=365)).date().isoformat()
+        dividende_12_mois = sum(montant for date_d, montant in dividendes if il_y_a_un_an < date_d <= date_t)
+        statut_ema, pts_ema = analyser_signal_ema_2_12(c)
+        borne_inf, borne_sup = calculer_bollinger(c, 20)
+        macd_val, macd_sig = calculer_macd(c)
+        _, ecart_reg_pct, _, _ = calculer_regression_lineaire(c)
+        score, _, decision = calculer_score_radar(
+            prix, 0.0, payout_r, (dividende_12_mois / prix) if prix > 0 else 0.0, ecart_reg_pct, pts_ema,
+            calculer_rsi(c, 14), calculer_stochastique(c, h, b, 14), borne_inf, borne_sup, macd_val, macd_sig, statut_ema,
+        )
+        performances = {}
+        for horizon in horizons:
+            if rang + horizon < len(clotures):
+                date_fin = dates[rang + horizon]
+                dividendes_periode = sum(montant for date_d, montant in dividendes if date_t < date_d <= date_fin)
+                performances[horizon] = (clotures[rang + horizon] + dividendes_periode) / prix - 1.0
+            else:
+                performances[horizon] = None
+        observations.append({"date": date_t, "score": score, "decision": decision,
+                             "r1": performances[21], "r3": performances[63], "r6": performances[126]})
+    return observations
 
 
 def cours_a_la_date(historique, date_iso):
@@ -1973,6 +2030,66 @@ def analyser_signal_ema_2_12(clotures):
     else:
         return "⚪ Neutre", 5
 
+def calculer_score_radar(prix_actuel, prix_cible, payout_r, rendement_actuel, ecart_reg_pct, pts_ema, rsi, stoch_k,
+                         borne_inf, borne_sup, macd_val, macd_sig, statut_ema_2_12):
+    """Score /100 et décision du radar. Renvoie (score, est_surevalue, decision). Utilisée aussi par le bilan des signaux."""
+    score = 0
+    if payout_r <= 0.55:
+        score += 18
+    elif payout_r <= 0.72:
+        score += 13
+    else:
+        score += 6
+
+    if rendement_actuel >= 0.05:
+        score += 15
+    elif rendement_actuel >= 0.03:
+        score += 11
+    else:
+        score += 6
+
+    if prix_cible > 0 and prix_actuel <= prix_cible:
+        score += 15
+    elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
+        score += 8
+
+    if ecart_reg_pct <= -10:
+        score += 15
+    elif ecart_reg_pct < 0:
+        score += 10
+    elif ecart_reg_pct <= 5:
+        score += 4
+
+    score += pts_ema
+
+    if rsi <= 32 or stoch_k <= 20:
+        score += 14
+    elif rsi <= 46 or stoch_k <= 35:
+        score += 9
+    elif rsi >= 72 and stoch_k >= 80:
+        score -= 10
+
+    if prix_actuel <= borne_inf * 1.02:
+        score += 6
+    if macd_val > macd_sig:
+        score += 7
+    else:
+        score -= 2
+
+    score = int(min(100, max(0, score)))
+    est_surevalue = (prix_cible > 0 and prix_actuel >= prix_cible * 1.22 and (rsi >= 70 or prix_actuel >= borne_sup))
+
+    if est_surevalue:
+        decision = "🟠 ZONE HAUTE"
+    elif score >= 65 and "🔴" not in statut_ema_2_12:
+        decision = "🟢 SIGNAL FORT"
+    elif score >= 45 and "🔴" not in statut_ema_2_12:
+        decision = "🔵 SIGNAL FAVORABLE"
+    else:
+        decision = "⚪ SIGNAL NEUTRE"
+    return score, est_surevalue, decision
+
+
 def calculer_regression_lineaire(clotures):
     n = len(clotures)
     if n < 2:
@@ -2200,61 +2317,11 @@ for nom, info, (prix_actuel, closes, hauts, bas) in resultats_bruts_yahoo:
     resistance_30j = max(hauts[-30:]) if len(hauts) >= 30 else max(hauts)
     distance_cible_pct = ((prix_actuel - prix_cible) / prix_cible) * 100 if prix_cible > 0 else 0.0
 
-    score = 0
     payout_r = float(info.get("payout_ratio", 0.60))
-    if payout_r <= 0.55:
-        score += 18
-    elif payout_r <= 0.72:
-        score += 13
-    else:
-        score += 6
-
-    if rendement_actuel >= 0.05:
-        score += 15
-    elif rendement_actuel >= 0.03:
-        score += 11
-    else:
-        score += 6
-
-    if prix_cible > 0 and prix_actuel <= prix_cible:
-        score += 15
-    elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
-        score += 8
-
-    if ecart_reg_pct <= -10:
-        score += 15
-    elif ecart_reg_pct < 0:
-        score += 10
-    elif ecart_reg_pct <= 5:
-        score += 4
-
-    score += pts_ema
-
-    if rsi <= 32 or stoch_k <= 20:
-        score += 14
-    elif rsi <= 46 or stoch_k <= 35:
-        score += 9
-    elif rsi >= 72 and stoch_k >= 80:
-        score -= 10
-
-    if prix_actuel <= borne_inf * 1.02:
-        score += 6
-    if macd_val > macd_sig:
-        score += 7
-    else:
-        score -= 2
-
-    score = int(min(100, max(0, score)))
-    est_surevalue = (prix_cible > 0 and prix_actuel >= prix_cible * 1.22 and (rsi >= 70 or prix_actuel >= borne_sup))
-
-    if est_surevalue:
-        decision = "🟠 ZONE HAUTE"
-    elif score >= 65 and "🔴" not in statut_ema_2_12:
-        decision = "🟢 SIGNAL FORT"
-    elif score >= 45 and "🔴" not in statut_ema_2_12:
-        decision = "🔵 SIGNAL FAVORABLE"
-    else:
-        decision = "⚪ SIGNAL NEUTRE"
+    score, est_surevalue, decision = calculer_score_radar(
+        prix_actuel, prix_cible, payout_r, rendement_actuel, ecart_reg_pct, pts_ema, rsi, stoch_k,
+        borne_inf, borne_sup, macd_val, macd_sig, statut_ema_2_12,
+    )
 
     if (prix_cible > 0 and prix_actuel <= prix_cible) or "SIGNAL FORT" in decision:
         motif_al = "Sous le Prix Cible 🎯" if (prix_cible > 0 and prix_actuel <= prix_cible) else "Signal technique fort 🟢"
@@ -2956,6 +3023,133 @@ with onglet_radar:
             </div>
             """
             afficher_html(html_radar_pro)
+
+    # ==========================================================================
+    # BILAN DES SIGNAUX : L'ALGORITHME REJOUÉ SUR LE PASSÉ
+    # ==========================================================================
+    with st.expander("🔬 Bilan des signaux : qu'ont fait les actions après chaque signal du radar ?", expanded=False):
+        if not est_premium_ou_pro:
+            afficher_verrou_saas(
+                "Bilan des signaux de l'algorithme rejoué sur le passé",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Vérifiez si les signaux du radar ont été suivis, dans le passé, de meilleures performances que la moyenne."
+            )
+        else:
+            st.caption(
+                "Boursy rejoue son score une fois par mois sur l'historique de chaque valeur de votre radar (jusqu'à 7 ans), "
+                "avec uniquement les cours et les dividendes connus à chaque date, puis mesure ce que l'action a fait "
+                "dans les 1, 3 et 6 mois suivants, dividendes inclus."
+            )
+            if not st.session_state.get("_bilan_signaux_demande"):
+                if st.button("🔬 Calculer le bilan des signaux", type="primary", key="btn_bilan_signaux"):
+                    st.session_state["_bilan_signaux_demande"] = True
+            if st.session_state.get("_bilan_signaux_demande"):
+                valeurs_bilan = [
+                    (nom_b, info_b) for nom_b, info_b in st.session_state["watchlist"].items()
+                    if nom_b in actions_autorisees and isinstance(info_b, dict) and info_b.get("symbole")
+                ]
+                observations_bilan, valeurs_sans_historique = [], []
+                with st.spinner("🔬 Rejeu de l'algorithme sur l'historique de vos valeurs..."):
+                    for nom_b, info_b in valeurs_bilan:
+                        obs_b = bilan_signaux_symbole(info_b["symbole"], float(info_b.get("payout_ratio", 0.60)))
+                        if obs_b is None:
+                            valeurs_sans_historique.append(nom_b)
+                            continue
+                        for o in obs_b:
+                            observations_bilan.append(dict(o, action=nom_b))
+
+                if not observations_bilan:
+                    st.warning("Aucun historique suffisant (au moins 3 ans de cours) n'a pu être chargé pour les valeurs de votre radar.")
+                else:
+                    def _moyenne(valeurs):
+                        valeurs = [v for v in valeurs if v is not None]
+                        return (sum(valeurs) / len(valeurs)) if valeurs else None
+
+                    categories_bilan = ["🟢 SIGNAL FORT", "🔵 SIGNAL FAVORABLE", "⚪ SIGNAL NEUTRE"]
+                    lignes_bilan = []
+                    for categorie in categories_bilan + ["Toutes les observations"]:
+                        obs_c = observations_bilan if categorie == "Toutes les observations" else [o for o in observations_bilan if o["decision"] == categorie]
+                        r6_c = [o["r6"] for o in obs_c if o["r6"] is not None]
+                        lignes_bilan.append({
+                            "categorie": categorie, "nombre": len(obs_c),
+                            "r1": _moyenne(o["r1"] for o in obs_c), "r3": _moyenne(o["r3"] for o in obs_c), "r6": _moyenne(r6_c),
+                            "positifs": (sum(1 for r in r6_c if r > 0) / len(r6_c)) if r6_c else None,
+                        })
+                    reference_r6 = lignes_bilan[-1]["r6"]
+
+                    def _cellule_perf(valeur):
+                        if valeur is None:
+                            return "<td>—</td>"
+                        couleur = "#2ecc71" if valeur >= 0 else "#e74c3c"
+                        return f"<td style='color:{couleur}; font-weight:800;'>{valeur * 100:+.1f} %</td>"
+
+                    html_bilan = (
+                        "<table class='r-table'><thead><tr><th style='text-align:left;'>Signal du radar</th><th>Observations</th>"
+                        "<th>1 mois après</th><th>3 mois après</th><th>6 mois après</th><th>Écart à 6 mois vs ensemble</th>"
+                        "<th>Part de hausses à 6 mois</th></tr></thead><tbody>"
+                    )
+                    for ligne_b in lignes_bilan:
+                        ecart_b = (ligne_b["r6"] - reference_r6) if (ligne_b["r6"] is not None and reference_r6 is not None) else None
+                        if ligne_b["categorie"] == "Toutes les observations":
+                            cellule_ecart = "<td>référence</td>"
+                        elif ecart_b is None:
+                            cellule_ecart = "<td>—</td>"
+                        else:
+                            cellule_ecart = f"<td><span class='{'b-green' if ecart_b >= 0 else 'b-red'}'>{ecart_b * 100:+.1f} pt</span></td>"
+                        html_bilan += (
+                            f"<tr><td class='r-name'>{ligne_b['categorie']}</td><td>{ligne_b['nombre']}</td>"
+                            + _cellule_perf(ligne_b["r1"]) + _cellule_perf(ligne_b["r3"]) + _cellule_perf(ligne_b["r6"]) + cellule_ecart
+                            + (f"<td>{ligne_b['positifs'] * 100:.0f} %</td>" if ligne_b["positifs"] is not None else "<td>—</td>")
+                            + "</tr>"
+                        )
+                    html_bilan += "</tbody></table>"
+                    afficher_html(html_bilan)
+
+                    # Lecture factuelle du résultat, sans enjoliver
+                    fort_b = lignes_bilan[0]
+                    nb_fort_r6 = sum(1 for o in observations_bilan if o["decision"] == categories_bilan[0] and o["r6"] is not None)
+                    if nb_fort_r6 < 30 or fort_b["r6"] is None or reference_r6 is None:
+                        lecture_b = (f"Trop peu de signaux forts suivis de 6 mois d'historique ({nb_fort_r6}) pour en tirer une conclusion : "
+                                     "ajoutez des valeurs au radar ou revenez quand l'historique sera plus long.")
+                    else:
+                        ecart_fort = (fort_b["r6"] - reference_r6) * 100
+                        if ecart_fort >= 1:
+                            lecture_b = (f"Sur cette période, les signaux forts ont été suivis en moyenne d'une performance à 6 mois supérieure "
+                                         f"de {ecart_fort:.1f} point(s) à la moyenne de toutes les observations.")
+                        elif ecart_fort <= -1:
+                            lecture_b = (f"Sur cette période, les signaux forts ont été suivis en moyenne d'une performance à 6 mois inférieure "
+                                         f"de {abs(ecart_fort):.1f} point(s) à la moyenne de toutes les observations : le signal n'a pas apporté d'avantage.")
+                        else:
+                            lecture_b = ("Sur cette période, les signaux forts ont été suivis d'une performance à 6 mois comparable à la moyenne : "
+                                         "le signal n'a pas fait de différence nette.")
+                    st.info(nombres_fr("📊 " + lecture_b))
+
+                    if st.toggle("Voir le détail par valeur", key="tog_bilan_detail"):
+                        lignes_detail = []
+                        for nom_d in sorted({o["action"] for o in observations_bilan}):
+                            obs_d = [o for o in observations_bilan if o["action"] == nom_d]
+                            forts_d = [o for o in obs_d if o["decision"] == categories_bilan[0]]
+                            moyenne_toutes = _moyenne(o["r6"] for o in obs_d)
+                            moyenne_forts = _moyenne(o["r6"] for o in forts_d)
+                            lignes_detail.append({
+                                "Valeur": nom_d,
+                                "Depuis": f"{obs_d[0]['date'][8:10]}/{obs_d[0]['date'][5:7]}/{obs_d[0]['date'][0:4]}",
+                                "Observations": len(obs_d),
+                                "Signaux forts": len(forts_d),
+                                "Perf. 6 mois après un signal fort": nombres_fr(f"{moyenne_forts * 100:+.1f} %") if moyenne_forts is not None else "—",
+                                "Perf. 6 mois, toutes dates": nombres_fr(f"{moyenne_toutes * 100:+.1f} %") if moyenne_toutes is not None else "—",
+                            })
+                        st.dataframe(pd.DataFrame(lignes_detail), width="stretch", hide_index=True)
+
+                    if valeurs_sans_historique:
+                        st.caption("Valeurs sans historique suffisant, non comptées : " + ", ".join(valeurs_sans_historique) + ".")
+                    st.caption(
+                        "Limites : le critère « prix cible » n'est pas compté (Boursy ne connaît pas vos prix cibles passés) ; sans lui, le score "
+                        "plafonne à 85 sur 100, et les signaux forts sont plus rares que dans le radar en direct. Le payout ratio "
+                        "est la valeur actuelle, et les valeurs étudiées sont celles de votre radar d'aujourd'hui, qui ont par définition "
+                        "survécu jusqu'ici. Les observations mensuelles à 6 mois se chevauchent : elles ne sont pas indépendantes. "
+                        "Ce bilan décrit le passé ; il ne garantit rien pour l'avenir."
+                    )
 # ------------------------------------------------------------------------------
 # ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
 # ------------------------------------------------------------------------------
