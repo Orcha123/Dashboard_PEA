@@ -152,7 +152,10 @@ STYLE_ARGON = """
 
 .r-wrap { overflow-x: auto; border: 1px solid var(--bz-bord); border-radius: 14px; margin-bottom: 22px; background: rgba(148,163,184,0.04); -webkit-overflow-scrolling: touch; }
 .r-wrap .r-table { margin-bottom: 0; }
-.r-table th { white-space: nowrap; }
+.r-table th { white-space: normal; line-height: 1.3; }
+.r-table th { padding: 11px 6px; letter-spacing: 0.3px; }
+.r-table td { padding: 10px 6px; }
+@media (max-width: 1400px) { .r-table { font-size: 0.86em; } .r-table td { padding: 9px 5px; } .r-table th { padding: 10px 5px; } }
 .r-table tbody tr { transition: background 0.12s ease; }
 .r-table tbody tr:hover { background: rgba(148,163,184,0.09); }
 .r-table tbody tr:last-child td { border-bottom: none; }
@@ -2426,7 +2429,7 @@ with onglet_radar:
         html_t1 += f"""
         <tr>
             <td class="r-name">{d['Actif']}</td>
-            <td style="white-space:nowrap;"><b>{d['Prix']}</b>{f' <span style="opacity:0.7; font-size:0.86em;">({d["PrixEUR"]})</span>' if '$' in d['Prix'] else ''}</td>
+            <td><b>{d['Prix']}</b>{f' <span style="opacity:0.7; font-size:0.86em;">({d["PrixEUR"]})</span>' if '$' in d['Prix'] else ''}</td>
             <td style="opacity: 0.85;">{d['Prix Cible']}</td>
             <td>{badge_ecart}</td>
             <td>{rsi_badge}</td>
@@ -2612,14 +2615,14 @@ with onglet_radar:
             <table class='r-table'>
             <thead>
                 <tr>
-                    <th style='width:55px;'>Rang</th>
+                    <th style='width:46px;'>Rang</th>
                     <th style='text-align: left;'>Actif</th>
-                    <th style='width:230px;'>Position dans le Canal 30J<br><span style='font-size:0.82em; opacity:0.75;'>(Support ➔ Cours ➔ Résistance)</span></th>
+                    <th style='width:180px;'>Position dans le Canal 30J<br><span style='font-size:0.82em; opacity:0.75;'>(Support ➔ Cours ➔ Résistance)</span></th>
                     <th>Marge avant Résistance</th>
                     <th>Diagnostic Bollinger (20J)</th>
                     <th>Momentum Stochastique</th>
                     <th>Volatilité (ATR)</th>
-                    <th style='width:125px;'>Score Timing</th>
+                    <th style='width:105px;'>Score Timing</th>
                     <th>Lecture Technique & Niveau de Référence</th>
                 </tr>
             </thead>
@@ -3221,7 +3224,8 @@ with onglet_portefeuille:
         else:
             st.caption(
                 "Exportez l'historique de vos opérations depuis votre courtier au format CSV, puis déposez-le ici. "
-                "Indiquez quelle colonne contient quoi : seuls les achats d'actions reconnues sont importés."
+                "Indiquez quelle colonne contient quoi : seuls les achats d'actions reconnues sont importés. "
+                "Pas d'export CSV ? L'📸 Import Magique (offre Pro), plus bas, lit une capture d'écran ou un copier-coller de vos positions actuelles."
             )
             fichier_achats = st.file_uploader("Fichier CSV des opérations", type=["csv", "txt"], key=f"up_csv_achats_{st.session_state.get('_compteur_import_achats', 0)}")
             if fichier_achats is not None:
@@ -4139,15 +4143,25 @@ with onglet_portefeuille:
         # ======================================================================
         # IMPORT MAGIQUE DU PORTEFEUILLE (EXCLUSIF OFFRE PRO 8,90 €)
         # ======================================================================
+        def _analyser_ligne_import_ia(item_ext):
+            """(action reconnue, quantité, PRU, statut) pour une ligne lue par Gemini."""
+            if not isinstance(item_ext, dict):
+                return None, 0, 0.0, "Ignorée : ligne illisible"
+            nom_lu = re.sub(r"[<>]", "", str(item_ext.get("nom", ""))).strip()
+            qte_lue = _nombre_lu(item_ext.get("qte"))
+            pru_lu = _nombre_lu(item_ext.get("pru"))
+            action_lue = _reconnaitre_action(nom_lu)
+            if action_lue is None:
+                return None, 0, 0.0, "Ignorée : action non reconnue (ajoutez-la d'abord à votre radar)"
+            if not qte_lue or qte_lue <= 0 or pru_lu is None or pru_lu < 0:
+                return action_lue, 0, 0.0, "Ignorée : quantité ou PRU illisible"
+            return action_lue, int(round(qte_lue)), round(float(pru_lu), 4), "✅ À appliquer"
+
         def appliquer_import_ia_portefeuille():
             lignes_ext = st.session_state.get("_lignes_extraites_vision", [])
             nb_maj = 0
             for item_ext in lignes_ext:
-                if not isinstance(item_ext, dict):
-                    continue
-                nom_e = re.sub(r"[<>]", "", str(item_ext.get("nom", ""))).strip()
-                qte_e = int(float(item_ext.get("qte", 0)))
-                pru_e = round(float(item_ext.get("pru", 0.0)), 2)
+                nom_e, qte_e, pru_e, _ = _analyser_ligne_import_ia(item_ext)
                 if nom_e and qte_e > 0:
                     st.session_state["portefeuille"][nom_e] = construire_position(nom_e, qte_e, pru_e)
                     st.session_state[f"qte_{nom_e}"] = qte_e
@@ -4162,7 +4176,7 @@ with onglet_portefeuille:
         if st.session_state.get("_notif_import_ia"):
             st.success(st.session_state.pop("_notif_import_ia"))
 
-        with st.expander("📸 Import Magique : Mettre à jour mon portefeuille par Capture d'Écran ou Copier-Coller (IA Gemini)", expanded=False):
+        with st.expander("📸 Import Magique : mettre à jour mes positions actuelles par capture d'écran ou copier-coller (IA Gemini)", expanded=False):
             if not est_pro_max:
                 afficher_verrou_saas(
                     "Import Magique IA (Lecture optique de Capture d'Écran & Copier-Coller Courtier)",
@@ -4170,6 +4184,11 @@ with onglet_portefeuille:
                     "Importez ou mettez à jour toutes les lignes et PRU de votre portefeuille en 1 clic grâce à Gemini Vision."
                 )
             else:
+                st.caption(
+                    "Met à jour d'un coup vos positions actuelles (quantité et PRU tels qu'affichés par votre courtier) : "
+                    "les lignes lues remplacent celles du portefeuille. Pour garder l'historique de chaque achat avec sa date, "
+                    "utilisez plutôt le 🧾 Journal des achats, plus haut."
+                )
                 mode_imp_ia = st.radio(
                     "Méthode d'importation :",
                     ["📋 Copier-Coller le texte de mon courtier (Ultra-rapide)", "📸 Déposer une Capture d'Écran (PNG / JPG)"],
@@ -4258,8 +4277,19 @@ with onglet_portefeuille:
 
                 if st.session_state.get("_lignes_extraites_vision"):
                     lignes_ext = st.session_state["_lignes_extraites_vision"]
-                    st.success(f"✅ {len(lignes_ext)} position(s) détectée(s) !")
-                    st.dataframe(pd.DataFrame(lignes_ext), width="stretch")
+                    apercu_ia = []
+                    for item_ext in lignes_ext:
+                        action_ia, qte_ia, pru_ia, statut_ia = _analyser_ligne_import_ia(item_ext)
+                        apercu_ia.append({
+                            "Lu par l'IA": str(item_ext.get("nom", "")) if isinstance(item_ext, dict) else "?",
+                            "Action reconnue": action_ia or "—",
+                            "Quantité": qte_ia or None,
+                            "PRU": pru_ia or None,
+                            "Statut": statut_ia,
+                        })
+                    nb_applicables = sum(1 for a in apercu_ia if a["Statut"].startswith("✅"))
+                    st.success(f"✅ {len(lignes_ext)} position(s) détectée(s), dont {nb_applicables} applicable(s).")
+                    st.dataframe(pd.DataFrame(apercu_ia), width="stretch", hide_index=True)
                     st.button(
                         "📥 Appliquer ces positions à mon Portefeuille",
                         type="primary",
