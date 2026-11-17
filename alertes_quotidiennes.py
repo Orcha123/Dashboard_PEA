@@ -187,7 +187,10 @@ def main():
         print("Configuration incomplète, secrets manquants : " + ", ".join(manquantes))
         return 1
 
-    comptes = requete_supabase("GET", "user_data?select=user_id,email,watchlist,portefeuille,est_abonne_pro") or []
+    comptes = requete_supabase("GET", "user_data?select=user_id,email,watchlist,portefeuille") or []
+    # Niveau d'abonnement lu dans la table protégée « abonnements » (jamais dans user_data, modifiable par l'utilisateur)
+    abonnements = requete_supabase("GET", "abonnements?select=user_id,niveau") or []
+    comptes_pro = {str(a.get("user_id")) for a in abonnements if a.get("niveau") == "pro"}
     aujourd_hui = date.today()
     nb_inscrits = nb_emails = nb_erreurs = 0
 
@@ -196,7 +199,7 @@ def main():
         if not isinstance(portefeuille, dict) or not portefeuille.get("_alertes_auto"):
             continue
         # Les alertes e-mail font partie de l'offre Pro
-        if not compte.get("est_abonne_pro") or portefeuille.get("_niveau_abo") != "pro" or not compte.get("email"):
+        if str(compte.get("user_id")) not in comptes_pro or not compte.get("email"):
             continue
         nb_inscrits += 1
 
