@@ -45,6 +45,17 @@ Trois tables, toutes avec la sécurité par ligne (RLS) activée :
 
 Ne créez jamais de règle RLS avec la condition `true` : elle ouvrirait la table à tout le monde.
 
+### Mot de passe oublié
+
+Deux réglages dans Supabase, *Authentication* :
+
+1. *URL Configuration* > **Site URL** : l'adresse exacte de l'application (par exemple `https://boursy.streamlit.app`).
+2. *Emails* > *Templates* > **Reset Password** : remplacez le lien du modèle par
+   `<a href="{{ .SiteURL }}?type=recovery&token_hash={{ .TokenHash }}">Choisir un nouveau mot de passe</a>`.
+
+L'application lit alors le jeton dans l'adresse et affiche le formulaire de nouveau mot de passe. Le lien par défaut
+de Supabase place le jeton après un `#`, que le serveur Streamlit ne peut pas lire.
+
 ## Fraîcheur des cours
 
 Les cours viennent de Yahoo Finance et sont relus toutes les 5 minutes pendant les heures de bourse (du lundi au

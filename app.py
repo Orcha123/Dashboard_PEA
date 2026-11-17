@@ -874,6 +874,57 @@ def sauvegarder_dans_cloud():
 # ==============================================================================
 st.sidebar.header("👤 Espace Membre")
 
+# --- RÉINITIALISATION DU MOT DE PASSE : page ouverte depuis le lien reçu par e-mail ---
+# Le modèle d'e-mail « Reset Password » de Supabase doit pointer vers {{ .SiteURL }}?type=recovery&token_hash={{ .TokenHash }}
+# (voir README) : le jeton arrive ainsi dans l'adresse, lisible par le serveur Streamlit.
+_type_lien = str(st.query_params.get("type", ""))
+_jeton_lien = str(st.query_params.get("token_hash", ""))
+if supabase is not None and ((_type_lien == "recovery" and _jeton_lien) or st.session_state.get("_reinit_mdp_actif")):
+    st.title("🔑 Choisir un nouveau mot de passe")
+    if not st.session_state.get("_reinit_mdp_actif"):
+        try:
+            reponse_jeton = supabase.auth.verify_otp({"token_hash": _jeton_lien, "type": "recovery"})
+            if not getattr(reponse_jeton, "session", None):
+                raise ValueError("jeton refusé")
+            st.session_state["_reinit_mdp_actif"] = True
+            st.session_state["user"] = None  # session de récupération : personne n'est connecté à l'application
+        except Exception:
+            st.error(
+                "Ce lien de réinitialisation est invalide ou a expiré : il ne sert qu'une fois et pendant une durée limitée. "
+                "Redemandez-en un depuis « Mot de passe oublié » dans le menu de gauche."
+            )
+            if st.button("Revenir à l'accueil", type="primary"):
+                st.query_params.clear()
+                st.rerun()
+            st.stop()
+
+    with st.form("form_nouveau_mot_de_passe"):
+        nouveau_mdp = st.text_input("Nouveau mot de passe (6 caractères minimum)", type="password")
+        confirmation_mdp = st.text_input("Confirmer le nouveau mot de passe", type="password")
+        valider_mdp = st.form_submit_button("Enregistrer mon nouveau mot de passe", type="primary")
+    if valider_mdp:
+        if len(nouveau_mdp) < 6:
+            st.error("Le mot de passe doit contenir au moins 6 caractères.")
+        elif nouveau_mdp != confirmation_mdp:
+            st.error("Les deux mots de passe ne sont pas identiques.")
+        else:
+            try:
+                supabase.auth.update_user({"password": nouveau_mdp})
+                try:
+                    supabase.auth.sign_out()
+                except Exception:
+                    pass
+                st.session_state.pop("_reinit_mdp_actif", None)
+                st.session_state["_notif_mdp_change"] = True
+                st.query_params.clear()
+                st.rerun()
+            except Exception as erreur_mdp:
+                st.error(f"Le mot de passe n'a pas pu être modifié : {erreur_mdp}")
+    st.stop()
+
+if st.session_state.pop("_notif_mdp_change", False):
+    st.sidebar.success("✅ Mot de passe modifié. Connectez-vous avec votre nouveau mot de passe.")
+
 if supabase is None:
     st.sidebar.warning("⚠️ Base de données non connectée. Mode local actif.")
 else:
