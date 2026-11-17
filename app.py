@@ -6,6 +6,7 @@ import io
 import json
 import math
 import re
+import html as html_lib
 import smtplib
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +20,7 @@ import importlib
 import catalogue_valeurs
 import moteur_signaux
 import allocation_dca
+import carnet_decisions
 import resume_mensuel
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
@@ -26,9 +28,29 @@ import resume_mensuel
 importlib.reload(catalogue_valeurs)
 importlib.reload(moteur_signaux)
 importlib.reload(allocation_dca)
+importlib.reload(carnet_decisions)
 importlib.reload(resume_mensuel)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
 from allocation_dca import calculer_achat_du_mois, normaliser_poids, preparer_lignes_dca, statut_achat  # DCA guidé par l'allocation cible
+from carnet_decisions import (  # carnet de décisions : pourquoi j'achète, pourquoi je vends
+    HORIZON_RELECTURE_MOIS,
+    HORIZONS_MOIS,
+    LONGUEUR_NOTE_MAX,
+    NOM_REFERENCE,
+    RAISONS,
+    SYMBOLE_REFERENCE,
+    TYPES_DECISION,
+    ajouter_decision,
+    ajouter_mois,
+    bilan_par_raison,
+    decisions_a_relire,
+    enregistrer_lecon,
+    evaluer_decision,
+    lire_carnet,
+    nouvelle_decision,
+    phrase_resultat,
+    supprimer_decision,
+)
 from resume_mensuel import (  # résumé mensuel du DCA par e-mail, partagé avec la tâche planifiée
     composer_email_resume,
     construire_resume,
@@ -62,7 +84,7 @@ st.set_page_config(
     layout="wide",
 )
 
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions")
 
 
 def _lire_secret(nom, defaut=""):
@@ -3290,7 +3312,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -3413,6 +3435,17 @@ with onglet_portefeuille:
             st.session_state[f"pru_{nom_action}"] = float(position.get("pru", 0.0))
         st.session_state[f"txa_{nom_action}"] = float((position or {}).get("taux_achat") or 0.0)
 
+    def noter_dans_carnet(type_decision, nom_action, jour, raison, note, source, qte=None, prix=None):
+        """Ajoute une décision au carnet si l'utilisateur a indiqué une raison ou une note (sinon ne fait rien)."""
+        note = str(note or "").strip()
+        if (not raison or raison == "—") and not note:
+            return None
+        info_carnet = WATCHLIST_DEFAUT.get(nom_action, {})
+        return ajouter_decision(st.session_state["portefeuille"], nouvelle_decision(
+            jour, nom_action, symbole_a_jour(info_carnet.get("symbole", "")), type_decision,
+            raison if raison and raison != "—" else "Autre", note, info_carnet.get("devise", "EUR"), source, qte, prix,
+        ))
+
     def appliquer_achat(nom_action, date_achat, qte, prix, frais_eur, taux_operation=0.0, source="saisie"):
         """Ajoute un achat au journal et met à jour la ligne du portefeuille. Renvoie la nouvelle position."""
         est_usd = WATCHLIST_DEFAUT.get(nom_action, {}).get("devise") == "USD"
@@ -3461,8 +3494,13 @@ with onglet_portefeuille:
             return
         position = appliquer_achat(nom_action, st.session_state.get("ja_date", datetime.now().date()), qte, prix, frais,
                                    st.session_state.get(f"ja_taux_{nom_action}", 0.0))
+        decision_notee = noter_dans_carnet("achat", nom_action, st.session_state.get("ja_date", datetime.now().date()),
+                                           st.session_state.get("ja_raison"), st.session_state.get("ja_note"), "journal", qte, prix)
+        st.session_state["ja_note"] = ""
+        st.session_state["ja_raison"] = "—"
         sauvegarder_dans_cloud()
-        st.session_state["_notif_journal"] = ("ok", f"✅ Achat enregistré : +{qte} {nom_action}. Nouvelle ligne : {position['qte']} titre(s), PRU {position['pru']:.2f}.")
+        st.session_state["_notif_journal"] = ("ok", f"✅ Achat enregistré : +{qte} {nom_action}. Nouvelle ligne : {position['qte']} titre(s), PRU {position['pru']:.2f}."
+                                              + (" Raison notée dans le carnet de décisions." if decision_notee else ""))
 
     def _annuler_achat(id_achat):
         pf = st.session_state["portefeuille"]
@@ -3655,6 +3693,13 @@ with onglet_portefeuille:
                 Montant de l'achat : <b>{qte_apercu * prix_apercu:,.2f} {symbole_achat}</b>
             </div>
             """)
+        col_ja6, col_ja7 = st.columns([1, 2])
+        with col_ja6:
+            st.selectbox("📓 Pourquoi cet achat ? (facultatif)", ["—"] + RAISONS["achat"], key="ja_raison",
+                         help="Noté dans le carnet de décisions : six mois plus tard, Boursy vous montrera ce qu'est devenue la valeur.")
+        with col_ja7:
+            st.text_input("En une phrase (facultatif) :", max_chars=LONGUEUR_NOTE_MAX, key="ja_note",
+                          placeholder="Ex. : sous mon prix cible depuis 3 semaines, dividende confirmé.")
         st.button("➕ Enregistrer cet achat", type="primary", width="stretch", on_click=_enregistrer_achat_saisi, key="btn_enregistrer_achat")
 
         journal_achats = st.session_state["portefeuille"].get("_journal_achats") if isinstance(st.session_state["portefeuille"].get("_journal_achats"), list) else []
@@ -3820,6 +3865,188 @@ with onglet_portefeuille:
                               on_click=_importer_achats, args=(lignes_ia,), key="btn_importer_historique_ia")
                 else:
                     st.warning("Aucun achat importable dans cet historique.")
+
+    # ======================================================================
+    # CARNET DE DÉCISIONS : POURQUOI J'ACHÈTE, POURQUOI JE VENDS, ET CE QUE C'EST DEVENU (carnet_decisions.py)
+    # ======================================================================
+    def _noter_decision_carnet():
+        type_d = st.session_state.get("cd_type", "achat")
+        nom_d = st.session_state.get("cd_action")
+        note_d = str(st.session_state.get("cd_note") or "").strip()
+        if not nom_d:
+            st.session_state["_notif_carnet"] = ("erreur", "Choisissez une valeur.")
+            return
+        info_d = WATCHLIST_DEFAUT.get(nom_d, {})
+        ajouter_decision(st.session_state["portefeuille"], nouvelle_decision(
+            st.session_state.get("cd_date", datetime.now().date()), nom_d, symbole_a_jour(info_d.get("symbole", "")), type_d,
+            st.session_state.get(f"cd_raison_{type_d}", "Autre"), note_d, info_d.get("devise", "EUR"), "carnet",
+        ))
+        st.session_state["cd_note"] = ""
+        sauvegarder_dans_cloud()
+        st.session_state["_notif_carnet"] = ("ok", f"📓 Décision notée : {TYPES_DECISION[type_d].lower()} — {nom_d}.")
+
+    def _enregistrer_lecon_carnet(id_decision):
+        if enregistrer_lecon(st.session_state["portefeuille"], id_decision, st.session_state.get(f"cd_lecon_{id_decision}", "")):
+            sauvegarder_dans_cloud()
+            st.session_state["_notif_carnet"] = ("ok", "💡 Leçon enregistrée.")
+
+    def _supprimer_decision_carnet(id_decision):
+        if supprimer_decision(st.session_state["portefeuille"], id_decision):
+            sauvegarder_dans_cloud()
+            st.session_state["_notif_carnet"] = ("ok", "🗑️ Décision supprimée du carnet.")
+
+    def _date_fr(jour_iso):
+        jour_iso = str(jour_iso)[:10]
+        return f"{jour_iso[8:10]}/{jour_iso[5:7]}/{jour_iso[0:4]}" if len(jour_iso) == 10 else jour_iso
+
+    def _pct_carnet(valeur):
+        return "—" if valeur is None else f"{valeur * 100:+.1f} %"
+
+    carnet_actuel = lire_carnet(st.session_state["portefeuille"])
+    # Titre fixe : un titre qui change (nombre de décisions) refermerait le volet après chaque enregistrement
+    with st.expander("📓 Carnet de décisions : pourquoi j'achète, pourquoi je vends", expanded=False):
+        notif_carnet = st.session_state.pop("_notif_carnet", None)
+        if notif_carnet:
+            (st.success if notif_carnet[0] == "ok" else st.error)(notif_carnet[1])
+        st.caption(
+            "Notez en une phrase pourquoi vous achetez, vendez ou préférez attendre. Plus tard, Boursy vous montre ce qu'est "
+            f"devenue la valeur, dividendes compris, face à l'{NOM_REFERENCE} sur la même période : de quoi voir quels "
+            "raisonnements ont tenu. Les achats et les ventes enregistrés avec une raison y arrivent automatiquement."
+        )
+
+        st.markdown("#### ✍️ Noter une décision")
+        aujourd_hui_carnet = datetime.now().date()
+        options_carnet = sorted([k for k in WATCHLIST_DEFAUT.keys() if k not in CLES_TECHNIQUES_PF])
+        col_cd1, col_cd2, col_cd3 = st.columns([1.3, 2, 1])
+        with col_cd1:
+            type_carnet = st.selectbox("Décision :", list(TYPES_DECISION), format_func=TYPES_DECISION.get, key="cd_type")
+        with col_cd2:
+            st.selectbox("Valeur :", options_carnet, key="cd_action")
+        with col_cd3:
+            st.date_input("Date :", value=aujourd_hui_carnet, max_value=aujourd_hui_carnet, key="cd_date", format="DD/MM/YYYY")
+        st.selectbox("Raison principale :", RAISONS[type_carnet], key=f"cd_raison_{type_carnet}")
+        st.text_area("Pourquoi, en une ou deux phrases :", max_chars=LONGUEUR_NOTE_MAX, key="cd_note", height=80,
+                     placeholder="Ex. : je n'achète pas ce mois-ci, le cours a pris 25 % en deux mois ; j'attends un repli.")
+        st.button("📓 Noter dans le carnet", type="primary", width="stretch", on_click=_noter_decision_carnet, key="btn_noter_decision")
+
+        if carnet_actuel:
+            # Historiques (mis en cache 6 heures) : valeurs du carnet, ETF de référence et change €/$ pour les valeurs en dollars
+            symboles_carnet = sorted({symbole_a_jour(d.get("symbole")) for d in carnet_actuel if d.get("symbole")})
+            symboles_a_charger = symboles_carnet + [SYMBOLE_REFERENCE] + (["EURUSD=X"] if any(d.get("devise") == "USD" for d in carnet_actuel) else [])
+            with ThreadPoolExecutor(max_workers=6) as executeur_carnet:
+                historiques_carnet = dict(zip(symboles_a_charger, executeur_carnet.map(historique_long, symboles_a_charger)))
+            evaluations_carnet = {
+                d["id"]: evaluer_decision(d, historiques_carnet.get(symbole_a_jour(d.get("symbole"))),
+                                          historiques_carnet.get(SYMBOLE_REFERENCE), aujourd_hui_carnet, historiques_carnet.get("EURUSD=X"))
+                for d in carnet_actuel
+            }
+
+            a_relire_carnet = decisions_a_relire(carnet_actuel, aujourd_hui_carnet)
+            if a_relire_carnet:
+                st.info(
+                    f"🔔 {len(a_relire_carnet)} décision(s) ont plus de {HORIZON_RELECTURE_MOIS} mois et attendent votre relecture : "
+                    + ", ".join(f"{d['action']} ({_date_fr(d['date'])})" for d in a_relire_carnet[:5])
+                    + (" …" if len(a_relire_carnet) > 5 else "") + ". Choisissez-les plus bas, dans « Relire une décision »."
+                )
+
+            st.markdown(f"#### 🔎 Ce que sont devenues mes décisions ({len(carnet_actuel)})")
+            html_carnet = (
+                "<table class='r-table'><thead><tr><th>Date</th><th style='text-align:left;'>Valeur et décision</th>"
+                "<th style='text-align:left;'>Pourquoi</th><th>Depuis : valeur · ETF Monde</th>"
+                f"<th>Résultat à {HORIZON_RELECTURE_MOIS} mois</th></tr></thead><tbody>"
+            )
+            for d in carnet_actuel[:40]:
+                ev_d = evaluations_carnet[d["id"]]
+                depuis_d = ev_d["depuis"]
+                mesure_6 = ev_d["horizons"].get(HORIZON_RELECTURE_MOIS)
+                if mesure_6:
+                    resultat_6 = phrase_resultat(d["type"], mesure_6["action"], mesure_6["reference"])
+                    couleur_6 = "#2ecc71" if (mesure_6["en_faveur"] or 0) >= 0 else "#e74c3c"
+                    cellule_6 = f"<span style='color:{couleur_6}; font-weight:700;'>{html_lib.escape(resultat_6)}</span>"
+                else:
+                    cellule_6 = (f"<span style='opacity:0.7;'>le {_date_fr(ajouter_mois(d['date'], HORIZON_RELECTURE_MOIS).isoformat())}</span>")
+                pourquoi_d = html_lib.escape(d.get("note") or "—")
+                if d.get("lecon"):
+                    pourquoi_d += f"<br><span style='font-size:0.85em; opacity:0.8;'>💡 {html_lib.escape(d['lecon'])}</span>"
+                html_carnet += (
+                    f"<tr><td style='white-space:nowrap;'>{_date_fr(d['date'])}</td>"
+                    f"<td class='r-name' style='text-align:left;'><b>{html_lib.escape(d['action'])}</b><br>"
+                    f"<span style='font-size:0.85em; opacity:0.8;'>{TYPES_DECISION.get(d['type'], d['type'])} · {html_lib.escape(d.get('raison', ''))}</span></td>"
+                    f"<td style='text-align:left; max-width:320px;'>{pourquoi_d}</td>"
+                    f"<td style='white-space:nowrap;'>{_pct_carnet(depuis_d['action'] if depuis_d else None)} · {_pct_carnet(depuis_d['reference'] if depuis_d else None)}</td>"
+                    f"<td>{cellule_6}</td></tr>"
+                )
+            html_carnet += "</tbody></table>"
+            afficher_html(html_carnet)
+            st.caption(
+                "Achat : écart avec l'ETF Monde, qu'on aurait pu acheter à la place. Vente ou attente : hausse manquée ou baisse "
+                "évitée en ne détenant pas la valeur. Performances de clôture à clôture, dividendes compris, converties en "
+                "euros pour les valeurs en dollars."
+                + (f" Seules les 40 décisions les plus récentes sont affichées ({len(carnet_actuel)} au total)." if len(carnet_actuel) > 40 else "")
+            )
+
+            st.markdown("#### 💡 Relire une décision")
+            ordre_relecture = a_relire_carnet + [d for d in carnet_actuel if d not in a_relire_carnet]
+            decisions_par_id = {d["id"]: d for d in ordre_relecture}
+            ids_a_relire = {d["id"] for d in a_relire_carnet}
+            id_relu = st.selectbox(
+                "Décision :", list(decisions_par_id), key="cd_relue",
+                format_func=lambda i: f"{_date_fr(decisions_par_id[i]['date'])} · {TYPES_DECISION.get(decisions_par_id[i]['type'], '')} · "
+                                      f"{decisions_par_id[i]['action']}" + (" 🔔" if i in ids_a_relire else ""),
+            )
+            decision_relue = decisions_par_id.get(id_relu)
+            if decision_relue:
+                ev_relue = evaluations_carnet[decision_relue["id"]]
+                markdown_fr(
+                    f"**{TYPES_DECISION.get(decision_relue['type'])} — {decision_relue['action']}** le {_date_fr(decision_relue['date'])} · "
+                    f"*{decision_relue.get('raison', '')}*" + (f" : « {decision_relue['note']} »" if decision_relue.get("note") else "")
+                )
+                lignes_relue = []
+                for mois_r in HORIZONS_MOIS:
+                    mesure_r = ev_relue["horizons"].get(mois_r)
+                    lignes_relue.append({
+                        "Horizon": f"{mois_r} mois",
+                        "Valeur": _pct_carnet(mesure_r["action"]) if mesure_r else f"le {_date_fr(ajouter_mois(decision_relue['date'], mois_r).isoformat())}",
+                        NOM_REFERENCE: _pct_carnet(mesure_r["reference"]) if mesure_r else "—",
+                        "Résultat": phrase_resultat(decision_relue["type"], mesure_r["action"], mesure_r["reference"]) if mesure_r else "pas encore",
+                    })
+                st.dataframe(pd.DataFrame(lignes_relue).map(nombres_fr), width="stretch", hide_index=True)
+                st.text_area("Ce que j'en retiens :", value=decision_relue.get("lecon", ""), max_chars=LONGUEUR_NOTE_MAX, height=80,
+                             key=f"cd_lecon_{decision_relue['id']}",
+                             placeholder="Ex. : acheter sous mon prix cible a bien marché ; je garde cette règle.")
+                col_cl1, col_cl2 = st.columns(2)
+                with col_cl1:
+                    st.button("💾 Enregistrer ma leçon", width="stretch", key=f"cd_btn_lecon_{decision_relue['id']}",
+                              on_click=_enregistrer_lecon_carnet, args=(decision_relue["id"],))
+                with col_cl2:
+                    with st.popover("🗑️ Supprimer cette décision", width="stretch"):
+                        st.caption("La décision et la leçon notée seront effacées du carnet.")
+                        st.button("Confirmer la suppression", type="primary", width="stretch", key=f"cd_btn_suppr_{decision_relue['id']}",
+                                  on_click=_supprimer_decision_carnet, args=(decision_relue["id"],))
+
+            bilan_carnet = bilan_par_raison(carnet_actuel, evaluations_carnet)
+            st.markdown(f"#### 📊 Quels raisonnements ont tenu ? (à {HORIZON_RELECTURE_MOIS} mois)")
+            if not bilan_carnet:
+                st.caption(f"Le bilan apparaîtra quand vos premières décisions auront {HORIZON_RELECTURE_MOIS} mois.")
+            else:
+                html_bilan_carnet = (
+                    "<table class='r-table'><thead><tr><th style='text-align:left;'>Décision et raison</th><th>Décisions</th>"
+                    "<th>Résultat moyen</th><th>Part favorable</th></tr></thead><tbody>"
+                )
+                for g in bilan_carnet:
+                    couleur_g = "#2ecc71" if g["moyenne"] >= 0 else "#e74c3c"
+                    html_bilan_carnet += (
+                        f"<tr><td class='r-name' style='text-align:left;'>{TYPES_DECISION.get(g['type'])} · {html_lib.escape(g['raison'])}</td>"
+                        f"<td>{g['nombre']}</td><td style='color:{couleur_g}; font-weight:800;'>{g['moyenne'] * 100:+.1f} pt</td>"
+                        f"<td>{g['part_favorable'] * 100:.0f} %</td></tr>"
+                    )
+                html_bilan_carnet += "</tbody></table>"
+                afficher_html(html_bilan_carnet)
+                st.caption(
+                    "Résultat moyen : pour un achat, l'écart avec l'ETF Monde ; pour une vente ou une attente, la baisse évitée "
+                    "(positive) ou la hausse manquée (négative). Avec moins d'une dizaine de décisions par raison, ces chiffres "
+                    "tiennent de l'anecdote : ils servent à se poser des questions, pas à conclure."
+                )
 
     portefeuille_utilisateur = st.session_state["portefeuille"]
     valeur_totale_portefeuille = 0.0
@@ -6228,11 +6455,16 @@ with onglet_ventes:
                 if nouveau_esp > 0:
                     st.session_state["portefeuille"]["Espèces"] = {"qte": 1, "pru": nouveau_esp}
 
+            vente_notee = noter_dans_carnet("vente", act_v, date_v, st.session_state.get(f"input_raison_v_{act_v}"),
+                                            st.session_state.get(f"input_note_v_{act_v}"), "vente", qte_vendue, prix_vente)
+            st.session_state[f"input_note_v_{act_v}"] = ""
+            st.session_state[f"input_raison_v_{act_v}"] = "—"
             sauvegarder_dans_cloud()
             st.session_state["_derniere_notif_vente"] = (
                 f"✅ Vente actée : -{qte_vendue} {act_v} (Reste : {nouvelle_qte}) | "
                 f"Plus/Moins-Value actée : {pv_eur:+,.2f} € ({perf_pct:+.2f}%)"
                 + (f" | +{montant_net_eur:,.2f} € crédités dans vos Espèces !" if crediter_esp else "")
+                + (" | Raison notée dans le carnet de décisions." if vente_notee else "")
             )
 
         def annuler_vente_portefeuille(idx_v):
@@ -6346,6 +6578,14 @@ with onglet_ventes:
                     frais_vente_eur = st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5, key=f"input_frais_v_{action_vendue}")
                 with col_v4:
                     date_vente = st.date_input("Date de la vente :", value=datetime.now(), key=f"input_date_v_{action_vendue}")
+
+                col_v5, col_v6 = st.columns([1, 2])
+                with col_v5:
+                    st.selectbox("📓 Pourquoi cette vente ? (facultatif)", ["—"] + RAISONS["vente"], key=f"input_raison_v_{action_vendue}",
+                                 help="Noté dans le carnet de décisions (onglet 2) : plus tard, Boursy vous montrera ce qu'est devenue la valeur.")
+                with col_v6:
+                    st.text_input("En une phrase (facultatif) :", max_chars=LONGUEUR_NOTE_MAX, key=f"input_note_v_{action_vendue}",
+                                  placeholder="Ex. : objectif atteint, la ligne pesait 30 % du portefeuille.")
 
                 crediter_especes_chk = st.checkbox(
                     "💶 Créditer automatiquement le montant net encaissé dans ma poche Espèces (Liquidités)",

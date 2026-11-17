@@ -66,6 +66,17 @@ investi reste en liquidités pour le mois suivant. Les poids sont enregistrés d
 `_allocation_cible`). Le calcul (`allocation_dca.py`) n'utilise aucune prévision : le radar est affiché à titre
 d'information, puisque le bilan des signaux n'a pas montré d'avantage démontré.
 
+## Carnet de décisions
+
+Dans l'onglet Portefeuille, « 📓 Carnet de décisions » : à chaque achat, vente ou décision d'attendre, l'utilisateur
+note une raison (liste courte) et une phrase. Les achats du journal et les ventes enregistrées avec une raison y
+arrivent automatiquement. Boursy montre ensuite ce qu'est devenue la valeur, dividendes compris et convertie en euros,
+face à l'ETF MSCI World (CW8) sur la même période, à 1, 3, 6 et 12 mois : pour un achat, l'écart avec l'ETF ; pour une
+vente ou une attente, la hausse manquée ou la baisse évitée. À 6 mois, la décision est proposée à la relecture
+(« Ce que j'en retiens ») et rappelée dans le résumé mensuel par e-mail ; un bilan par raison montre quels
+raisonnements ont tenu. Les décisions sont enregistrées dans le portefeuille (clé technique `_carnet_decisions`) ;
+les calculs sont dans `carnet_decisions.py`.
+
 ## Fraîcheur des cours
 
 Les cours viennent de Yahoo Finance et sont relus toutes les 5 minutes pendant les heures de bourse (du lundi au
@@ -96,7 +107,7 @@ Variable facultative `APP_URL` (onglet *Variables*) : adresse de l'application, 
 dans le Centre d'Alertes (avec son jour d'achat, du 1 au 28), il envoie un e-mail par mois, le premier soir de bourse
 situé dans les 3 jours qui précèdent l'achat : l'achat proposé selon l'allocation cible (même calcul que
 l'application), la valeur du portefeuille et la rente estimée, les dividendes attendus ce mois-là et les valeurs du
-radar sous leur prix cible. Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
+radar sous leur prix cible, et les décisions du carnet arrivées à 6 mois. Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
 dans le portefeuille (`_resume_envoye`) pour ne jamais l'envoyer deux fois. Un bouton du Centre d'Alertes envoie un
 aperçu immédiat. Test sans envoi : `ALERTES_DRY_RUN=1 python resume_mensuel.py`.
 
@@ -129,10 +140,11 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
+| `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
-| `tests/` | Tests automatiques : `python tests/test_allocation_dca.py`, `python tests/test_resume_mensuel.py` (ou `python -m pytest tests`) |
+| `tests/` | Tests automatiques : `python tests/test_allocation_dca.py`, `python tests/test_resume_mensuel.py`, `python tests/test_carnet_decisions.py` (ou `python -m pytest tests`) |
 
 ## Apparence
 
