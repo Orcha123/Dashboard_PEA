@@ -316,15 +316,14 @@ def _clients_stripe_par_reference(user_id, cle_stripe):
     return trouves
 
 
-def verifier_abonnement_stripe(email_client, user_id=None):
+def verifier_abonnement_stripe(email_client, user_id=None, id_client_memorise=None):
     """
-    Vérifie en direct sur Stripe l'état de l'abonnement du client :
-    - Retourne True si un abonnement est actif (et met à jour le palier 'premium' ou 'pro').
-    - Retourne False si le client n'a pas (ou plus) d'abonnement actif.
-    - Retourne None si la clé Stripe n'est pas configurée ou en cas d'erreur réseau.
+    Vérifie en direct sur Stripe l'état de l'abonnement du client. Retourne :
+    - {"niveau": "premium" | "pro" | "gratuit", "fin": date de fin programmée ou None, "client_id": "cus_..." ou None} ;
+    - None si la clé Stripe n'est pas configurée ou en cas d'erreur réseau (rien n'est alors conclu).
 
     Le client Stripe est recherché dans cet ordre :
-    1. identifiant client déjà mémorisé pour ce compte ;
+    1. identifiant client mémorisé dans la table protégée « abonnements » ;
     2. adresse e-mail du compte ;
     3. paiements portant le client_reference_id du compte (paiement fait avec une autre adresse).
     """
@@ -332,16 +331,12 @@ def verifier_abonnement_stripe(email_client, user_id=None):
     if not email_client or not cle_stripe:
         return None
     uid = str(user_id) if user_id else ""
-    pf_session = st.session_state.get("portefeuille")
     try:
         ids_clients = []
 
-        # 1. Identifiant mémorisé : accepté uniquement s'il a été enregistré pour CE compte ("<uuid>|cus_...")
-        memo = pf_session.get("_stripe_customer_id") if isinstance(pf_session, dict) else None
-        if uid and isinstance(memo, str) and "|" in memo:
-            uid_memo, id_memo = memo.split("|", 1)
-            if uid_memo == uid and id_memo.startswith("cus_"):
-                ids_clients.append(id_memo)
+        # 1. Identifiant mémorisé dans la table protégée (jamais dans le portefeuille, que l'utilisateur peut modifier)
+        if isinstance(id_client_memorise, str) and id_client_memorise.startswith("cus_"):
+            ids_clients.append(id_client_memorise)
 
         # 2. Recherche par adresse e-mail
         data_cust = _stripe_get(f"customers?email={urllib.parse.quote(email_client.strip())}&limit=5", cle_stripe)
@@ -369,16 +364,89 @@ def verifier_abonnement_stripe(email_client, user_id=None):
                     _evaluer(id_c)
 
         if meilleur_palier in ("premium", "pro"):
-            st.session_state["niveau_abonnement"] = meilleur_palier
-            st.session_state["abo_fin_periode"] = date_fin_programmee
-            if uid and id_retenu and isinstance(pf_session, dict):
-                pf_session["_stripe_customer_id"] = f"{uid}|{id_retenu}"
-            return True
-
-        st.session_state["abo_fin_periode"] = None
-        return False
+            return {"niveau": meilleur_palier, "fin": date_fin_programmee, "client_id": id_retenu}
+        return {"niveau": "gratuit", "fin": None, "client_id": None}
     except Exception:
         return None
+
+
+# ==============================================================================
+# ABONNEMENT PROTÉGÉ : TABLE « abonnements », LISIBLE PAR L'UTILISATEUR, MODIFIABLE PAR LE SERVEUR SEUL
+# ==============================================================================
+# Le niveau d'abonnement ne vient plus jamais de user_data (que chaque utilisateur peut modifier sur sa ligne).
+# Il est lu dans la table « abonnements » (sécurité par ligne : lecture de sa propre ligne uniquement) et n'y est
+# écrit qu'avec la clé de service, après vérification sur Stripe.
+
+@st.cache_resource
+def init_supabase_serveur():
+    """Client Supabase « serveur » (clé service_role), réservé à l'écriture de la table abonnements. None si absent."""
+    url = _lire_secret("SUPABASE_URL").rstrip("/")
+    cle_service = _lire_secret("SUPABASE_SERVICE_KEY")
+    if not url or not cle_service:
+        return None
+    try:
+        return create_client(url, cle_service)
+    except Exception:
+        return None
+
+
+def lire_abonnement_protege(user):
+    """Ligne de l'utilisateur dans la table abonnements (dict), {} s'il n'en a pas, None si la lecture échoue."""
+    client = st.session_state.get("_supabase_client")
+    if client is None or user is None:
+        return None
+    try:
+        rep_abo = client.table("abonnements").select("niveau, stripe_customer_id, fin_programmee").eq("user_id", str(user.id)).execute()
+        return dict(rep_abo.data[0]) if rep_abo.data else {}
+    except Exception:
+        return None
+
+
+def enregistrer_abonnement_protege(user_id, niveau, client_id, fin):
+    """Écrit le niveau vérifié sur Stripe dans la table abonnements. Retourne False si la clé de service manque."""
+    client_serveur = init_supabase_serveur()
+    if client_serveur is None:
+        return False
+    try:
+        client_serveur.table("abonnements").upsert({
+            "user_id": str(user_id),
+            "niveau": niveau,
+            "stripe_customer_id": client_id,
+            "fin_programmee": fin,
+            "verifie_le": datetime.now().astimezone().isoformat(),
+        }).execute()
+        return True
+    except Exception:
+        return False
+
+
+def etablir_niveau_abonnement(user, verifier_stripe=True):
+    """
+    Fixe le niveau d'abonnement de la session à partir de sources fiables uniquement :
+    compte administrateur, puis Stripe (si configuré et joignable), sinon la table protégée « abonnements ».
+    Retourne le niveau retenu ("gratuit", "premium" ou "pro").
+    """
+    if user is None:
+        return "gratuit"
+    st.session_state["_stripe_sync_session_ok"] = True
+    if est_compte_admin(user):
+        st.session_state.update(est_abonne_pro=True, niveau_abonnement="pro", abo_fin_periode=None)
+        return "pro"
+
+    ligne = lire_abonnement_protege(user) or {}
+    niveau = ligne.get("niveau") if ligne.get("niveau") in ("gratuit", "premium", "pro") else "gratuit"
+    fin = ligne.get("fin_programmee")
+
+    if verifier_stripe:
+        verdict = verifier_abonnement_stripe(str(user.email or "").lower(), user.id, ligne.get("stripe_customer_id"))
+        if verdict is not None:
+            client_id = verdict["client_id"] or ligne.get("stripe_customer_id")
+            if (verdict["niveau"], verdict["fin"], client_id) != (niveau, fin, ligne.get("stripe_customer_id")):
+                enregistrer_abonnement_protege(user.id, verdict["niveau"], client_id, verdict["fin"])
+            niveau, fin = verdict["niveau"], verdict["fin"]
+
+    st.session_state.update(est_abonne_pro=(niveau != "gratuit"), niveau_abonnement=niveau, abo_fin_periode=fin)
+    return niveau
 def envoyer_email_alerte(destinataire, liste_alertes):
     smtp_user = _lire_secret("SMTP_EMAIL")
     smtp_pass = _lire_secret("SMTP_PASSWORD")
@@ -647,8 +715,6 @@ def synchroniser_widgets_portefeuille(portefeuille_cloud, watchlist_courante):
     if isinstance(portefeuille_cloud, dict):
         if isinstance(portefeuille_cloud.get("_historique_ventes"), list):
             st.session_state["historique_ventes"] = list(portefeuille_cloud["_historique_ventes"])
-        if portefeuille_cloud.get("_niveau_abo") in ("gratuit", "premium", "pro"):
-            st.session_state["niveau_abonnement"] = portefeuille_cloud["_niveau_abo"]
         if "_div_encaisses_cumul" in portefeuille_cloud:
             st.session_state["dividendes_encaisses_cumul"] = float(portefeuille_cloud.get("_div_encaisses_cumul", 0.0))
         # Restauration anti-triche (F5) du quota IA journalier depuis le Cloud
@@ -693,8 +759,8 @@ def sauvegarder_dans_cloud():
             watchlist_actuelle = st.session_state.get("watchlist", WATCHLIST_DEFAUT)
             date_du_jour = datetime.now().strftime("%Y-%m-%d")
 
+            # Copie indicative du niveau établi par etablir_niveau_abonnement() : n'est plus lue pour donner des droits
             est_pro_val = True if est_compte_admin(st.session_state["user"]) else bool(st.session_state.get("est_abonne_pro", False))
-            st.session_state["est_abonne_pro"] = est_pro_val
 
             hist_ventes_actuel = list(st.session_state.get("historique_ventes", []))
 
@@ -708,8 +774,6 @@ def sauvegarder_dans_cloud():
                             if isinstance(pf_ex.get("_historique_ventes"), list):
                                 hist_ventes_actuel = list(pf_ex["_historique_ventes"])
                                 st.session_state["historique_ventes"] = hist_ventes_actuel
-                            if pf_ex.get("_niveau_abo") in ("premium", "pro") and st.session_state.get("niveau_abonnement") == "gratuit":
-                                st.session_state["niveau_abonnement"] = pf_ex["_niveau_abo"]
                             q_str_ex = str(pf_ex.get("_quota_ia", ""))
                             if "|" in q_str_ex:
                                 q_d_ex, q_n_ex = q_str_ex.split("|", 1)
@@ -718,11 +782,13 @@ def sauvegarder_dans_cloud():
                 except Exception:
                     pass
 
-            niv_abo_sauve = "pro" if est_compte_admin(st.session_state["user"]) else str(st.session_state.get("niveau_abonnement", "pro" if est_pro_val else "gratuit"))
             pf_a_sauver = dict(st.session_state.get("portefeuille", {}))
+            # Anciennes données d'abonnement : elles vivent désormais dans la table protégée « abonnements »
+            for cle_obsolete in ("_niveau_abo", "_stripe_customer_id"):
+                pf_a_sauver.pop(cle_obsolete, None)
+                st.session_state["portefeuille"].pop(cle_obsolete, None)
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
             pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
-            pf_a_sauver["_niveau_abo"] = niv_abo_sauve
             if pf_a_sauver.get("_alertes_auto"):
                 try:
                     res_al = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
@@ -735,7 +801,6 @@ def sauvegarder_dans_cloud():
             pf_a_sauver["_div_encaisses_cumul"] = round(float(st.session_state.get("dividendes_encaisses_cumul", pf_a_sauver.get("_div_encaisses_cumul", 0.0))), 2)
             st.session_state["portefeuille"]["_historique_ventes"] = hist_ventes_actuel
             st.session_state["portefeuille"]["_quota_ia"] = pf_a_sauver["_quota_ia"]
-            st.session_state["portefeuille"]["_niveau_abo"] = niv_abo_sauve
             st.session_state["portefeuille"]["_div_encaisses_cumul"] = pf_a_sauver["_div_encaisses_cumul"]
 
             payload = {
@@ -829,8 +894,6 @@ else:
                 # personne n'est connecté et le portefeuille de démonstration ne peut pas écraser les données du Cloud.
                 if res is not None and getattr(res, "user", None) is not None:
                   try:
-                    email_connecte = str(res.user.email).lower()
-
                     data = supabase.table("user_data").select("*").eq("user_id", res.user.id).execute()
                     st.session_state["user"] = res.user
                     if data.data:
@@ -842,23 +905,10 @@ else:
                         st.session_state["portefeuille"] = portefeuille_cloud
                         st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
 
-                        est_pro_bdd = bool(profil.get("est_abonne_pro", False))
-                        if est_compte_admin(res.user):
-                            est_pro_bdd = True
-                            st.session_state["niveau_abonnement"] = "pro"
-                        elif not est_pro_bdd and verifier_abonnement_stripe(email_connecte, res.user.id):
-                            est_pro_bdd = True
-                            supabase.table("user_data").update({"est_abonne_pro": True}).eq("user_id", str(res.user.id)).execute()
-                        elif est_pro_bdd:
-                            abo_stocke = portefeuille_cloud.get("_niveau_abo") if isinstance(portefeuille_cloud, dict) else None
-                            st.session_state["niveau_abonnement"] = abo_stocke if abo_stocke in ("premium", "pro") else "pro"
-
-                        st.session_state["est_abonne_pro"] = est_pro_bdd
                         synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
+                        etablir_niveau_abonnement(res.user)
                     else:
-                        est_adm = est_compte_admin(res.user)
-                        st.session_state["est_abonne_pro"] = est_adm
-                        st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
+                        etablir_niveau_abonnement(res.user)
                         sauvegarder_dans_cloud()
                     st.rerun()
                   except Exception:
@@ -884,9 +934,7 @@ else:
                         st.session_state["user"] = res.user
                         st.session_state["watchlist"] = WATCHLIST_DEFAUT.copy()
                         st.session_state["portefeuille"] = PORTEFEUILLE_DEFAUT.copy()
-                        est_adm = est_compte_admin(res.user)
-                        st.session_state["est_abonne_pro"] = est_adm
-                        st.session_state["niveau_abonnement"] = "pro" if est_adm else "gratuit"
+                        etablir_niveau_abonnement(res.user)
                         sauvegarder_dans_cloud()
                         st.sidebar.success("Compte créé avec succès !")
                         st.rerun()
@@ -918,11 +966,8 @@ else:
 
         param_paiement = str(st.query_params.get("paiement", "")).lower()
         if param_paiement in ("succes", "premium", "pro"):
-            if verifier_abonnement_stripe(email_courant, st.session_state["user"].id):
-                st.session_state["est_abonne_pro"] = True
-                # Le palier (premium / pro) est celui constaté sur Stripe, jamais celui indiqué dans l'URL
-                if isinstance(st.session_state.get("portefeuille"), dict):
-                    st.session_state["portefeuille"]["_niveau_abo"] = st.session_state["niveau_abonnement"]
+            # Le palier (premium / pro) est celui constaté sur Stripe, jamais celui indiqué dans l'URL
+            if etablir_niveau_abonnement(st.session_state["user"]) in ("premium", "pro"):
                 sauvegarder_dans_cloud()
                 st.query_params.clear()
                 st.balloons()
@@ -941,8 +986,8 @@ else:
                     portefeuille_cloud = pf_raw if pf_raw is not None else PORTEFEUILLE_DEFAUT.copy()
                     st.session_state["portefeuille"] = portefeuille_cloud
                     st.session_state["budget_dca"] = float(profil.get("budget_dca") or 450.0)
-                    st.session_state["est_abonne_pro"] = True if est_admin_connecte else bool(profil.get("est_abonne_pro", False))
                     synchroniser_widgets_portefeuille(portefeuille_cloud, st.session_state["watchlist"])
+                    etablir_niveau_abonnement(st.session_state["user"], verifier_stripe=False)
                     st.sidebar.success("✅ Données synchronisées !")
                     st.rerun()
             except Exception as e:
@@ -1478,27 +1523,9 @@ est_admin = est_compte_admin(st.session_state.get("user"))
 # Synchronisation automatique Stripe (détecte les désabonnements et les changements 4,90€ <-> 8,90€)
 if st.session_state.get("user") is not None and not est_admin:
     if not st.session_state.get("_stripe_sync_session_ok", False):
-        email_verif = str(st.session_state["user"].email).lower()
-        etat_stripe = verifier_abonnement_stripe(email_verif, st.session_state["user"].id)
-        st.session_state["_stripe_sync_session_ok"] = True
-
-        if etat_stripe is True:
-            niv_detecte = st.session_state.get("niveau_abonnement", "pro")
-            if not st.session_state.get("est_abonne_pro", False) or st.session_state.get("portefeuille", {}).get("_niveau_abo") != niv_detecte:
-                st.session_state["est_abonne_pro"] = True
-                if isinstance(st.session_state.get("portefeuille"), dict):
-                    st.session_state["portefeuille"]["_niveau_abo"] = niv_detecte
-                sauvegarder_dans_cloud()
-        elif etat_stripe is False:
-            # L'utilisateur n'a plus d'abonnement actif sur Stripe -> Rétrogradation automatique en Gratuit
-            abo_actuel_pf = st.session_state.get("portefeuille", {}).get("_niveau_abo", "gratuit") if isinstance(st.session_state.get("portefeuille"), dict) else "gratuit"
-            if st.session_state.get("est_abonne_pro", False) or abo_actuel_pf in ("premium", "pro"):
-                st.session_state["est_abonne_pro"] = False
-                st.session_state["niveau_abonnement"] = "gratuit"
-                if isinstance(st.session_state.get("portefeuille"), dict):
-                    st.session_state["portefeuille"]["_niveau_abo"] = "gratuit"
-                sauvegarder_dans_cloud()
-                st.sidebar.info("ℹ️ Votre abonnement est arrivé à échéance. Votre compte est repassé en forfait Gratuit.")
+        niveau_avant = st.session_state.get("niveau_abonnement", "gratuit") if st.session_state.get("est_abonne_pro") else "gratuit"
+        if etablir_niveau_abonnement(st.session_state["user"]) == "gratuit" and niveau_avant in ("premium", "pro"):
+            st.sidebar.info("ℹ️ Votre abonnement est arrivé à échéance. Votre compte est repassé en forfait Gratuit.")
 
 choix_simu_admin = "👑 Vue Pro Max (8,90 €)"
 if est_admin:
@@ -1511,12 +1538,18 @@ if est_admin:
         )
         if supabase:
             try:
-                res_users = supabase.table("user_data").select("user_id, email, est_abonne_pro").execute()
+                res_users = supabase.table("user_data").select("user_id").execute()
                 liste_u = res_users.data if res_users.data else []
-                nb_payants = sum(1 for u in liste_u if u.get("est_abonne_pro"))
+                res_abos = supabase.table("abonnements").select("niveau").execute()
+                nb_payants = sum(1 for a in (res_abos.data or []) if a.get("niveau") in ("premium", "pro"))
                 st.caption(f"👥 **{len(liste_u)} inscrit(s)** | 💎 **{nb_payants} Abonné(s) actif(s)**")
             except Exception:
                 pass
+            if init_supabase_serveur() is None:
+                st.warning(
+                    "Secret `SUPABASE_SERVICE_KEY` absent : les abonnements vérifiés sur Stripe ne peuvent pas être "
+                    "enregistrés dans la table protégée (ils restent valables le temps de la session)."
+                )
 
 if est_admin:
     if "Gratuit" in choix_simu_admin:
@@ -1526,15 +1559,9 @@ if est_admin:
     else:
         niveau_acces = "pro"
 else:
-    pf_courant_abo = st.session_state.get("portefeuille", {})
-    abo_cloud = pf_courant_abo.get("_niveau_abo") if isinstance(pf_courant_abo, dict) else None
-    if st.session_state.get("est_abonne_pro", False):
-        if st.session_state.get("niveau_abonnement") in ("premium", "pro"):
-            niveau_acces = st.session_state["niveau_abonnement"]
-        elif abo_cloud in ("premium", "pro"):
-            niveau_acces = abo_cloud
-        else:
-            niveau_acces = "pro"
+    # Niveau fixé uniquement par etablir_niveau_abonnement() (Stripe ou table protégée), jamais par le portefeuille
+    if st.session_state.get("est_abonne_pro", False) and st.session_state.get("niveau_abonnement") in ("premium", "pro"):
+        niveau_acces = st.session_state["niveau_abonnement"]
     else:
         niveau_acces = "gratuit"
 

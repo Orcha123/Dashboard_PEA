@@ -20,6 +20,7 @@ sur Streamlit Cloud. Aucun n'est obligatoire pour démarrer.
 | Secret | Rôle |
 | --- | --- |
 | `SUPABASE_URL`, `SUPABASE_KEY` | Comptes utilisateurs et sauvegarde cloud |
+| `SUPABASE_SERVICE_KEY` | Clé `service_role` : seule autorisée à écrire la table protégée `abonnements` (voir plus bas) |
 | `ADMIN_USER_ID` | UUID Supabase du compte administrateur (recommandé) |
 | `ADMIN_EMAIL` | E-mail du compte administrateur, utilisé si `ADMIN_USER_ID` est absent |
 | `CONTACT_EMAIL` | Adresse de contact des mentions légales (par défaut : `ADMIN_EMAIL`) |
@@ -33,9 +34,16 @@ Aucune adresse e-mail ni clé n'est écrite dans le code : tout passe par ces se
 
 ## Base Supabase
 
-Deux tables : `user_data` (une ligne par compte : watchlist, portefeuille, budget, abonnement) et
-`portfolio_history` (un snapshot par jour). Activez la sécurité par ligne (RLS) sur les deux, avec une règle
-limitant chaque utilisateur à ses propres lignes.
+Trois tables, toutes avec la sécurité par ligne (RLS) activée :
+
+- `user_data` : une ligne par compte (watchlist, portefeuille, budget). Chaque utilisateur lit et modifie sa ligne.
+- `portfolio_history` : un snapshot par jour et par compte. Chaque utilisateur lit et modifie les siens.
+- `abonnements` : le niveau d'abonnement vérifié sur Stripe. Chaque utilisateur peut **lire** sa ligne, mais
+  **personne ne peut l'écrire depuis l'application** : seule la clé `service_role` le peut, après vérification
+  Stripe. Un utilisateur ne peut donc plus se déclarer Premium ou Pro lui-même. Script de création :
+  `supabase/abonnements.sql`.
+
+Ne créez jamais de règle RLS avec la condition `true` : elle ouvrirait la table à tout le monde.
 
 ## Fraîcheur des cours
 
@@ -56,7 +64,7 @@ Centre d'Alertes dès qu'une valeur de leur radar passe sous son prix cible (une
 | Secret GitHub | Rôle |
 | --- | --- |
 | `SUPABASE_URL` | Même valeur que dans Streamlit |
-| `SUPABASE_SERVICE_KEY` | Clé `service_role` de Supabase (*Project Settings > API*). Elle donne accès à tous les comptes : ne la mettez que dans les secrets GitHub, jamais dans le code ni dans Streamlit |
+| `SUPABASE_SERVICE_KEY` | Clé `service_role` de Supabase (*Project Settings > API*). Elle donne accès à tous les comptes : uniquement dans les secrets (GitHub et Streamlit), jamais dans le code ni dans un fichier du dépôt |
 | `SMTP_EMAIL`, `SMTP_PASSWORD` | Compte Gmail d'envoi et son mot de passe d'application |
 
 Variable facultative `APP_URL` (onglet *Variables*) : adresse de l'application, ajoutée en bouton dans l'e-mail.
