@@ -3100,12 +3100,102 @@ with onglet_portefeuille:
         sauvegarder_dans_cloud()
         st.session_state["_notif_journal"] = ("ok", f"🔄 Achat annulé : la ligne {nom_action} est revenue à son état précédent.")
 
+    def _lire_date(valeur):
+        texte_date = str(valeur or "").strip()
+        if re.match(r"^\d{4}-\d{2}-\d{2}", texte_date):
+            return pd.to_datetime(texte_date[:10], format="%Y-%m-%d", errors="coerce")
+        return pd.to_datetime(texte_date, dayfirst=True, errors="coerce")
+
+    def _analyser_operations(operations, taux_dollar):
+        """
+        Contrôle des opérations lues dans un fichier CSV ou par l'IA. Chaque opération est un dict
+        {date, libelle, qte, prix, frais, sens}. Renvoie (achats importables, aperçu ligne par ligne).
+        """
+        journal_actuel = st.session_state["portefeuille"].get("_journal_achats")
+        journal_actuel = journal_actuel if isinstance(journal_actuel, list) else []
+        signatures = {f"{e.get('date')}|{e.get('action')}|{int(e.get('qte', 0))}|{float(e.get('prix', 0)):.4f}" for e in journal_actuel}
+        lignes_valides, apercu = [], []
+        for operation in operations:
+            libelle = str(operation.get("libelle", "") or "")
+            date_lue = _lire_date(operation.get("date"))
+            qte_lue = _nombre_lu(operation.get("qte"))
+            prix_lu = _nombre_lu(operation.get("prix"))
+            frais_lus = _nombre_lu(operation.get("frais")) or 0.0
+            sens_lu = _normaliser(operation.get("sens", "") or "")
+            action_lue = _reconnaitre_action(libelle)
+            if any(m in sens_lu for m in ("vente", "sell", "cession")):
+                statut = "Ignorée : vente (à saisir dans l'onglet Arbitrages)"
+            elif pd.isna(date_lue) or not qte_lue or not prix_lu or prix_lu <= 0:
+                statut = "Ignorée : date, quantité ou prix illisible"
+            elif action_lue is None:
+                statut = "Ignorée : action non reconnue (ajoutez-la d'abord à votre radar)"
+            elif date_lue.date() > datetime.now().date():
+                statut = "Ignorée : date dans le futur"
+            else:
+                ligne = {
+                    "date": date_lue.date().isoformat(), "action": action_lue, "qte": int(round(abs(qte_lue))),
+                    "prix": float(prix_lu), "frais": abs(float(frais_lus)), "taux": float(taux_dollar),
+                }
+                signature = f"{ligne['date']}|{ligne['action']}|{ligne['qte']}|{ligne['prix']:.4f}"
+                if ligne["qte"] <= 0:
+                    statut = "Ignorée : quantité nulle"
+                elif signature in signatures:
+                    statut = "Ignorée : déjà dans le journal"
+                else:
+                    signatures.add(signature)
+                    lignes_valides.append(ligne)
+                    statut = "✅ À importer"
+            apercu.append({
+                "Date": date_lue.strftime("%d/%m/%Y") if not pd.isna(date_lue) else "?",
+                "Valeur lue": libelle,
+                "Action reconnue": action_lue or "—",
+                "Quantité": qte_lue,
+                "Prix": prix_lu,
+                "Statut": statut,
+            })
+        return lignes_valides, apercu
+
+    def _extraire_json_gemini(parties):
+        """Envoie un texte ou une image à Gemini et renvoie (liste JSON extraite, message d'erreur éventuel)."""
+        cle_gemini_journal = next((v for v in (_lire_secret(n) for n in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY")) if v), "")
+        if not cle_gemini_journal:
+            return None, "⚠️ Clé `GEMINI_API_KEY` absente de vos Secrets Streamlit."
+        corps_requete = json.dumps({"contents": [{"parts": parties}]}).encode("utf-8")
+        for modele in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"):
+            try:
+                requete = urllib.request.Request(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{modele}:generateContent?key={urllib.parse.quote(cle_gemini_journal)}",
+                    data=corps_requete, headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(requete, timeout=40) as reponse:
+                    texte_ia = json.loads(reponse.read().decode("utf-8"))["candidates"][0]["content"]["parts"][0]["text"]
+                debut, fin = texte_ia.find("["), texte_ia.rfind("]")
+                if debut != -1 and fin > debut:
+                    donnees = json.loads(texte_ia[debut:fin + 1])
+                    if isinstance(donnees, list):
+                        return donnees, None
+            except Exception:
+                continue
+        return None, "L'IA n'a pas pu lire cet historique. Réessayez avec une capture plus nette, ou copiez-collez le texte."
+
+    CONSIGNE_HISTORIQUE_IA = (
+        "Extrais chaque opération d'achat ou de vente d'actions ou d'ETF de cet historique de PEA ou de compte-titres. "
+        "Réponds UNIQUEMENT avec un tableau JSON valide de la forme : "
+        '[{"date": "2025-03-15", "nom": "Air Liquide", "sens": "achat", "qte": 5, "prix": 160.50, "frais": 1.95}]. '
+        "date = date d'exécution au format AAAA-MM-JJ ; sens = achat ou vente ; qte = nombre de titres ; "
+        "prix = prix unitaire d'exécution ; frais = frais de courtage en euros (0 s'ils ne sont pas indiqués). "
+        "Ignore les dividendes, versements, virements, taxes et droits de garde. "
+        "Utilise les noms standards si tu reconnais l'entreprise (ex : TotalEnergies, Air Liquide, AXA, LVMH, Sanofi, "
+        "Engie, Vinci, BNP Paribas, Schneider Electric, Microsoft, Apple, Realty Income)."
+    )
+
     def _importer_achats(lignes_a_importer):
         for ligne in sorted(lignes_a_importer, key=lambda l: l["date"]):
             appliquer_achat(ligne["action"], ligne["date"], ligne["qte"], ligne["prix"], ligne["frais"], ligne["taux"], source="import")
         sauvegarder_dans_cloud()
-        # Nouveau champ de dépôt (clé différente) : le fichier importé disparaît de l'écran
+        # Nouveaux champs de dépôt (clés différentes) : le fichier ou le texte importé disparaît de l'écran
         st.session_state["_compteur_import_achats"] = int(st.session_state.get("_compteur_import_achats", 0)) + 1
+        st.session_state.pop("_operations_ia", None)
         st.session_state["_notif_journal"] = ("ok", f"✅ {len(lignes_a_importer)} achat(s) importé(s). Quantités et PRU mis à jour.")
 
     def _sans_accents(texte):
@@ -3225,7 +3315,7 @@ with onglet_portefeuille:
             st.caption(
                 "Exportez l'historique de vos opérations depuis votre courtier au format CSV, puis déposez-le ici. "
                 "Indiquez quelle colonne contient quoi : seuls les achats d'actions reconnues sont importés. "
-                "Pas d'export CSV ? L'📸 Import Magique (offre Pro), plus bas, lit une capture d'écran ou un copier-coller de vos positions actuelles."
+                "Pas d'export CSV ? Utilisez l'import par l'IA juste en dessous (offre Pro)."
             )
             fichier_achats = st.file_uploader("Fichier CSV des opérations", type=["csv", "txt"], key=f"up_csv_achats_{st.session_state.get('_compteur_import_achats', 0)}")
             if fichier_achats is not None:
@@ -3267,54 +3357,86 @@ with onglet_portefeuille:
                     if "(aucune)" in (col_date, col_valeur, col_qte, col_prix):
                         st.info("Indiquez au minimum les colonnes Date, Valeur, Quantité et Prix unitaire.")
                     else:
-                        signatures_existantes = {
-                            f"{e.get('date')}|{e.get('action')}|{int(e.get('qte', 0))}|{float(e.get('prix', 0)):.4f}" for e in journal_achats
-                        }
-                        lignes_valides, apercu_import = [], []
-                        for _, rangee in tableau_csv.iterrows():
-                            libelle = str(rangee.get(col_valeur, "") or "")
-                            date_lue = pd.to_datetime(rangee.get(col_date), dayfirst=True, errors="coerce")
-                            qte_lue = _nombre_lu(rangee.get(col_qte))
-                            prix_lu = _nombre_lu(rangee.get(col_prix))
-                            frais_lus = _nombre_lu(rangee.get(col_frais)) if col_frais != "(aucune)" else 0.0
-                            sens_lu = _normaliser(rangee.get(col_sens, "")) if col_sens != "(aucune)" else ""
-                            action_lue = _reconnaitre_action(libelle)
-                            if any(m in sens_lu for m in ("vente", "sell", "cession")):
-                                statut = "Ignorée : vente (à saisir dans l'onglet Arbitrages)"
-                            elif pd.isna(date_lue) or not qte_lue or not prix_lu or prix_lu <= 0:
-                                statut = "Ignorée : date, quantité ou prix illisible"
-                            elif action_lue is None:
-                                statut = "Ignorée : action non reconnue (ajoutez-la d'abord à votre radar)"
-                            elif date_lue.date() > datetime.now().date():
-                                statut = "Ignorée : date dans le futur"
-                            else:
-                                ligne = {
-                                    "date": date_lue.date().isoformat(), "action": action_lue, "qte": int(round(abs(qte_lue))),
-                                    "prix": float(prix_lu), "frais": abs(float(frais_lus or 0.0)), "taux": float(taux_import),
-                                }
-                                signature = f"{ligne['date']}|{ligne['action']}|{ligne['qte']}|{ligne['prix']:.4f}"
-                                if ligne["qte"] <= 0:
-                                    statut = "Ignorée : quantité nulle"
-                                elif signature in signatures_existantes:
-                                    statut = "Ignorée : déjà dans le journal"
-                                else:
-                                    signatures_existantes.add(signature)
-                                    lignes_valides.append(ligne)
-                                    statut = "✅ À importer"
-                            apercu_import.append({
-                                "Date": date_lue.strftime("%d/%m/%Y") if not pd.isna(date_lue) else "?",
-                                "Valeur (fichier)": libelle,
-                                "Action reconnue": action_lue or "—",
-                                "Quantité": qte_lue,
-                                "Prix": prix_lu,
-                                "Statut": statut,
-                            })
+                        lignes_valides, apercu_import = _analyser_operations([
+                            {
+                                "date": rangee.get(col_date),
+                                "libelle": rangee.get(col_valeur),
+                                "qte": rangee.get(col_qte),
+                                "prix": rangee.get(col_prix),
+                                "frais": rangee.get(col_frais) if col_frais != "(aucune)" else 0.0,
+                                "sens": rangee.get(col_sens) if col_sens != "(aucune)" else "",
+                            }
+                            for _, rangee in tableau_csv.iterrows()
+                        ], taux_import)
                         st.dataframe(pd.DataFrame(apercu_import), width="stretch", hide_index=True)
                         if lignes_valides:
                             st.button(f"📥 Importer {len(lignes_valides)} achat(s)", type="primary", width="stretch",
                                       on_click=_importer_achats, args=(lignes_valides,), key="btn_importer_achats")
                         else:
                             st.warning("Aucun achat importable dans ce fichier.")
+
+        # --- IMPORT D'UN HISTORIQUE D'OPÉRATIONS PAR L'IA (CAPTURE D'ÉCRAN OU COPIER-COLLER) ---
+        st.markdown("#### 🤖 Importer un historique par capture d'écran ou copier-coller (IA Gemini)")
+        if not est_pro_max:
+            afficher_verrou_saas(
+                "Import d'un historique d'opérations par l'IA (capture d'écran ou copier-coller)",
+                "👑 Offre Pro (8,90 €/mois)",
+                "Pas d'export CSV ? L'IA lit une capture d'écran de votre historique d'opérations et remplit le journal, dates comprises."
+            )
+        else:
+            st.caption(
+                "Faites une capture d'écran de la page « Historique des opérations » ou « Mouvements » de votre courtier, "
+                "ou copiez-collez son texte. L'IA en extrait les achats datés ; vous vérifiez l'aperçu avant d'importer."
+            )
+            compteur_import = st.session_state.get("_compteur_import_achats", 0)
+            mode_historique_ia = st.radio("Source :", ["📋 Copier-coller le texte", "📸 Capture d'écran (PNG / JPG)"],
+                                          horizontal=True, key="rad_historique_ia")
+            parties_ia = None
+            if mode_historique_ia.startswith("📋"):
+                texte_historique = st.text_area(
+                    "Collez ici l'historique de vos opérations :", height=120, key=f"txt_historique_ia_{compteur_import}",
+                    placeholder="Ex. : 15/03/2025  Achat  5 AIR LIQUIDE  160,50 €  frais 1,95 €",
+                )
+                if st.button("🤖 Extraire les opérations de ce texte", key="btn_historique_ia_texte"):
+                    if texte_historique.strip():
+                        parties_ia = [{"text": f"{CONSIGNE_HISTORIQUE_IA}\n\nHistorique :\n{texte_historique}"}]
+                    else:
+                        st.warning("Collez d'abord le texte de votre historique.")
+            else:
+                image_historique = st.file_uploader("Capture d'écran de l'historique", type=["png", "jpg", "jpeg", "webp"],
+                                                    key=f"up_historique_ia_{compteur_import}")
+                if image_historique is not None and st.button("🤖 Analyser cette capture", key="btn_historique_ia_image"):
+                    import base64
+                    parties_ia = [
+                        {"text": CONSIGNE_HISTORIQUE_IA},
+                        {"inline_data": {"mime_type": image_historique.type or "image/jpeg",
+                                         "data": base64.b64encode(image_historique.getvalue()).decode("utf-8")}},
+                    ]
+            if parties_ia is not None:
+                with st.spinner("🧠 Lecture de votre historique d'opérations..."):
+                    operations_lues, erreur_lecture = _extraire_json_gemini(parties_ia)
+                if erreur_lecture:
+                    st.error(erreur_lecture)
+                else:
+                    st.session_state["_operations_ia"] = operations_lues
+
+            if st.session_state.get("_operations_ia"):
+                taux_historique_ia = st.number_input(
+                    "Taux €/$ appliqué aux achats en dollars de cet historique (1 € = ? $) :", min_value=0.0, max_value=5.0,
+                    value=round(float(TAUX_USD_EUR), 4), step=0.01, format="%.4f", key="taux_historique_ia",
+                )
+                lignes_ia, apercu_ia = _analyser_operations([
+                    {"date": o.get("date"), "libelle": o.get("nom"), "qte": o.get("qte"), "prix": o.get("prix"),
+                     "frais": o.get("frais", 0.0), "sens": o.get("sens", "")}
+                    for o in st.session_state["_operations_ia"] if isinstance(o, dict)
+                ], taux_historique_ia)
+                st.success(f"✅ {len(apercu_ia)} opération(s) lue(s), dont {len(lignes_ia)} achat(s) importable(s). Vérifiez l'aperçu avant d'importer.")
+                st.dataframe(pd.DataFrame(apercu_ia), width="stretch", hide_index=True)
+                if lignes_ia:
+                    st.button(f"📥 Importer {len(lignes_ia)} achat(s)", type="primary", width="stretch",
+                              on_click=_importer_achats, args=(lignes_ia,), key="btn_importer_historique_ia")
+                else:
+                    st.warning("Aucun achat importable dans cet historique.")
 
     portefeuille_utilisateur = st.session_state["portefeuille"]
     valeur_totale_portefeuille = 0.0
@@ -6993,7 +7115,7 @@ with st.expander(f"⚖️ Mentions Légales, CGV, Droit de Rétractation & Avert
             • Votre adresse e-mail et votre mot de passe (conservé sous forme chiffrée par Supabase, jamais lisible par l'éditeur).<br>
             • Les données que vous saisissez : actions suivies, quantités, prix de revient, prix cibles, budget, ventes, dividendes encaissés, préférences d'alertes.<br>
             • Votre niveau d'abonnement et votre identifiant client Stripe. Vos coordonnées bancaires sont traitées par Stripe uniquement et ne nous sont jamais transmises.<br>
-            • Les questions posées au coach IA, transmises avec un résumé de votre portefeuille au moment de l'analyse.<br>
+            • Les questions posées au coach IA, transmises avec un résumé de votre portefeuille au moment de l'analyse, ainsi que les captures d'écran et textes que vous soumettez aux imports par IA.<br>
             • Des données techniques de connexion (adresse IP, navigateur), traitées par nos hébergeurs pour faire fonctionner le service.<br><br>
             <b>3. Finalités et base légale</b><br>
             Ces données servent uniquement à fournir le service que vous avez demandé (suivi de portefeuille, alertes, analyses, gestion de l'abonnement) : la base légale est l'exécution du contrat. Elles ne sont ni vendues, ni louées, ni utilisées à des fins publicitaires.<br><br>
