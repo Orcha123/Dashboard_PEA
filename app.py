@@ -3044,19 +3044,41 @@ with onglet_radar:
                 if st.button("🔬 Calculer le bilan des signaux", type="primary", key="btn_bilan_signaux"):
                     st.session_state["_bilan_signaux_demande"] = True
             if st.session_state.get("_bilan_signaux_demande"):
-                valeurs_bilan = [
+                valeurs_radar_bilan = [
                     (nom_b, info_b) for nom_b, info_b in st.session_state["watchlist"].items()
                     if nom_b in actions_autorisees and isinstance(info_b, dict) and info_b.get("symbole")
                 ]
+                # Catalogue complet : toutes les actions connues (hors ETF), une seule fois par symbole
+                valeurs_catalogue_bilan, symboles_vus_bilan = [], set()
+                for nom_b, info_b in sorted(WATCHLIST_DEFAUT.items()):
+                    if (nom_b in CLES_TECHNIQUES_PF or not isinstance(info_b, dict) or not info_b.get("symbole")
+                            or "ETF" in str(info_b.get("secteur", "")) or info_b["symbole"] in symboles_vus_bilan):
+                        continue
+                    symboles_vus_bilan.add(info_b["symbole"])
+                    valeurs_catalogue_bilan.append((nom_b, info_b))
+                choix_univers_bilan = st.radio(
+                    "Valeurs étudiées :", ["Mon radar", "Tout le catalogue"], horizontal=True, key="rad_univers_bilan",
+                    help="Le catalogue complet donne beaucoup plus d'observations, donc des fourchettes plus étroites, et ne se limite "
+                         "pas aux valeurs que vous avez choisies. Le premier calcul prend plus de temps (une fois toutes les 6 heures).",
+                )
+                valeurs_bilan = valeurs_catalogue_bilan if choix_univers_bilan == "Tout le catalogue" else valeurs_radar_bilan
+                st.caption(f"{len(valeurs_bilan)} valeur(s) étudiée(s)" + (" (actions du catalogue, hors ETF)." if choix_univers_bilan == "Tout le catalogue" else " (votre radar)."))
+
+                # Téléchargement des historiques en parallèle (mis en cache 6 heures), puis rejeu valeur par valeur
+                with st.spinner("📥 Chargement des historiques de cours..."):
+                    with ThreadPoolExecutor(max_workers=6) as executeur_bilan:
+                        list(executeur_bilan.map(historique_long, sorted({info_b["symbole"] for _, info_b in valeurs_bilan})))
                 observations_bilan, valeurs_sans_historique = [], []
-                with st.spinner("🔬 Rejeu de l'algorithme sur l'historique de vos valeurs..."):
-                    for nom_b, info_b in valeurs_bilan:
-                        obs_b = bilan_signaux_symbole(info_b["symbole"], float(info_b.get("payout_ratio", 0.60)))
-                        if obs_b is None:
-                            valeurs_sans_historique.append(nom_b)
-                            continue
-                        for o in obs_b:
-                            observations_bilan.append(dict(o, action=nom_b))
+                barre_bilan = st.progress(0.0, text="🔬 Rejeu de l'algorithme sur l'historique...")
+                for rang_b, (nom_b, info_b) in enumerate(valeurs_bilan, start=1):
+                    obs_b = bilan_signaux_symbole(info_b["symbole"], float(info_b.get("payout_ratio", 0.60)))
+                    barre_bilan.progress(rang_b / max(1, len(valeurs_bilan)), text=f"🔬 Rejeu de l'algorithme : {nom_b} ({rang_b}/{len(valeurs_bilan)})")
+                    if obs_b is None:
+                        valeurs_sans_historique.append(nom_b)
+                        continue
+                    for o in obs_b:
+                        observations_bilan.append(dict(o, action=nom_b))
+                barre_bilan.empty()
 
                 if not observations_bilan:
                     st.warning("Aucun historique suffisant (au moins 3 ans de cours) n'a pu être chargé pour les valeurs de votre radar.")
@@ -3164,13 +3186,18 @@ with onglet_radar:
                         return {"moyenne": moyenne_e, "bas": moyenne_e - 1.96 * erreur_type,
                                 "haut": moyenne_e + 1.96 * erreur_type, "nombre": nombre}
 
+                    def _pt(valeur):
+                        """Écart en points avec signe, sans « -0,0 »."""
+                        arrondi = round(valeur * 100, 1)
+                        return f"{(0.0 if arrondi == 0 else arrondi):+.1f}"
+
                     def _cellule_ecart(resultat):
                         if resultat is None:
                             return "<td>—</td>"
                         couleur = "#2ecc71" if resultat["moyenne"] >= 0 else "#e74c3c"
-                        fourchette = (f"<br><span style='font-size:0.8em; opacity:0.75;'>[{resultat['bas'] * 100:+.1f} ; {resultat['haut'] * 100:+.1f}]</span>"
+                        fourchette = (f"<br><span style='font-size:0.8em; opacity:0.75;'>[{_pt(resultat['bas'])} ; {_pt(resultat['haut'])}]</span>"
                                       if resultat["bas"] is not None else "")
-                        return f"<td><b style='color:{couleur};'>{resultat['moyenne'] * 100:+.1f} pt</b>{fourchette}</td>"
+                        return f"<td><b style='color:{couleur};'>{_pt(resultat['moyenne'])} pt</b>{fourchette}</td>"
 
                     def _verdict(resultat):
                         if resultat is None or resultat["bas"] is None or resultat["nombre"] < 30:
@@ -3202,10 +3229,10 @@ with onglet_radar:
                     if v_fort_6 is None or v_fort_6["bas"] is None or v_fort_6["nombre"] < 30:
                         nb_fort_r6 = v_fort_6["nombre"] if v_fort_6 else 0
                         lecture_b = (f"Trop peu de signaux forts suivis de 6 mois d'historique ({nb_fort_r6}) pour en tirer une conclusion : "
-                                     "ajoutez des valeurs au radar ou revenez quand l'historique sera plus long.")
+                                     "choisissez « Tout le catalogue » ci-dessus, ou revenez quand l'historique sera plus long.")
                     else:
                         lecture_b = (f"Comparés à la même action, les signaux forts ont été suivis à 6 mois d'un écart moyen de "
-                                     f"{v_fort_6['moyenne'] * 100:+.1f} point(s) (fourchette à 95 % : {v_fort_6['bas'] * 100:+.1f} à {v_fort_6['haut'] * 100:+.1f}). ")
+                                     f"{_pt(v_fort_6['moyenne'])} point(s) (fourchette à 95 % : {_pt(v_fort_6['bas'])} à {_pt(v_fort_6['haut'])}). ")
                         if v_fort_6["bas"] > 0:
                             lecture_b += "Même le bas de la fourchette est positif : l'avantage est net sur cette période."
                         elif v_fort_6["haut"] < 0:
@@ -3213,8 +3240,8 @@ with onglet_radar:
                         else:
                             lecture_b += "La fourchette contient zéro : l'avantage n'est pas démontré, il peut venir du hasard."
                         if v_fort_1 is not None and v_fort_1["bas"] is not None and v_fort_1["nombre"] >= 30:
-                            lecture_b += (f" À 1 mois : {v_fort_1['moyenne'] * 100:+.1f} point(s) (fourchette {v_fort_1['bas'] * 100:+.1f} "
-                                          f"à {v_fort_1['haut'] * 100:+.1f}), " + ("avantage net." if v_fort_1["bas"] > 0 else "non démontré."))
+                            lecture_b += (f" À 1 mois : {_pt(v_fort_1['moyenne'])} point(s) (fourchette {_pt(v_fort_1['bas'])} "
+                                          f"à {_pt(v_fort_1['haut'])}), " + ("avantage net." if v_fort_1["bas"] > 0 else "non démontré."))
                     if choix_periode_bilan.startswith("Sans"):
                         lecture_b += " (Période étudiée : sans l'année 2020.)"
                     st.info(nombres_fr("📊 " + lecture_b))
@@ -3245,7 +3272,8 @@ with onglet_radar:
 
                     if st.toggle("Voir le détail par valeur", key="tog_bilan_detail"):
                         lignes_detail = []
-                        for nom_d in sorted({o["action"] for o in observations_bilan}):
+                        for nom_d in sorted({o["action"] for o in observations_bilan},
+                                            key=lambda n: (-sum(1 for o in observations_bilan if o["action"] == n and o["decision"] == categories_bilan[0]), n)):
                             obs_d = [o for o in observations_bilan if o["action"] == nom_d]
                             forts_d = [o for o in obs_d if o["decision"] == categories_bilan[0]]
                             moyenne_toutes = _moyenne(o["r6"] for o in obs_d)
@@ -3258,6 +3286,7 @@ with onglet_radar:
                                 "Perf. 6 mois après un signal fort": nombres_fr(f"{moyenne_forts * 100:+.1f} %") if moyenne_forts is not None else "—",
                                 "Perf. 6 mois, toutes dates": nombres_fr(f"{moyenne_toutes * 100:+.1f} %") if moyenne_toutes is not None else "—",
                             })
+                        st.caption("Classement : valeurs ayant reçu le plus de signaux forts en premier.")
                         st.dataframe(pd.DataFrame(lignes_detail), width="stretch", hide_index=True)
 
                     if valeurs_sans_historique:
