@@ -92,6 +92,12 @@ catalogue) et compare trois algorithmes : le score actuel du radar, le même sco
 (pas de signal fort sous la moyenne mobile à 200 jours) et un nouveau score « Tendance & Dividende » (tendance,
 momentum 12-1 mois, faible volatilité, rendement et régularité du dividende).
 
+Chaque signal y est comparé aux autres actions étudiées le même mois, avec une fourchette à 95 % qui regroupe les
+observations par mois et par action. Une première version comparait chaque action à sa propre moyenne : sur des cours
+simulés sans aucune prévisibilité, cette mesure donnait environ +1,3 point à 6 mois aux signaux forts du score actuel
+et -2,7 points à ceux du score Tendance & Dividende, un biais purement mécanique. La comparaison au même mois n'a pas
+ce défaut (détails et calibration dans `ecart_vs_autres_actions_du_mois`, `moteur_signaux.py`).
+
 Pour un test sans retouche possible, la tâche planifiée enregistre aussi, une fois par mois, les signaux des trois
 algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux_mensuels`. À créer une fois dans
 *SQL Editor* avec `supabase/signaux_mensuels.sql`. Seule la clé `service_role` peut lire et écrire cette table.

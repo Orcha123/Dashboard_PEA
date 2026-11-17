@@ -27,6 +27,7 @@ from moteur_signaux import (  # moteur de calcul partagé avec la tâche planifi
     calculer_regression_lineaire,
     rejouer_signaux,
     performance_apres,
+    ecart_vs_autres_actions_du_mois,
     ALGORITHMES_SIGNAUX,
 )
 
@@ -2828,51 +2829,10 @@ with onglet_radar:
                         "souvent signalé peut à elle seule faire paraître le signal meilleur. Les vérifications ci-dessous sont plus fiables."
                     )
 
-                    # --- VÉRIFICATIONS 2 ET 3 : CHAQUE ACTION COMPARÉE À ELLE-MÊME, AVEC UNE FOURCHETTE D'INCERTITUDE ---
-                    moyennes_par_valeur = {}
-                    for nom_v in {o["action"] for o in observations_bilan}:
-                        obs_v = [o for o in observations_bilan if o["action"] == nom_v]
-                        for cle_r in ("r1", "r3", "r6"):
-                            moyennes_par_valeur[(nom_v, cle_r)] = _moyenne(o[cle_r] for o in obs_v)
-
-                    def _indice_mois(date_iso):
-                        return int(str(date_iso)[:4]) * 12 + int(str(date_iso)[5:7]) - 1
-
-                    mois_observes = [_indice_mois(o["date"]) for o in observations_bilan]
-                    premier_mois_b, dernier_mois_b = min(mois_observes), max(mois_observes)
-
+                    # --- VÉRIFICATIONS 2 ET 3 : COMPARAISON AUX AUTRES ACTIONS DU MÊME MOIS, AVEC UNE FOURCHETTE D'INCERTITUDE ---
+                    # (voir ecart_vs_autres_actions_du_mois dans moteur_signaux.py : pourquoi ce choix, et sa calibration)
                     def _ecart_ajuste(categorie, cle_r, horizon_mois, cle_decision="decision"):
-                        """
-                        Écart moyen entre la performance après le signal et la performance moyenne de LA MÊME action, avec une
-                        fourchette à 95 %. L'incertitude tient compte de ce que les actions d'un même mois évoluent ensemble
-                        (regroupement par mois) et de ce que des périodes de plusieurs mois se chevauchent d'un mois à l'autre
-                        (estimateur de Newey-West, décalages jusqu'à l'horizon moins un mois).
-                        """
-                        ecarts = [
-                            (_indice_mois(o["date"]), o[cle_r] - moyennes_par_valeur[(o["action"], cle_r)])
-                            for o in observations_bilan
-                            if o.get(cle_decision) == categorie and o[cle_r] is not None and moyennes_par_valeur.get((o["action"], cle_r)) is not None
-                        ]
-                        if not ecarts:
-                            return None
-                        nombre = len(ecarts)
-                        moyenne_e = sum(e for _, e in ecarts) / nombre
-                        if nombre < 3:
-                            return {"moyenne": moyenne_e, "bas": None, "haut": None, "nombre": nombre}
-                        contributions = [0.0] * (dernier_mois_b - premier_mois_b + 1)
-                        for mois_e, e in ecarts:
-                            contributions[mois_e - premier_mois_b] += e - moyenne_e
-                        decalage_max = max(0, int(horizon_mois) - 1)
-
-                        def _autocovariance(decalage):
-                            return sum(contributions[t] * contributions[t - decalage] for t in range(decalage, len(contributions)))
-
-                        variance_somme = _autocovariance(0) + 2.0 * sum(
-                            (1.0 - d / (decalage_max + 1.0)) * _autocovariance(d) for d in range(1, decalage_max + 1)
-                        )
-                        erreur_type = math.sqrt(max(variance_somme, 0.0)) / nombre
-                        return {"moyenne": moyenne_e, "bas": moyenne_e - 1.96 * erreur_type,
-                                "haut": moyenne_e + 1.96 * erreur_type, "nombre": nombre}
+                        return ecart_vs_autres_actions_du_mois(observations_bilan, categorie, cle_r, horizon_mois, cle_decision)
 
                     def _pt(valeur):
                         """Écart en points avec signe, sans « -0,0 »."""
@@ -2896,13 +2856,13 @@ with onglet_radar:
                             return "<span class='b-red'>❌ Désavantage net</span>"
                         return "<span class='b-yellow'>〰️ Dans la marge d'incertitude</span>"
 
-                    st.markdown("##### 🧪 Vérification : chaque action comparée à elle-même")
+                    st.markdown("##### 🧪 Vérification : comparaison aux autres actions du même mois")
                     verifications_bilan = {c: (_ecart_ajuste(c, "r1", 1), _ecart_ajuste(c, "r6", 6)) for c in categories_bilan}
                     html_verif = (
                         "<table class='r-table'><thead><tr><th style='text-align:left;'>Signal du radar</th>"
-                        "<th>Écart vs la même action à 1 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
+                        "<th>Écart à 1 mois vs les autres actions<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
                         "<th>Lecture à 1 mois</th>"
-                        "<th>Écart vs la même action à 6 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
+                        "<th>Écart à 6 mois vs les autres actions<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
                         "<th>Lecture à 6 mois</th></tr></thead><tbody>"
                     )
                     for categorie in categories_bilan:
@@ -2911,8 +2871,15 @@ with onglet_radar:
                                        + _cellule_ecart(v6) + f"<td>{_verdict(v6)}</td></tr>")
                     html_verif += "</tbody></table>"
                     afficher_html(html_verif)
+                    st.caption(
+                        "Chaque signal est comparé aux autres actions étudiées le même mois : l'effet du marché du moment est "
+                        "neutralisé, et la question posée est celle du DCA : ce mois-ci, quelle action acheter ? Une version "
+                        "précédente comparait chaque action à sa propre moyenne ; une simulation sur des cours imprévisibles a montré "
+                        "que cette mesure flattait mécaniquement les achats après une baisse (environ +1 point à 6 mois) et pénalisait "
+                        "les signaux de tendance (environ -3 points). La mesure actuelle n'a pas ce défaut."
+                    )
 
-                    st.markdown("##### ⚖️ Comparaison des trois algorithmes (signal fort, chaque action comparée à elle-même)")
+                    st.markdown("##### ⚖️ Comparaison des trois algorithmes (signal fort, comparé aux autres actions du même mois)")
                     html_comparaison = (
                         "<table class='r-table'><thead><tr><th style='text-align:left;'>Algorithme</th><th>Signaux forts</th>"
                         "<th>Écart à 1 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
@@ -2934,7 +2901,7 @@ with onglet_radar:
                         "ci-dessous, permettra de les juger sans aucun ajustement possible."
                     )
 
-                    # Lecture factuelle, fondée sur la comparaison de chaque action à elle-même
+                    # Lecture factuelle, fondée sur la comparaison aux autres actions du même mois
                     v_fort_1, v_fort_6 = verifications_bilan[categories_bilan[0]]
                     if v_fort_6 is None or v_fort_6["bas"] is None or v_fort_6["nombre"] < 30:
                         nb_fort_r6 = v_fort_6["nombre"] if v_fort_6 else 0
@@ -2942,7 +2909,7 @@ with onglet_radar:
                                      + ("cet algorithme en émet trop peu, même sur tout le catalogue." if choix_univers_bilan == "Tout le catalogue"
                                         else "choisissez « Tout le catalogue » ci-dessus, ou revenez quand l'historique sera plus long."))
                     else:
-                        lecture_b = (f"Comparés à la même action, les signaux forts ont été suivis à 6 mois d'un écart moyen de "
+                        lecture_b = (f"Comparés aux autres actions du même mois, les signaux forts ont été suivis à 6 mois d'un écart moyen de "
                                      f"{_pt(v_fort_6['moyenne'])} point(s) (fourchette à 95 % : {_pt(v_fort_6['bas'])} à {_pt(v_fort_6['haut'])}). ")
                         if v_fort_6["bas"] > 0:
                             lecture_b += "Même le bas de la fourchette est positif : l'avantage est net sur cette période."
