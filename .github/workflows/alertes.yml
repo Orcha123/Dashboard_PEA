@@ -1,0 +1,28 @@
+name: Alertes prix cibles Boursy
+
+on:
+  schedule:
+    # Du lundi au vendredi à 16h40 UTC : après la clôture de Paris (17h40 en hiver, 18h40 en été)
+    - cron: "40 16 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  alertes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Envoyer les alertes
+        run: python alertes_quotidiennes.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          APP_URL: ${{ vars.APP_URL }}
