@@ -57,6 +57,15 @@ Deux réglages dans Supabase, *Authentication* :
 L'application lit alors le jeton dans l'adresse et affiche le formulaire de nouveau mot de passe. Le lien par défaut
 de Supabase place le jeton après un `#`, que le serveur Streamlit ne peut pas lire.
 
+## DCA guidé par l'allocation cible
+
+Dans l'onglet Radar, chacun fixe la part que chaque ligne devrait représenter dans son portefeuille (« Définir mon
+allocation cible » ; par défaut, parts égales entre les lignes détenues). Chaque mois, l'enveloppe DCA va d'abord aux
+lignes les plus en retard sur leur cible, en actions entières, sans jamais rien vendre ; ce qui ne peut pas être
+investi reste en liquidités pour le mois suivant. Les poids sont enregistrés dans le portefeuille (clé technique
+`_allocation_cible`). Le calcul (`allocation_dca.py`) n'utilise aucune prévision : le radar est affiché à titre
+d'information, puisque le bilan des signaux n'a pas montré d'avantage démontré.
+
 ## Fraîcheur des cours
 
 Les cours viennent de Yahoo Finance et sont relus toutes les 5 minutes pendant les heures de bourse (du lundi au
@@ -108,9 +117,11 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | --- | --- |
 | `app.py` | Application Streamlit |
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
-| `catalogue_valeurs.py` | Catalogue des valeurs suivies |
+| `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
+| `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
+| `tests/` | Tests automatiques : `python tests/test_allocation_dca.py` (ou `python -m pytest tests`) |
 
 ## Apparence
 

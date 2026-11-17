@@ -27,6 +27,8 @@ from datetime import date, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from catalogue_valeurs import symbole_a_jour  # symboles Yahoo changés (ex. FDJ.PA -> FDJU.PA)
+
 DELAI_RELANCE_JOURS = 7
 CLES_TECHNIQUES = (
     "Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul",
@@ -109,7 +111,7 @@ def valeurs_sous_cible(watchlist):
             continue
         if cible <= 0:
             continue
-        prix = cours_actuel(info["symbole"])
+        prix = cours_actuel(symbole_a_jour(info["symbole"]))
         if prix is not None and prix <= cible:
             trouvees.append({
                 "nom": nom,
