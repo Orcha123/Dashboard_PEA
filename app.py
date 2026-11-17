@@ -15,6 +15,14 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 from supabase import create_client
+import importlib
+import catalogue_valeurs
+import moteur_signaux
+# Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
+# chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
+# Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
+importlib.reload(catalogue_valeurs)
+importlib.reload(moteur_signaux)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE  # catalogue partagé avec la tâche planifiée
 from moteur_signaux import (  # moteur de calcul partagé avec la tâche planifiée
     calculer_rsi,
