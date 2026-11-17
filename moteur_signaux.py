@@ -326,3 +326,80 @@ def rejouer_signaux(historique, payout_r, fenetre=756, pas=21):
         })
         observations.append(signaux)
     return observations
+
+
+# ==============================================================================
+# MESURE DE L'AVANTAGE D'UN SIGNAL DANS LE BILAN
+# ==============================================================================
+def indice_mois(date_iso):
+    """Numéro de mois continu (année * 12 + mois) d'une date ISO."""
+    return int(str(date_iso)[:4]) * 12 + int(str(date_iso)[5:7]) - 1
+
+
+def _variance_newey_west(series, decalage_max):
+    """
+    Somme, sur plusieurs séries {mois: contribution}, de la variance de Newey-West de leur total : les contributions
+    de mois proches (jusqu'à decalage_max mois d'écart) sont corrélées, avec un poids dégressif (Bartlett).
+    """
+    total = 0.0
+    for serie in series:
+        for mois, contribution in serie.items():
+            total += contribution * contribution
+            for decalage in range(1, decalage_max + 1):
+                voisin = serie.get(mois - decalage)
+                if voisin is not None:
+                    total += 2.0 * (1.0 - decalage / (decalage_max + 1.0)) * contribution * voisin
+    return total
+
+
+def ecart_vs_autres_actions_du_mois(observations, categorie, cle_r, horizon_mois, cle_decision="decision"):
+    """
+    Écart moyen entre la performance d'une action après un signal et celle des AUTRES actions étudiées le même mois,
+    avec une fourchette à 95 %. Renvoie {"moyenne", "bas", "haut", "nombre"} ou None.
+
+    Pourquoi les autres actions du même mois, et non la même action à d'autres dates : comparer une action à sa propre
+    moyenne sur la période avantage mécaniquement les signaux qui achètent après une baisse et pénalise ceux qui suivent
+    la tendance, même quand aucun signal ne prédit rien (la moyenne de l'action contient les hausses et les baisses qui
+    ont fait naître le signal). Sur des cours simulés sans aucune prévisibilité, l'écart à 6 mois des signaux forts
+    ressortait à environ +1,3 point pour le score actuel et -2,7 points pour le score Tendance & Dividende ; il est
+    nul avec la comparaison au même mois, qui répond en outre à la question du DCA : ce mois-ci, quelle action acheter ?
+
+    Fourchette : regroupement par mois (les actions d'un même mois évoluent ensemble, et des périodes de plusieurs mois
+    se chevauchent d'un mois à l'autre : Newey-West jusqu'à l'horizon moins un mois) et par action (une même action
+    peut recevoir le signal pendant de longs mois), selon Thompson (2011). Calibrée par simulation sur le moteur réel :
+    la fourchette contient le vrai écart dans 94 à 98 % des cas, sur 14 comme sur 120 actions.
+    """
+    sommes_mois = {}
+    for o in observations:
+        if o.get(cle_r) is not None:
+            mois = indice_mois(o["date"])
+            somme, nombre = sommes_mois.get(mois, (0.0, 0))
+            sommes_mois[mois] = (somme + o[cle_r], nombre + 1)
+    ecarts = []
+    for o in observations:
+        if o.get(cle_decision) != categorie or o.get(cle_r) is None:
+            continue
+        mois = indice_mois(o["date"])
+        somme, nombre = sommes_mois[mois]
+        if nombre < 2:
+            continue  # aucune autre action ce mois-là : pas de comparaison possible
+        ecarts.append((mois, o.get("action"), o[cle_r] - (somme - o[cle_r]) / (nombre - 1)))
+    if not ecarts:
+        return None
+    nombre = len(ecarts)
+    moyenne = sum(e for _, _, e in ecarts) / nombre
+    if nombre < 3:
+        return {"moyenne": moyenne, "bas": None, "haut": None, "nombre": nombre}
+    par_mois, par_action, par_action_et_mois = {}, {}, {}
+    for mois, action, e in ecarts:
+        par_mois[mois] = par_mois.get(mois, 0.0) + e - moyenne
+        par_action[action] = par_action.get(action, 0.0) + e - moyenne
+        serie_action = par_action_et_mois.setdefault(action, {})
+        serie_action[mois] = serie_action.get(mois, 0.0) + e - moyenne
+    decalage_max = max(0, int(horizon_mois) - 1)
+    variance_mois = _variance_newey_west([par_mois], decalage_max)
+    variance_action = sum(c * c for c in par_action.values())
+    variance_commune = _variance_newey_west(par_action_et_mois.values(), decalage_max)
+    variance = max(variance_mois + variance_action - variance_commune, variance_mois, variance_action)
+    erreur_type = math.sqrt(max(variance, 0.0)) / nombre
+    return {"moyenne": moyenne, "bas": moyenne - 1.96 * erreur_type, "haut": moyenne + 1.96 * erreur_type, "nombre": nombre}
