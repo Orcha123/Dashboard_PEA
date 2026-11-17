@@ -19,14 +19,25 @@ import importlib
 import catalogue_valeurs
 import moteur_signaux
 import allocation_dca
+import resume_mensuel
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
 # Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
 importlib.reload(catalogue_valeurs)
 importlib.reload(moteur_signaux)
 importlib.reload(allocation_dca)
+importlib.reload(resume_mensuel)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
-from allocation_dca import calculer_achat_du_mois, normaliser_poids  # DCA guidé par l'allocation cible
+from allocation_dca import calculer_achat_du_mois, normaliser_poids, preparer_lignes_dca, statut_achat  # DCA guidé par l'allocation cible
+from resume_mensuel import (  # résumé mensuel du DCA par e-mail, partagé avec la tâche planifiée
+    composer_email_resume,
+    construire_resume,
+    date_en_toutes_lettres,
+    fiches_valeurs,
+    jour_dca_valide,
+    prochaine_date_dca,
+    JOURS_AVANT_ACHAT,
+)
 from moteur_signaux import (  # moteur de calcul partagé avec la tâche planifiée
     calculer_rsi,
     calculer_stochastique,
@@ -51,7 +62,7 @@ st.set_page_config(
     layout="wide",
 )
 
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye")
 
 
 def _lire_secret(nom, defaut=""):
@@ -562,6 +573,21 @@ def envoyer_email_alerte(destinataire, liste_alertes):
     except Exception as e:
         return False, f"Erreur SMTP : {e}"
 
+def envoyer_apercu_resume_mensuel(destinataire, resume):
+    """Envoie tout de suite le résumé mensuel (marqué « Aperçu ») : le vrai envoi du mois n'est pas touché."""
+    smtp_user = _lire_secret("SMTP_EMAIL")
+    smtp_pass = _lire_secret("SMTP_PASSWORD")
+    if not smtp_user or not smtp_pass:
+        return False, "Pour activer l'envoi d'emails, ajoutez `SMTP_EMAIL` et `SMTP_PASSWORD` dans vos Secrets Streamlit."
+    try:
+        message = composer_email_resume(resume, smtp_user, destinataire, _lire_secret("APP_URL") or "https://boursy.streamlit.app", apercu=True)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, destinataire, message.as_string())
+        return True, f"✅ Aperçu du résumé envoyé à {destinataire}."
+    except Exception as e:
+        return False, f"Erreur SMTP : {e}"
+
 # ==============================================================================
 # TAUX DE CHANGE & MÉTÉO DES MARCHÉS (CAC 40, S&P 500, VIX)
 # ==============================================================================
@@ -871,13 +897,17 @@ def sauvegarder_dans_cloud():
                 st.session_state["portefeuille"].pop(cle_obsolete, None)
             pf_a_sauver["_historique_ventes"] = hist_ventes_actuel
             pf_a_sauver["_quota_ia"] = f"{date_du_jour}|{int(st.session_state.get('quota_ia_utilise', 0))}"
-            if pf_a_sauver.get("_alertes_auto"):
+            if pf_a_sauver.get("_alertes_auto") or pf_a_sauver.get("_resume_mensuel"):
+                # Suivi écrit chaque soir par la tâche planifiée : repris de la base pour ne pas l'écraser
                 try:
                     res_al = supabase.table("user_data").select("portefeuille").eq("user_id", user_id_str).execute()
                     pf_al = (res_al.data[0].get("portefeuille") or {}) if res_al.data else {}
                     if isinstance(pf_al, dict) and isinstance(pf_al.get("_alertes_envoyees"), list):
                         pf_a_sauver["_alertes_envoyees"] = pf_al["_alertes_envoyees"]
                         st.session_state["portefeuille"]["_alertes_envoyees"] = pf_al["_alertes_envoyees"]
+                    if isinstance(pf_al, dict) and isinstance(pf_al.get("_resume_envoye"), str):
+                        pf_a_sauver["_resume_envoye"] = pf_al["_resume_envoye"]
+                        st.session_state["portefeuille"]["_resume_envoye"] = pf_al["_resume_envoye"]
                 except Exception:
                     pass
             pf_a_sauver["_div_encaisses_cumul"] = round(float(st.session_state.get("dividendes_encaisses_cumul", pf_a_sauver.get("_div_encaisses_cumul", 0.0))), 2)
@@ -2112,56 +2142,17 @@ candidats_tries = sorted(resultats_analysed, key=lambda x: x["score"], reverse=T
 # Remplace l'ancienne répartition sur les 2 meilleurs scores du radar, dont le bilan des signaux n'a pas montré
 # d'avantage. Calcul dans allocation_dca.py.
 # ==============================================================================
-def lire_allocation_cible(portefeuille):
-    """Poids cibles enregistrés par l'utilisateur ({nom: poids}) ; {} s'il n'en a pas défini."""
-    cibles = {}
-    for entree in (portefeuille or {}).get("_allocation_cible") or []:
-        if isinstance(entree, dict) and entree.get("nom"):
-            try:
-                poids_entree = float(entree.get("poids") or 0.0)
-            except (TypeError, ValueError):
-                continue
-            if poids_entree > 0:
-                cibles[str(entree["nom"])] = poids_entree
-    return cibles
-
-
+# Lignes, poids cibles et cours : même préparation que le résumé mensuel envoyé par e-mail (allocation_dca.py)
 portefeuille_dca = st.session_state["portefeuille"] if isinstance(st.session_state.get("portefeuille"), dict) else {}
-cibles_dca = lire_allocation_cible(portefeuille_dca)
-lignes_detenues_dca = [
-    k for k, v in portefeuille_dca.items()
-    if k not in CLES_TECHNIQUES_PF and isinstance(v, dict) and float(v.get("qte", 0) or 0) > 0
-]
-if mode_gratuit:
-    noms_dca = list(actions_autorisees)
-else:
-    noms_dca = list(dict.fromkeys(list(cibles_dca) + lignes_detenues_dca + list(actions_autorisees)))
-noms_dca = [n for n in noms_dca if n in WATCHLIST_DEFAUT and n not in CLES_TECHNIQUES_PF]
-allocation_personnalisee = any(cibles_dca.get(n, 0.0) > 0 for n in noms_dca)
-# Allocation par défaut : parts égales entre les lignes détenues, ou entre les valeurs du radar si rien n'est détenu
-noms_defaut_dca = [n for n in noms_dca if n in lignes_detenues_dca] or list(noms_dca)
-decision_radar_par_nom = {d["NomBrut"]: d["Décision"] for d in donnees_t1}
-
-lignes_dca = []
-for nom_dca in noms_dca:
-    info_dca = WATCHLIST_DEFAUT[nom_dca]
-    facteur_dca = (1.0 / TAUX_USD_EUR) if info_dca.get("devise") == "USD" else 1.0
-    position_dca = portefeuille_dca.get(nom_dca) if isinstance(portefeuille_dca.get(nom_dca), dict) else {}
-    qte_dca = float(position_dca.get("qte", 0) or 0)
-    cours_dca = prix_temps_reel.get(nom_dca)
-    prix_eur_dca = float(cours_dca) * facteur_dca if cours_dca else None
-    # Valeur détenue au cours du jour, ou à son PRU si le cours manque
-    valeur_dca = qte_dca * (prix_eur_dca if prix_eur_dca else float(position_dca.get("pru", 0) or 0) * facteur_dca)
-    lignes_dca.append({
-        "nom": nom_dca,
-        "poids_cible": cibles_dca.get(nom_dca, 0.0) if allocation_personnalisee else (1.0 if nom_dca in noms_defaut_dca else 0.0),
-        "valeur_eur": valeur_dca,
-        "prix_eur": prix_eur_dca,
-        "qte_detenue": int(qte_dca),
-        "devise": info_dca.get("devise", "EUR"),
-        "div_eur": float(info_dca.get("div_eur", 0.0) or 0.0) * facteur_dca,
-        "decision": decision_radar_par_nom.get(nom_dca, "—"),
-    })
+lignes_dca, allocation_personnalisee, defaut_sur_lignes_detenues = preparer_lignes_dca(
+    portefeuille_dca,
+    [n for n in actions_autorisees if n not in CLES_TECHNIQUES_PF],
+    WATCHLIST_DEFAUT,
+    prix_temps_reel,
+    TAUX_USD_EUR,
+    decisions={d["NomBrut"]: d["Décision"] for d in donnees_t1},
+    seulement_radar=mode_gratuit,
+)
 
 plan_dca = calculer_achat_du_mois(lignes_dca, BUDGET_MENSUEL)
 montant_investi_dca = plan_dca["investi"]
@@ -2169,7 +2160,7 @@ budget_courant = plan_dca["reste"]
 achats_dca = [l for l in plan_dca["lignes"] if l["qte"] > 0]
 montant_tot_div_dca = sum(l["qte"] * l["div_eur"] for l in achats_dca)
 libelle_allocation_dca = "Selon votre allocation cible" if allocation_personnalisee else "Parts égales (allocation par défaut)"
-detail_defaut_dca = ("parts égales entre les lignes que vous détenez" if any(n in lignes_detenues_dca for n in noms_dca)
+detail_defaut_dca = ("parts égales entre les lignes que vous détenez" if defaut_sur_lignes_detenues
                      else "parts égales entre les valeurs de votre radar (vous ne détenez encore aucune ligne)")
 
 # ==============================================================================
@@ -2238,21 +2229,18 @@ with onglet_radar:
                     "<th>Poids actuel → après achat</th><th>Radar</th></tr></thead><tbody>"
                 )
                 for l_dca in sorted(lignes_affichees_dca, key=lambda x: (-x["cout_eur"], x["poids_actuel"] - x["poids_cible"])):
-                    if l_dca["qte"] > 0:
+                    statut_dca = statut_achat(l_dca)
+                    if statut_dca == "achat":
                         achat_dca_html = (f"<span class='b-green'>{l_dca['qte']} action(s)</span>"
                                           f"<br><span style='font-size:0.82em; opacity:0.8;'>{l_dca['cout_eur']:.2f} €</span>")
-                    elif l_dca["prix_eur"] is None:
-                        achat_dca_html = "<span class='b-neutral'>Cours indisponible</span>"
-                    elif l_dca["trop_chere"]:
-                        achat_dca_html = "<span class='b-yellow'>1 action > enveloppe</span>"
-                    elif l_dca["poids_cible"] == 0:
-                        achat_dca_html = "<span class='b-neutral'>Hors cible</span>"
-                    elif l_dca["valeur_visee"] - l_dca["valeur_apres"] >= l_dca["prix_eur"] / 2.0:
-                        achat_dca_html = "<span class='b-blue'>Mois suivants</span>"  # en retard, mais l'enveloppe est épuisée
-                    elif l_dca["valeur_apres"] > l_dca["valeur_visee"]:
-                        achat_dca_html = "<span class='b-neutral'>Au-dessus de sa cible</span>"
                     else:
-                        achat_dca_html = "<span class='b-neutral'>À sa cible</span>"
+                        achat_dca_html = {
+                            "cours_indisponible": "<span class='b-neutral'>Cours indisponible</span>",
+                            "trop_chere": "<span class='b-yellow'>1 action > enveloppe</span>",
+                            "hors_cible": "<span class='b-neutral'>Hors cible</span>",
+                            "mois_suivants": "<span class='b-blue'>Mois suivants</span>",  # en retard, mais l'enveloppe est épuisée
+                            "au_dessus": "<span class='b-neutral'>Au-dessus de sa cible</span>",
+                        }.get(statut_dca, "<span class='b-neutral'>À sa cible</span>")
                     decision_dca = str(l_dca["decision"])
                     radar_dca_html = (f"<span style='font-size:0.82em; opacity:0.8;'>{decision_dca.replace('SIGNAL ', '').capitalize() if decision_dca != '—' else '—'}</span>")
                     html_dca += (
@@ -2286,7 +2274,8 @@ with onglet_radar:
                 afficher_verrou_saas(
                     "Alertes Prix Cibles & Notifications Email",
                     "👑 Offre Pro (8,90 €/mois)",
-                    "Recevez directement par email vos alertes dès qu'une action passe sous votre prix cible ou déclenche un signal technique fort."
+                    "Recevez directement par email vos alertes dès qu'une action passe sous votre prix cible ou déclenche un signal technique fort, "
+                    "et chaque mois, avant votre achat, le résumé de votre DCA."
                 )
             elif not alertes_detectees:
                 st.info("Aucune valeur n'est actuellement sous son prix cible ou en signal technique fort.")
@@ -2313,6 +2302,44 @@ with onglet_radar:
                 if alertes_auto_voulu != alertes_auto_actuel:
                     st.session_state["portefeuille"]["_alertes_auto"] = bool(alertes_auto_voulu)
                     sauvegarder_dans_cloud()
+
+            # --- RÉSUMÉ MENSUEL DU DCA : envoyé avant le jour d'achat par la tâche planifiée (resume_mensuel.py) ---
+            if est_pro_max and st.session_state.get("user") is not None and isinstance(st.session_state.get("portefeuille"), dict):
+                pf_resume = st.session_state["portefeuille"]
+                resume_actuel = bool(pf_resume.get("_resume_mensuel", False))
+                resume_voulu = st.toggle(
+                    "📅 Recevoir chaque mois, avant mon achat, le résumé de mon DCA par e-mail",
+                    value=resume_actuel,
+                    help="Achat proposé selon votre allocation cible, valeur du portefeuille, dividendes attendus et valeurs "
+                         f"sous leur prix cible. Un e-mail par mois, le soir de bourse qui précède votre jour d'achat "
+                         f"(jusqu'à {JOURS_AVANT_ACHAT} jours avant).",
+                )
+                if resume_voulu != resume_actuel:
+                    pf_resume["_resume_mensuel"] = bool(resume_voulu)
+                    sauvegarder_dans_cloud()
+                if resume_voulu:
+                    jour_dca_actuel = jour_dca_valide(pf_resume.get("_jour_dca", 1))
+                    jour_dca_voulu = int(st.number_input(
+                        "Jour de mon achat DCA, chaque mois (1 à 28)", min_value=1, max_value=28,
+                        value=jour_dca_actuel, step=1, key="num_jour_dca",
+                    ))
+                    if jour_dca_voulu != jour_dca_actuel:
+                        pf_resume["_jour_dca"] = jour_dca_voulu
+                        sauvegarder_dans_cloud()
+                    prochain_achat = prochaine_date_dca(datetime.now().date(), jour_dca_voulu)
+                    deja_envoye = str(pf_resume.get("_resume_envoye") or "") == prochain_achat.strftime("%Y-%m")
+                    st.caption(
+                        f"Prochain achat le {date_en_toutes_lettres(prochain_achat)} : "
+                        + ("le résumé de ce mois-ci est déjà parti." if deja_envoye
+                           else f"le résumé partira le soir de bourse qui le précède (jusqu'à {JOURS_AVANT_ACHAT} jours avant).")
+                    )
+                    if st.button("👁️ M'envoyer un aperçu maintenant", width="stretch", key="btn_apercu_resume"):
+                        resume_apercu = construire_resume(
+                            pf_resume, st.session_state.get("watchlist", {}), BUDGET_MENSUEL, prix_temps_reel, TAUX_USD_EUR,
+                            prochain_achat, fiches_valeurs(st.session_state.get("watchlist", {})),
+                        )
+                        ok_apercu, msg_apercu = envoyer_apercu_resume_mensuel(str(st.session_state["user"].email), resume_apercu)
+                        (st.success if ok_apercu else st.info)(msg_apercu)
 
     # --- ÉDITION DE L'ALLOCATION CIBLE (enregistrée dans le portefeuille, clé technique « _allocation_cible ») ---
     with st.expander("⚙️ Définir mon allocation cible", expanded=False):
@@ -3263,7 +3290,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):

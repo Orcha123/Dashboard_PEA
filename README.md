@@ -90,6 +90,16 @@ Centre d'Alertes dès qu'une valeur de leur radar passe sous son prix cible (une
 
 Variable facultative `APP_URL` (onglet *Variables*) : adresse de l'application, ajoutée en bouton dans l'e-mail.
 
+### Résumé mensuel du DCA
+
+`resume_mensuel.py` tourne dans la même tâche du soir, avec les mêmes secrets. Pour chaque abonné Pro qui l'a activé
+dans le Centre d'Alertes (avec son jour d'achat, du 1 au 28), il envoie un e-mail par mois, le premier soir de bourse
+situé dans les 3 jours qui précèdent l'achat : l'achat proposé selon l'allocation cible (même calcul que
+l'application), la valeur du portefeuille et la rente estimée, les dividendes attendus ce mois-là et les valeurs du
+radar sous leur prix cible. Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
+dans le portefeuille (`_resume_envoye`) pour ne jamais l'envoyer deux fois. Un bouton du Centre d'Alertes envoie un
+aperçu immédiat. Test sans envoi : `ALERTES_DRY_RUN=1 python resume_mensuel.py`.
+
 Pour tester sans rien envoyer : onglet *Actions* > *Alertes prix cibles Boursy* > *Run workflow*, ou en local
 `ALERTES_DRY_RUN=1 python alertes_quotidiennes.py`. GitHub suspend les tâches planifiées d'un dépôt resté
 60 jours sans activité ; il suffit alors de les réactiver dans l'onglet *Actions*.
@@ -121,7 +131,8 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
-| `tests/` | Tests automatiques : `python tests/test_allocation_dca.py` (ou `python -m pytest tests`) |
+| `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
+| `tests/` | Tests automatiques : `python tests/test_allocation_dca.py`, `python tests/test_resume_mensuel.py` (ou `python -m pytest tests`) |
 
 ## Apparence
 

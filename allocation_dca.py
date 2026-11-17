@@ -101,3 +101,115 @@ def calculer_achat_du_mois(lignes, budget):
         "ecart_avant": ecart_a_la_cible(resultat, "valeur_eur"),
         "ecart_apres": ecart_a_la_cible(resultat, "valeur_apres"),
     }
+
+
+# ==============================================================================
+# PRÉPARATION DES LIGNES : partagée par l'application et par le résumé mensuel envoyé par e-mail
+# ==============================================================================
+def _nombre(valeur, defaut=0.0):
+    try:
+        nombre = float(valeur)
+    except (TypeError, ValueError):
+        return defaut
+    return nombre if nombre == nombre else defaut
+
+
+def est_cle_technique(nom):
+    """Clés du portefeuille qui ne sont pas des actions : liquidités et réglages (« _... »)."""
+    return nom == "Espèces" or str(nom).startswith("_")
+
+
+def lire_allocation_cible(portefeuille):
+    """Poids cibles enregistrés par l'utilisateur ({nom: poids}) ; {} s'il n'en a pas défini."""
+    cibles = {}
+    entrees = (portefeuille or {}).get("_allocation_cible") if isinstance(portefeuille, dict) else None
+    for entree in entrees if isinstance(entrees, list) else []:
+        if isinstance(entree, dict) and entree.get("nom"):
+            poids = _nombre(entree.get("poids"))
+            if poids > 0:
+                cibles[str(entree["nom"])] = poids
+    return cibles
+
+
+def lignes_detenues(portefeuille):
+    """Noms des lignes d'actions détenues (quantité positive)."""
+    if not isinstance(portefeuille, dict):
+        return []
+    return [k for k, v in portefeuille.items() if not est_cle_technique(k) and isinstance(v, dict) and _nombre(v.get("qte")) > 0]
+
+
+def preparer_lignes_dca(portefeuille, noms_radar, infos, cours, taux_usd_eur, decisions=None, seulement_radar=False):
+    """
+    Lignes à passer à calculer_achat_du_mois, et la façon dont leurs poids cibles ont été choisis.
+
+    portefeuille : {nom: {"qte", "pru"}, "_allocation_cible": [...], ...}
+    noms_radar : valeurs du radar prises en compte (dans l'ordre d'affichage)
+    infos : {nom: {"devise", "div_eur", ...}} ; une valeur sans fiche est ignorée
+    cours : {nom: dernier cours dans la devise de la valeur} ; un cours absent rend la ligne non achetable
+    taux_usd_eur : nombre de dollars pour 1 euro
+    seulement_radar : True pour le forfait gratuit (seulement les valeurs du radar affichées)
+
+    Sans allocation enregistrée : parts égales entre les lignes détenues, ou entre les valeurs du radar si rien
+    n'est détenu. Renvoie (lignes, allocation_personnalisee, defaut_sur_lignes_detenues).
+    """
+    portefeuille = portefeuille if isinstance(portefeuille, dict) else {}
+    cibles = lire_allocation_cible(portefeuille)
+    detenues = lignes_detenues(portefeuille)
+    if seulement_radar:
+        noms = list(noms_radar)
+    else:
+        noms = list(dict.fromkeys(list(cibles) + detenues + list(noms_radar)))
+    noms = [n for n in noms if n in infos and not est_cle_technique(n)]
+    personnalisee = any(cibles.get(n, 0.0) > 0 for n in noms)
+    noms_detenus = [n for n in noms if n in detenues]
+    noms_defaut = noms_detenus or list(noms)
+    lignes = []
+    for nom in noms:
+        info = infos[nom] if isinstance(infos[nom], dict) else {}
+        facteur = (1.0 / taux_usd_eur) if info.get("devise") == "USD" and taux_usd_eur else 1.0
+        position = portefeuille.get(nom) if isinstance(portefeuille.get(nom), dict) else {}
+        qte = _nombre(position.get("qte"))
+        cours_nom = _nombre(cours.get(nom), None) if cours.get(nom) is not None else None
+        prix_eur = cours_nom * facteur if cours_nom and cours_nom > 0 else None
+        # Valeur détenue au cours du jour, ou à son PRU si le cours manque
+        valeur = qte * (prix_eur if prix_eur else _nombre(position.get("pru")) * facteur)
+        lignes.append({
+            "nom": nom,
+            "poids_cible": cibles.get(nom, 0.0) if personnalisee else (1.0 if nom in noms_defaut else 0.0),
+            "valeur_eur": valeur,
+            "prix_eur": prix_eur,
+            "qte_detenue": int(qte),
+            "devise": info.get("devise", "EUR"),
+            "div_eur": _nombre(info.get("div_eur")) * facteur,
+            "mois_div": list(info.get("mois_div") or []),
+            "decision": (decisions or {}).get(nom, "—"),
+        })
+    return lignes, personnalisee, bool(noms_detenus)
+
+
+STATUTS_ACHAT = {
+    "achat": "achat proposé",
+    "cours_indisponible": "cours indisponible",
+    "trop_chere": "1 action coûte plus que l'enveloppe",
+    "hors_cible": "hors cible",
+    "mois_suivants": "en retard, enveloppe épuisée : mois suivants",
+    "au_dessus": "au-dessus de sa cible",
+    "a_sa_cible": "à sa cible",
+}
+
+
+def statut_achat(ligne):
+    """Situation d'une ligne du plan (clé de STATUTS_ACHAT), commune à l'application et à l'e-mail."""
+    if ligne["qte"] > 0:
+        return "achat"
+    if ligne["prix_eur"] is None:
+        return "cours_indisponible"
+    if ligne["trop_chere"]:
+        return "trop_chere"
+    if ligne["poids_cible"] == 0:
+        return "hors_cible"
+    if ligne["valeur_visee"] - ligne["valeur_apres"] >= ligne["prix_eur"] / 2.0:
+        return "mois_suivants"
+    if ligne["valeur_apres"] > ligne["valeur_visee"]:
+        return "au_dessus"
+    return "a_sa_cible"
