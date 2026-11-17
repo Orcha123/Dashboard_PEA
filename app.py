@@ -420,6 +420,24 @@ def enregistrer_abonnement_protege(user_id, niveau, client_id, fin):
         return False
 
 
+def supprimer_compte_utilisateur(user):
+    """
+    Efface définitivement un compte : snapshots, données de portefeuille, abonnement, puis le compte de connexion.
+    Nécessite la clé de service. Retourne (succès, message d'erreur éventuel).
+    """
+    client_serveur = init_supabase_serveur()
+    if client_serveur is None or user is None:
+        return False, "La suppression automatique n'est pas disponible pour le moment. Écrivez-nous à l'adresse de contact des mentions légales."
+    uid = str(user.id)
+    try:
+        for table_a_vider in ("portfolio_history", "user_data", "abonnements"):
+            client_serveur.table(table_a_vider).delete().eq("user_id", uid).execute()
+        client_serveur.auth.admin.delete_user(uid)
+        return True, ""
+    except Exception as erreur_suppr:
+        return False, f"La suppression n'a pas pu aboutir ({erreur_suppr}). Réessayez ou écrivez-nous à l'adresse de contact des mentions légales."
+
+
 def etablir_niveau_abonnement(user, verifier_stripe=True):
     """
     Fixe le niveau d'abonnement de la session à partir de sources fiables uniquement :
@@ -455,7 +473,7 @@ def envoyer_email_alerte(destinataire, liste_alertes):
 
     try:
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🔔 Boursy — {len(liste_alertes)} Alerte(s) d'Achat & Prix Cible détectée(s)"
+        msg["Subject"] = f"🔔 Boursy — {len(liste_alertes)} Alerte(s) Prix Cible & Signaux"
         msg["From"] = smtp_user
         msg["To"] = destinataire
 
@@ -466,7 +484,7 @@ def envoyer_email_alerte(destinataire, liste_alertes):
         corps_html = f"""
         <html><body style="font-family: Arial, sans-serif; color: #2c3e50;">
             <h2>📈 Rapport d'Alertes Boursy ({datetime.now().strftime('%d/%m/%Y')})</h2>
-            <p>Votre radar algorithmique a détecté les opportunités suivantes :</p>
+            <p>Votre radar a relevé les signaux suivants (information statistique, pas un conseil en investissement) :</p>
             <ul>{lignes_html}</ul>
             <p><a href="https://boursy.streamlit.app" style="background:#2ecc71; color:white; padding:10px 16px; text-decoration:none; border-radius:6px; font-weight:bold;">Ouvrir mon Dashboard Boursy</a></p>
         </body></html>
@@ -922,6 +940,9 @@ if supabase is not None and ((_type_lien == "recovery" and _jeton_lien) or st.se
                 st.error(f"Le mot de passe n'a pas pu être modifié : {erreur_mdp}")
     st.stop()
 
+if st.session_state.pop("_notif_compte_supprime", False):
+    st.sidebar.success("✅ Votre compte et toutes vos données ont été supprimés.")
+
 if st.session_state.pop("_notif_mdp_change", False):
     st.sidebar.success("✅ Mot de passe modifié. Connectez-vous avec votre nouveau mot de passe.")
 
@@ -1043,6 +1064,33 @@ else:
                     st.rerun()
             except Exception as e:
                 st.sidebar.error(f"Erreur : {e}")
+
+        # --- MON COMPTE : SUPPRESSION DÉFINITIVE (droit à l'effacement, RGPD article 17) ---
+        with st.sidebar.expander("⚙️ Mon compte"):
+            st.caption("Supprimer votre compte efface définitivement votre portefeuille, votre historique et votre accès. Pensez à exporter vos données (bouton CSV) avant.")
+            niveau_compte = st.session_state.get("niveau_abonnement", "gratuit") if st.session_state.get("est_abonne_pro") else "gratuit"
+            if est_admin_connecte:
+                st.info("Le compte administrateur ne peut pas être supprimé depuis l'application.")
+            elif niveau_compte in ("premium", "pro") and not st.session_state.get("abo_fin_periode"):
+                st.warning(
+                    "Votre abonnement est encore actif : résiliez-le d'abord avec « ⚙️ Gérer mon abonnement / Factures » "
+                    "(menu 💎 Offres & Abonnement), pour ne plus être prélevé, puis revenez ici."
+                )
+            else:
+                confirmation_suppr = st.text_input("Tapez SUPPRIMER pour confirmer", key="txt_confirmer_suppression")
+                if st.button("🗑️ Supprimer définitivement mon compte", width="stretch", disabled=(confirmation_suppr.strip() != "SUPPRIMER")):
+                    ok_suppr, msg_suppr = supprimer_compte_utilisateur(st.session_state["user"])
+                    if ok_suppr:
+                        try:
+                            supabase.auth.sign_out()
+                        except Exception:
+                            pass
+                        for cle_session in list(st.session_state.keys()):
+                            del st.session_state[cle_session]
+                        st.session_state["_notif_compte_supprime"] = True
+                        st.rerun()
+                    else:
+                        st.error(msg_suppr)
 
         col_btn1, col_btn2 = st.sidebar.columns(2)
         if col_btn1.button("💾 Sauver", width="stretch"):
@@ -1785,11 +1833,11 @@ def analyser_signal_ema_2_12(clotures):
     ecart_pct = ((jour_e2 - jour_e12) / jour_e12 * 100) if jour_e12 > 0 else 0.0
 
     if veille_e2 <= veille_e12 and jour_e2 > jour_e12:
-        return "🟢 Achat (Croisement)", 15
+        return "🟢 Croisement haussier", 15
     elif jour_e2 > jour_e12 and ecart_pct >= 0.20:
-        return "🟢 Achat (Haussier)", 12
+        return "🟢 Tendance haussière", 12
     elif veille_e2 >= veille_e12 and jour_e2 < jour_e12:
-        return "🔴 Vente (Croisement)", -10
+        return "🔴 Croisement baissier", -10
     else:
         return "⚪ Neutre", 5
 
@@ -1830,6 +1878,7 @@ afficher_html(f"""
     <div>
         <div class="bz-nom">Boursy</div>
         <div class="bz-slogan">Votre copilote PEA, actions US &amp; dividendes</div>
+        <div class="bz-slogan" style="font-size:0.76em; opacity:0.62;">Information statistique et pédagogique · ne constitue pas un conseil en investissement</div>
     </div>
     <div class="bz-hero-droite">
         <span class="bz-puce"><span class="bz-point"{_style_point_cours}></span>{_texte_puce_cours}</span>
@@ -1865,13 +1914,13 @@ def calculer_ema_meteo_indice(symbole):
             ema12 = calc_ema(closes, 12)
 
             if ema2[-2] <= ema12[-2] and ema2[-1] > ema12[-1]:
-                return "🚀 Achat Croisement", "#2ecc71"
+                return "🚀 Croisement haussier", "#2ecc71"
             elif ema2[-1] > ema12[-1] and closes[-1] >= ema2[-1]:
-                return "🟢 Achat Haussier", "#2ecc71"
+                return "🟢 Tendance haussière", "#2ecc71"
             elif ema2[-1] > ema12[-1]:
                 return "🟡 Neutre (Pause)", "#f39c12"
             else:
-                return "🔴 Vendeur", "#e74c3c"
+                return "🔴 Tendance baissière", "#e74c3c"
         except Exception:
             continue
     return "⚪ Neutre", "#95a5a6"
@@ -1882,7 +1931,7 @@ statut_ema_sp, col_ema_sp = calculer_ema_meteo_indice("^GSPC")
 cac_str = f"{cac_pts:,.0f} pts ({cac_var:+.2f}%)" if cac_pts else "En attente"
 sp_str = f"{sp_pts:,.0f} pts ({sp_var:+.2f}%)" if sp_pts else "En attente"
 vix_val = vix_pts if vix_pts else 18.0
-etat_vix = "🟢 Marché Calme" if vix_val < 16 else ("🔥 Peur / Opportunités DCA" if vix_val >= 24 else "🟡 Volatilité Normale")
+etat_vix = "🟢 Marché Calme" if vix_val < 16 else ("🔥 Forte nervosité" if vix_val >= 24 else "🟡 Volatilité Normale")
 c_cac = "#2ecc71" if cac_var >= 0 else "#e74c3c"
 c_sp = "#2ecc71" if sp_var >= 0 else "#e74c3c"
 c_vix = "#2ecc71" if vix_val < 16 else ("#e74c3c" if vix_val >= 24 else "#f39c12")
@@ -2067,16 +2116,16 @@ for nom, info, (prix_actuel, closes, hauts, bas) in resultats_bruts_yahoo:
     est_surevalue = (prix_cible > 0 and prix_actuel >= prix_cible * 1.22 and (rsi >= 70 or prix_actuel >= borne_sup))
 
     if est_surevalue:
-        decision = "⚠️ ALLÈGEMENT"
+        decision = "🟠 ZONE HAUTE"
     elif score >= 65 and "🔴" not in statut_ema_2_12:
-        decision = "🔥 ACHAT FORT"
+        decision = "🟢 SIGNAL FORT"
     elif score >= 45 and "🔴" not in statut_ema_2_12:
-        decision = "✅ ACCUMULATION"
+        decision = "🔵 SIGNAL FAVORABLE"
     else:
-        decision = "⏸️ CONSERVATION"
+        decision = "⚪ SIGNAL NEUTRE"
 
-    if (prix_cible > 0 and prix_actuel <= prix_cible) or "ACHAT FORT" in decision:
-        motif_al = "Sous le Prix Cible 🎯" if (prix_cible > 0 and prix_actuel <= prix_cible) else "Signal Technique Achat Fort 🔥"
+    if (prix_cible > 0 and prix_actuel <= prix_cible) or "SIGNAL FORT" in decision:
+        motif_al = "Sous le Prix Cible 🎯" if (prix_cible > 0 and prix_actuel <= prix_cible) else "Signal technique fort 🟢"
         alertes_detectees.append({
             "Actif": f"{nom} ({devise})",
             "Prix": f"{prix_actuel:.2f} {symbole_devise}",
@@ -2192,13 +2241,13 @@ with onglet_radar:
     if mode_gratuit:
         st.warning("🌱 **Forfait Gratuit (0 €)** : 2 valeurs affichées. Passez à **Premium (4,90 €/mois)** ou **Pro (8,90 €/mois)** dans le menu de gauche pour débloquer l'ensemble du catalogue PEA & US !")
 
-    nb_opportunites = sum(1 for d in donnees_t1 if "ACHAT" in d["Décision"] or "ACCUMULATION" in d["Décision"])
+    nb_opportunites = sum(1 for d in donnees_t1 if "SIGNAL FORT" in d["Décision"] or "SIGNAL FAVORABLE" in d["Décision"])
     meilleure_opp = candidats_tries[0]["nom"] if candidats_tries else "Aucune"
 
     html_radar_kpi = f"""
     <div class="argon-grid">
         <div class="argon-card">
-            <div class="argon-title">🎯 Opportunités Actives</div>
+            <div class="argon-title">🎯 Signaux Favorables</div>
             <div class="argon-val" style="color: #2ecc71;">{nb_opportunites} / {len(actions_autorisees)}</div>
             <div class="argon-sub">Top Signal : <b>{meilleure_opp}</b></div>
         </div>
@@ -2215,7 +2264,7 @@ with onglet_radar:
         <div class="argon-card">
             <div class="argon-title">🔔 Alertes Prix Cible / Achat</div>
             <div class="argon-val" style="color: #f39c12;">{len(alertes_detectees)} active(s)</div>
-            <div class="argon-sub">Valeurs sous cible ou Achat Fort</div>
+            <div class="argon-sub">Valeurs sous cible ou en signal fort</div>
         </div>
     </div>
     """
@@ -2224,12 +2273,13 @@ with onglet_radar:
     col_dca_exp, col_al_exp = st.columns(2)
 
     with col_dca_exp:
-        with st.expander(f"🛒 Plan d'Achat DCA Condensé ({BUDGET_MENSUEL:.0f} € — Max 2 lignes)", expanded=True):
+        with st.expander(f"🛒 Simulation de Répartition DCA ({BUDGET_MENSUEL:.0f} € — 2 lignes max)", expanded=True):
+            st.caption("Simulation mathématique : répartition de votre enveloppe sur les 2 scores les plus élevés du radar. Ce n'est pas une recommandation d'achat.")
             achats_retenus = [item for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0]
             if not achats_retenus:
                 st.info("Aucune action ne remplit actuellement les critères d'achat DCA.")
             else:
-                html_dca = "<table class='r-table'><thead><tr><th style='text-align:left;'>Action Prioritaire</th><th>Score</th><th>Qté</th><th>Coût (€)</th><th>+Div/an</th></tr></thead><tbody>"
+                html_dca = "<table class='r-table'><thead><tr><th style='text-align:left;'>Valeur (score le plus élevé)</th><th>Score</th><th>Qté</th><th>Coût (€)</th><th>+Div/an</th></tr></thead><tbody>"
                 for item in achats_retenus:
                     q_sim = achats_simules[item["nom"]]
                     cout_tot = q_sim * item["prix_eur"]
@@ -2244,10 +2294,10 @@ with onglet_radar:
                 afficher_verrou_saas(
                     "Alertes Prix Cibles & Notifications Email",
                     "👑 Offre Pro (8,90 €/mois)",
-                    "Recevez directement par email vos alertes dès qu'une action passe sous votre prix cible ou déclenche un signal d'Achat Fort."
+                    "Recevez directement par email vos alertes dès qu'une action passe sous votre prix cible ou déclenche un signal technique fort."
                 )
             elif not alertes_detectees:
-                st.info("Aucune valeur n'est actuellement sous son prix cible ou en signal d'Achat Fort.")
+                st.info("Aucune valeur n'est actuellement sous son prix cible ou en signal technique fort.")
             else:
                 for al in alertes_detectees[:4]:
                     markdown_fr(f"• **{al['Actif']}** à **{al['Prix']}** (Cible : `{al['Cible']}`) — **{al['Motif']}**")
@@ -2313,7 +2363,7 @@ with onglet_radar:
         c_bar = "#2ecc71" if sc >= 65 else ("#3498db" if sc >= 45 else "#e74c3c")
 
         dec = d["Décision"]
-        dec_html = f"<span class='b-green'>{dec}</span>" if "ACHAT FORT" in dec else (f"<span class='b-blue'>{dec}</span>" if "ACCUMULATION" in dec else (f"<span class='b-red'>{dec}</span>" if "ALLÈGEMENT" in dec else f"<span class='b-neutral'>{dec}</span>"))
+        dec_html = f"<span class='b-green'>{dec}</span>" if "SIGNAL FORT" in dec else (f"<span class='b-blue'>{dec}</span>" if "SIGNAL FAVORABLE" in dec else (f"<span class='b-red'>{dec}</span>" if "ZONE HAUTE" in dec else f"<span class='b-neutral'>{dec}</span>"))
 
         rsi_v = d["RSI"]
         rsi_badge = f"<span class='b-green'>{rsi_v}</span>" if rsi_v <= 35 else (f"<span class='b-red'>{rsi_v}</span>" if rsi_v >= 70 else f"<b>{rsi_v}</b>")
@@ -2385,7 +2435,7 @@ with onglet_radar:
             afficher_verrou_saas(
                 "Tableau 3 : Indicateurs Techniques Avancés (Supports 30J, Bollinger, Stochastique & ATR)",
                 "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
-                "Obtenez le Score de Timing court terme et le prix exact d'ordre limite conseillé pour chaque action."
+                "Obtenez le Score de Timing court terme et un niveau de prix technique de référence pour chaque action."
             )
         else:
             html_guide_tech = """
@@ -2400,11 +2450,11 @@ with onglet_radar:
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
                     <div class="argon-title" style="color:#f39c12;">⚡ 3. Oscillateur Stochastique (14J)</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la vitesse d'essoufflement. <b>&lt; 20% (Survente)</b> = vendeurs épuisés, rebond proche. <b>&gt; 80% (Surachat)</b> = risque de repli.</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la vitesse d'essoufflement. <b>&lt; 20% (Survente)</b> = zone de survente. <b>&gt; 80% (Surachat)</b> = risque de repli.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                    <div class="argon-title" style="color:#9b59b6;">🎯 4. ATR & Ordre Limite Conseillé</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée. Il permet de calculer le <b>Prix d'Ordre Limite idéal</b> à placer sur votre PEA/CTO.</div>
+                    <div class="argon-title" style="color:#9b59b6;">🎯 4. ATR & Niveau Technique de Référence</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée. Il sert à estimer un <b>niveau de prix technique de référence</b>, proche des supports récents.</div>
                 </div>
             </div>
             """
@@ -2460,7 +2510,7 @@ with onglet_radar:
                     diag_boll = f"<span class='b-neutral'>⚪ Zone neutre [{borne_inf_f:.1f} - {borne_sup_f:.1f}]</span><br><span style='font-size:0.78em; opacity:0.8;'>Position : {pos_boll_pct:.0f}% de l'élastique</span>"
 
                 if stoch_f <= 20:
-                    diag_stoch = f"<span class='b-green'>🟢 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Vendeurs épuisés = Signal Achat</span>"
+                    diag_stoch = f"<span class='b-green'>🟢 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Zone de survente</span>"
                 elif stoch_f <= 38:
                     diag_stoch = f"<span class='b-blue'>🔵 {stoch_f:.0f}% (Zone basse)</span><br><span style='font-size:0.78em; opacity:0.8;'>Point d'entrée favorable</span>"
                 elif stoch_f >= 80:
@@ -2477,17 +2527,17 @@ with onglet_radar:
 
                 if score_timing >= 68:
                     ordre_statut = 0
-                    action_tech = f"<span class='b-green'>🔥 FENÊTRE DE TIR IDÉALE</span><br><span style='font-size:0.80em;'>Achat possible au cours actuel (<b>{prix_f:.2f} {sym_dev}</b>)</span>"
+                    action_tech = f"<span class='b-green'>🟢 TIMING TECHNIQUE FAVORABLE</span><br><span style='font-size:0.80em;'>Cours actuel proche des supports (<b>{prix_f:.2f} {sym_dev}</b>)</span>"
                 elif score_timing >= 50:
                     ordre_statut = 1
-                    action_tech = f"<span class='b-blue'>✅ ACCUMULATION DCA</span><br><span style='font-size:0.80em;'>Ou ordre limite vers <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+                    action_tech = f"<span class='b-blue'>🔵 TIMING CORRECT</span><br><span style='font-size:0.80em;'>Niveau technique de référence : <b>{plancher_tech:.2f} {sym_dev}</b></span>"
                 elif score_timing >= 33:
                     ordre_statut = 2
-                    action_tech = f"<span class='b-yellow'>⏳ ATTENDRE UN REPLI</span><br><span style='font-size:0.80em;'>Placer ordre limite à <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+                    action_tech = f"<span class='b-yellow'>🟡 TIMING NEUTRE</span><br><span style='font-size:0.80em;'>Niveau technique de référence : <b>{plancher_tech:.2f} {sym_dev}</b></span>"
                 else:
                     ordre_statut = 3
                     cible_repli = (sup_f + res_f) / 2.0
-                    action_tech = f"<span class='b-red'>⚠️ SURCHAUFFE (TROP HAUT)</span><br><span style='font-size:0.80em;'>Attendre retour vers <b>{cible_repli:.2f} {sym_dev}</b></span>"
+                    action_tech = f"<span class='b-red'>🟠 ZONE HAUTE DU CANAL</span><br><span style='font-size:0.80em;'>Milieu du canal 30J : <b>{cible_repli:.2f} {sym_dev}</b></span>"
 
                 donnees_t4_enrichies.append({
                     "Actif": d["Actif"],
@@ -2518,7 +2568,7 @@ with onglet_radar:
                     <th>Momentum Stochastique</th>
                     <th>Volatilité (ATR)</th>
                     <th style='width:125px;'>Score Timing</th>
-                    <th>Décision & Ordre Limite</th>
+                    <th>Lecture Technique & Niveau de Référence</th>
                 </tr>
             </thead>
             <tbody>
@@ -2655,16 +2705,16 @@ with onglet_radar:
 
                 if score_rente >= 76 and payout_pct <= 65:
                     ordre_div = 0
-                    decision_div = "<span class='b-green'>👑 PÉPITE ROYALE</span><br><span style='font-size:0.80em;'>Pilier idéal Fond de Portefeuille</span>"
+                    decision_div = "<span class='b-green'>👑 PROFIL COMPLET</span><br><span style='font-size:0.80em;'>Rendement, sûreté et croissance réunis</span>"
                 elif rend_pct >= 5.0 and payout_pct <= 75:
                     ordre_div = 1
-                    decision_div = "<span class='b-blue'>💵 VACHE À LAIT SOLIDE</span><br><span style='font-size:0.80em;'>Booster de rente immédiate</span>"
+                    decision_div = "<span class='b-blue'>💵 RENDEMENT ÉLEVÉ</span><br><span style='font-size:0.80em;'>Payout maîtrisé</span>"
                 elif croiss_pct >= 7.5 and payout_pct <= 60:
                     ordre_div = 2
-                    decision_div = "<span class='b-purple'>🚀 COMPOSER CROISSANCE</span><br><span style='font-size:0.80em;'>Dividende appelé à doubler</span>"
+                    decision_div = "<span class='b-purple'>🚀 CROISSANCE DU DIVIDENDE</span><br><span style='font-size:0.80em;'>Hausse rapide du coupon sur 5 ans</span>"
                 else:
                     ordre_div = 3
-                    decision_div = "<span class='b-yellow'>⚖️ COMPLÉMENT DE RENTE</span><br><span style='font-size:0.80em;'>À pondérer avec modération</span>"
+                    decision_div = "<span class='b-yellow'>⚖️ PROFIL MODÉRÉ</span><br><span style='font-size:0.80em;'>Critères partiellement réunis</span>"
 
                 donnees_t3_enrichies.append({
                     "Actif": d["Actif"],
@@ -2695,7 +2745,7 @@ with onglet_radar:
                     <th style='width:210px;'>Jauge Payout Ratio<br><span style='font-size:0.82em; opacity:0.75;'>(Part des bénéfices versée)</span></th>
                     <th>Dynamique 5 Ans</th>
                     <th style='width:125px;'>Score Rente</th>
-                    <th>Profil & Rôle DCA</th>
+                    <th>Profil de Rente</th>
                 </tr>
             </thead>
             <tbody>
@@ -4315,7 +4365,7 @@ with onglet_ia:
 
     html_phrase_flash = f"""
     <div class="ia-flash">
-        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille actif de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}% latent) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois).{texte_bilan_ventes_flash} Les meilleures opportunités DCA du moment sont {texte_opps_moment}.
+        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille actif de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}% latent) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois).{texte_bilan_ventes_flash} Les signaux techniques les plus forts du moment concernent {texte_opps_moment}.
     </div>
     """
     afficher_html(html_phrase_flash)
@@ -4381,19 +4431,19 @@ with onglet_ia:
                 est_sous_pru = True
                 bonus_pf = 8
                 badge_pf = f"<span class='b-green'>📉 Sous votre PRU ({pru_pf:.2f} {sym_d} | {ecart_pru_pct:+.1f}%)</span>"
-                conseil_pf = f"Idéal pour <b>abaisser votre PRU</b> (Poids actuel : {poids_pf:.1f}%)"
+                conseil_pf = f"Cours sous votre PRU (poids actuel : {poids_pf:.1f}%)"
             elif poids_pf >= 28.0:
                 bonus_pf = -12
                 badge_pf = f"<span class='b-yellow'>⚖️ Ligne forte ({poids_pf:.1f}% du PF)</span>"
-                conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} — Évitez de surpondérer davantage"
+                conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} — ligne déjà importante dans le portefeuille"
             else:
                 bonus_pf = 4
                 badge_pf = f"<span class='b-blue'>💼 En portefeuille ({q_pf} act. | {poids_pf:.1f}%)</span>"
-                conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} ({ecart_pru_pct:+.1f}%) — Renforcement sain"
+                conseil_pf = f"PRU : {pru_pf:.2f} {sym_d} ({ecart_pru_pct:+.1f}%)"
         else:
             bonus_pf = 6
             badge_pf = "<span class='b-purple'>✨ Absente du portefeuille</span>"
-            conseil_pf = "Opportunité d'<b>ouverture de ligne</b> (Diversification)"
+            conseil_pf = "Valeur absente du portefeuille"
 
         pts_radar = float(d1["Score"]) * 0.40
         pts_timing = float(score_timing_ct) * 0.25
@@ -4431,12 +4481,12 @@ with onglet_ia:
 
     synthese_opportunites.sort(key=lambda x: x["ScoreConv"], reverse=True)
 
-    st.markdown("#### 🎯 Radar de Convergence 360° : Les Meilleures Opportunités du Moment")
+    st.markdown("#### 🎯 Radar de Convergence 360° : les Signaux les Plus Convergents")
     st.caption("Croisement automatique en temps réel entre vos **4 Tableaux Techniques/Fondamentaux** et **les lignes de votre Portefeuille**.")
 
     if synthese_opportunites:
         top_podium = synthese_opportunites[:3]
-        medailles = ["🥇 TOP OPPORTUNITÉ #1", "🥈 OPPORTUNITÉ #2", "🥉 OPPORTUNITÉ #3"]
+        medailles = ["🥇 CONVERGENCE #1", "🥈 CONVERGENCE #2", "🥉 CONVERGENCE #3"]
         couleurs_bord = ["#2ecc71", "#3498db", "#9b59b6"]
 
         html_podium = "<div class='argon-grid'>"
@@ -4461,9 +4511,9 @@ with onglet_ia:
                 sym_dev_p = "$" if "$" in opp["Prix"] else "€"
 
                 if prix_act_f < pru_actuel:
-                    conseil_pru_dynamique = f"Idéal pour abaisser votre PRU : <b>{pru_actuel:.2f} ➔ {nouveau_pru_simule:.2f} {sym_dev_p}</b>"
+                    conseil_pru_dynamique = f"Simulation : 1 titre de plus ferait passer votre PRU de <b>{pru_actuel:.2f} ➔ {nouveau_pru_simule:.2f} {sym_dev_p}</b>"
                 else:
-                    conseil_pru_dynamique = f"Renforcement sain (PRU actuel : {pru_actuel:.2f} {sym_dev_p})"
+                    conseil_pru_dynamique = f"Cours au-dessus de votre PRU ({pru_actuel:.2f} {sym_dev_p})"
 
             html_podium += f"""
             <div class="argon-card" style="text-align:left; border-top: 4px solid {c_b}; min-width: 260px;">
@@ -4482,7 +4532,7 @@ with onglet_ia:
                 <div style="background:rgba(128,128,128,0.06); border-radius:8px; padding:8px 10px; font-size:0.82em; line-height:1.45;">
                     <div style="margin-bottom:4px;">{opp['BadgePF']}</div>
                     <div>💡 {conseil_pru_dynamique}</div>
-                    <div style="margin-top:4px; color:#2ecc71; font-weight:700;">🛒 Entrée / Ordre limite conseillé : {opp['OrdreLimite']} (Support : {opp['Support']})</div>
+                    <div style="margin-top:4px; color:#2ecc71; font-weight:700;">📏 Niveau technique de référence : {opp['OrdreLimite']} (Support : {opp['Support']})</div>
                 </div>
             </div>
             """
@@ -4500,16 +4550,16 @@ with onglet_ia:
         html_boussole = f"""
         <div class="meteo-bar" style="margin-top: -6px; margin-bottom: 18px;">
             <div class="meteo-item" style="border-left-color:#2ecc71;">
-                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">📉 MEILLEUR MOYENNAGE PRU</div><div style="font-size:0.90em; margin-top:2px;">{txt_moy}</div></div>
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">📉 COURS SOUS VOTRE PRU</div><div style="font-size:0.90em; margin-top:2px;">{txt_moy}</div></div>
             </div>
             <div class="meteo-item" style="border-left-color:#3498db;">
                 <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">📐 TOP DÉCOTE + TIMING</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_value_timing['Nom']}</b> (3A : {opp_value_timing['Ecart3A']} | Timing {opp_value_timing['ScoreTiming']}/100)</div></div>
             </div>
             <div class="meteo-item" style="border-left-color:#f39c12;">
-                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">👑 TOP RENDEMENT SÉCURISÉ</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_rend_top['Nom']}</b> ({opp_rend_top['Rendement']} | Payout {opp_rend_top['Payout']})</div></div>
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">👑 RENDEMENT LE PLUS ÉLEVÉ (PAYOUT ≤ 75 %)</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_rend_top['Nom']}</b> ({opp_rend_top['Rendement']} | Payout {opp_rend_top['Payout']})</div></div>
             </div>
             <div class="meteo-item" style="border-left-color:#9b59b6;">
-                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">🌱 IDÉE DIVERSIFICATION (HORS PF)</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_decouverte['Nom']}</b> (Convergence {opp_decouverte['ScoreConv']}/100)</div></div>
+                <div><div style="font-size:0.72em; font-weight:800; opacity:0.75;">🌱 MEILLEURE CONVERGENCE HORS PORTEFEUILLE</div><div style="font-size:0.90em; margin-top:2px;"><b>{opp_decouverte['Nom']}</b> (Convergence {opp_decouverte['ScoreConv']}/100)</div></div>
             </div>
         </div>
         """
@@ -4535,7 +4585,7 @@ with onglet_ia:
                         <th>Timing 30J</th>
                         <th>Dividende (Payout)</th>
                         <th>Statut Portefeuille</th>
-                        <th>Ordre Limite Idéal</th>
+                        <th>Niveau Technique</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -4629,7 +4679,7 @@ with onglet_ia:
 {bloc_recap_pv_md}
 
 #### 3. Analyse de Concentration & PRU
-- **Concentration Maximale :** Votre première ligne (**{nom_max_ligne}**) pèse **{poids_max_ligne:.1f}%** de votre patrimoine. {'✅ Excellente maîtrise du risque (< 30%).' if poids_max_ligne <= 30 else '⚠️ Attention : cette ligne dépasse le seuil prudentiel de 30%. Privilégiez le renforcement de vos lignes secondaires lors de vos prochains DCA.'}
+- **Concentration Maximale :** Votre première ligne (**{nom_max_ligne}**) pèse **{poids_max_ligne:.1f}%** de votre patrimoine. {'✅ Excellente maîtrise du risque (< 30%).' if poids_max_ligne <= 30 else '⚠️ Attention : cette ligne dépasse le seuil prudentiel de 30%. Une répartition plus homogène réduirait la dépendance à cette seule ligne.'}
 
 #### 4. Bilan Fiscal PEA (EUR) vs CTO (USD)
 - **Exposition Devises :** **{exposition_eur:,.0f} € en zone Euro (PEA)** contre **{exposition_usd:,.0f} € en Dollars US (CTO)**.
@@ -4639,16 +4689,16 @@ with onglet_ia:
 
         elif code_audit == "AUDIT_2":
             achats_txt = "\n".join(
-                f"* **{item['nom']} ({item['devise']})** : Acheter **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
+                f"* **{item['nom']} ({item['devise']})** : Simulation : **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
                 for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0
             )
             if not achats_txt:
                 achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
-            return f"""### 🛒 Plan d'Action DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
+            return f"""### 🛒 Simulation de Répartition DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
 
 #### 1. Lecture de la Météo des Marchés
 - **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
-- **Stratégie de Timing :** {'Avec un VIX élevé, la peur domine le marché : c est le moment idéal pour déployer 100 % de votre enveloppe DCA sur les valeurs décotées.' if vix_val >= 22 else 'Dans ce marché calme à normal, concentrez strictement vos achats sur les 1 ou 2 meilleures valeurs dont le RSI (14J) est inférieur à 45 ou sous votre Prix Cible.'}
+- **Contexte de marché :** {'Le VIX est élevé : la nervosité domine le marché, et ces phases s’accompagnent souvent de cours plus bas sur de nombreuses valeurs.' if vix_val >= 22 else 'Le marché est calme à normal : la simulation retient les valeurs au score le plus élevé, en tenant compte du RSI (14J) et de l’écart au prix cible.'}
 
 #### 2. Top 3 des Signaux Techniques du Jour
 {chr(10).join('* ' + s for s in top_3_radar)}
@@ -4665,7 +4715,7 @@ with onglet_ia:
 
 #### 1. Analyse du Taux de Change EUR/USD
 - **Parité actuelle :** **1 € = {TAUX_USD_EUR:.4f} $** (soit **1 $ = {1/TAUX_USD_EUR:.4f} €**).
-- **Impact Devises :** {'L Euro est actuellement solide face au Dollar (> 1.08 $), ce qui offre un point d entrée avantageux pour convertir des Euros vers des actifs américains en CTO.' if TAUX_USD_EUR >= 1.08 else 'Le Dollar est actuellement fort face à l Euro : privilégiez en priorité le renforcement de vos pépites européennes en PEA.'}
+- **Impact Devises :** {'L’euro est au-dessus de 1,08 $ : les actifs cotés en dollars coûtent moins cher en euros qu’avec un euro plus faible.' if TAUX_USD_EUR >= 1.08 else 'Le dollar est fort face à l’euro : les actifs cotés en dollars coûtent plus cher en euros.'}
 
 #### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
 - **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
@@ -4711,8 +4761,8 @@ with onglet_ia:
 - **Plus/Moins-Value Réalisée (Extraite par vos ventes) :** **`{total_pv_actee_ia:+,.2f} € ({perf_extraction_ia:+.2f}%)`**
 - **Création de Valeur Totale Cumulée (Latent + Acté) :** **`{perf_globale_cumulee:+,.2f} €`**
 
-#### 🎯 Recommandation du Coach sur vos Arbitrages
-- **Enveloppe PEA :** Les plus-values actées au sein du PEA ne subissent **aucune imposition immédiate** tant que le cash reste dans l'enveloppe, ce qui vous permet de réallouer 100 % du produit de cession (`{total_vol_vendu_ia:,.2f} €`) sur vos meilleures opportunités DCA du moment ({texte_opps_moment}).
+#### 🎯 Point Fiscal sur vos Arbitrages
+- **Enveloppe PEA :** Les plus-values actées au sein du PEA ne subissent **aucune imposition immédiate** tant que le cash reste dans l'enveloppe, le produit de cession (`{total_vol_vendu_ia:,.2f} €`) reste donc disponible dans l'enveloppe.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
@@ -4750,7 +4800,7 @@ with onglet_ia:
 {bloc_focus}
 
 #### 2. Stratégie adaptée à votre Portefeuille ({valeur_totale_portefeuille:,.0f} €)
-- **Point d'entrée :** Privilégiez un achat ou renforcement uniquement si le cours actuel est inférieur à votre **Prix Cible** (ou à votre **PRU**) avec un **Score ≥ 55/100**.
+- **Repères :** le Radar compare le cours actuel à votre **Prix Cible** et à votre **PRU** ; un **Score ≥ 55/100** signifie qu'une majorité d'indicateurs sont favorables.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
@@ -4825,7 +4875,7 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 
 Mission demandée par l'utilisateur : {question_utilisateur}
 
-Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, un récapitulatif dédié aux performances de ses plus-values ou moins-values actées, ses points forts, points de vigilance et plan d'action concret). Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
+Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, un récapitulatif dédié aux performances de ses plus-values ou moins-values actées, ses points forts, points de vigilance et pistes de réflexion). Ne formule jamais de recommandation personnalisée d'achat ou de vente : pas de « achetez » ni « vendez », pas de quantités ni de prix d'ordre à passer. Décris ce que montrent les indicateurs et laisse la décision à l'utilisateur. Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
         modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
         priorite_modeles = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.5-pro"]
@@ -4869,10 +4919,10 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         titre_audit = "Audit Complet 360° & Fiscalité"
         code_audit_choisi = "AUDIT_1"
         prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, récapitulatif de mes plus-values ou moins-values actées, analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
-    if col_ia2.button("🛒 2. Plan d'Action DCA du Mois (VIX & RSI)", width="stretch"):
-        titre_audit = "Plan d'Action DCA du Mois"
+    if col_ia2.button("🛒 2. Simulation DCA du Mois (VIX & RSI)", width="stretch"):
+        titre_audit = "Simulation DCA du Mois"
         code_audit_choisi = "AUDIT_2"
-        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), comment dois-je répartir précisément mon budget DCA de {BUDGET_MENSUEL:.0f} € sur 1 ou 2 valeurs maximum ce mois-ci ?"
+        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), que montrent les indicateurs pour les valeurs de mon radar, et comment se répartirait mathématiquement une enveloppe de {BUDGET_MENSUEL:.0f} € selon le score de l'algorithme ?"
     if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", width="stretch"):
         titre_audit = "Arbitrage PEA (EUR) vs Actions US ($)"
         code_audit_choisi = "AUDIT_3"
@@ -4882,18 +4932,18 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     if col_ia4.button("🛡️ 4. Stress-Test, Risques & Diversification", width="stretch"):
         titre_audit = "Stress-Test, Risques & Diversification"
         code_audit_choisi = "AUDIT_4"
-        prompt_choisi = "Analyse les risques de concentration de mon portefeuille (poids de mes plus grosses lignes et secteurs dominants), fais un stress-test en cas de baisse de marché de 20% et donne-moi des pistes concrètes de diversification."
+        prompt_choisi = "Analyse les risques de concentration de mon portefeuille (poids de mes plus grosses lignes et secteurs dominants), fais un stress-test en cas de baisse de marché de 20% et montre quels secteurs sont peu ou pas représentés."
     if col_ia5.button("💵 5. Optimisation de la Rente & Boule de Neige", width="stretch"):
         titre_audit = "Optimisation de la Rente & Calendrier"
         code_audit_choisi = "AUDIT_5"
-        prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et propose une stratégie pour accélérer mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
+        prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et décris les leviers qui accéléreraient mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
     if col_ia6.button("💰 6. Bilan de mes Plus/Moins-Values Actées (Pro)", width="stretch"):
         if not est_pro_max:
             st.warning("🔒 L'audit des Arbitrages & Plus-Values Actées est réservé à l'offre **Pro (8,90 €/mois)**.")
         else:
             titre_audit = "Bilan de mes Arbitrages & Plus-Values Actées"
             code_audit_choisi = "AUDIT_6"
-            prompt_choisi = "Fais-moi un récapitulatif complet et détaillé des performances de mes plus-values ou moins-values actées (réalisées), analyse mon taux de réussite (win rate), ma performance d'extraction réelle et conseille-moi sur le réinvestissement du cash encaissé."
+            prompt_choisi = "Fais-moi un récapitulatif complet et détaillé des performances de mes plus-values ou moins-values actées (réalisées), analyse mon taux de réussite (win rate), ma performance d'extraction réelle et le montant de cash disponible après ces ventes."
 
     st.markdown("---")
     col_q_input, col_q_btn, col_q_clear = st.columns([4, 1.3, 0.8])
@@ -6074,7 +6124,7 @@ try:
             txt_sp_court = ", ".join(f"<b>{n_s} ({p_s:.0f}%)</b>" for n_s, p_s, _ in alertes_surpond[:3])
             html_alerte_20_radar = (
                 f"<div style='margin-top:6px; font-size:0.82em; color:#f39c12;'>"
-                f"⚖️ <b>Vigilance Concentration (>20%) :</b> {txt_sp_court} — évitez de surpondérer ces lignes sur le DCA du mois."
+                f"⚖️ <b>Vigilance Concentration (>20%) :</b> {txt_sp_court} — ces lignes pèsent déjà lourd dans le portefeuille."
                 f"</div>"
             )
 
@@ -6082,7 +6132,7 @@ try:
         <div class="argon-card" style="border-left: 4px solid #2ecc71; margin-top: 14px; margin-bottom: 10px; padding: 12px 16px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span style="font-size:0.82em; font-weight:800; text-transform:uppercase; color:#2ecc71;">
-                    🔔 RADAR D'OPPORTUNITÉS IMMÉDIATES (PRIX CIBLES ATTEINTS & PROCHES)
+                    🔔 RADAR DES PRIX CIBLES (ATTEINTS & PROCHES)
                 </span>
                 <span class="b-green" style="font-size:0.75em;">{len(opportunites_cibles)} signal(aux) actif(s)</span>
             </div>
@@ -6450,17 +6500,20 @@ except Exception as e_pack:
 # FOOTER, MENTIONS LÉGALES, CGV, DROIT DE RÉTRACTATION & CONFORMITÉ AMF (NON-CIF)
 # ==============================================================================
 NOM_APP_LEGAL = "Boursy"  # Changez ici en "Nano" dès que votre nom final est choisi
-NOM_EDITEUR = "Éditeur Indépendant (Micro-Entreprise)"
-NUMERO_SIRET = "En cours d'immatriculation"
+# Identité de l'éditeur (obligatoire, loi LCEN) : à renseigner dans les secrets Streamlit
+NOM_EDITEUR = _lire_secret("EDITEUR_NOM") or "Éditeur à renseigner (secret EDITEUR_NOM)"
+NUMERO_SIRET = _lire_secret("EDITEUR_SIRET") or "en cours d'immatriculation"
+ADRESSE_EDITEUR = _lire_secret("EDITEUR_ADRESSE") or "adresse à renseigner (secret EDITEUR_ADRESSE)"
 CONTACT_AFFICHE = CONTACT_EMAIL or "adresse de contact à renseigner (secret CONTACT_EMAIL)"
 
 st.markdown("---")
 with st.expander(f"⚖️ Mentions Légales, CGV, Droit de Rétractation & Avertissement AMF ({NOM_APP_LEGAL} SaaS)", expanded=False):
-    tab_leg_amf, tab_leg_cgv, tab_leg_retract, tab_leg_rgpd = st.tabs([
+    tab_leg_amf, tab_leg_cgv, tab_leg_retract, tab_leg_rgpd, tab_leg_confid = st.tabs([
         "🛡️ 1. Avertissement AMF (Non-CIF)",
         "💳 2. CGV & Abonnements (4,90 € / 8,90 €)",
         "⏳ 3. Droit de Rétractation (L221-28)",
-        "🏛️ 4. Mentions Légales & RGPD",
+        "🏛️ 4. Mentions Légales",
+        "🔒 5. Politique de Confidentialité",
     ])
 
     with tab_leg_amf:
@@ -6508,14 +6561,47 @@ with st.expander(f"⚖️ Mentions Légales, CGV, Droit de Rétractation & Avert
         afficher_html(f"""
         <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
             <b>1. Éditeur et Hébergement (Loi LCEN)</b><br>
-            • <b>Éditeur du service :</b> {NOM_EDITEUR} — SIRET : {NUMERO_SIRET}<br>
+            • <b>Éditeur du service :</b> {NOM_EDITEUR} — SIRET : {NUMERO_SIRET} — {ADRESSE_EDITEUR}<br>
             • <b>Contact & Support Client :</b> <a href="mailto:{CONTACT_AFFICHE}">{CONTACT_AFFICHE}</a><br>
             • <b>Hébergement de l'application :</b> Streamlit Cloud / Snowflake Inc. (San Mateo, Californie, USA)<br>
             • <b>Hébergement de la base de données chiffrée :</b> Supabase Inc. (Infrastructure Cloud sécurisée avec protocole Row Level Security)<br><br>
-            <b>2. Protection des Données Personnelles (RGPD)</b><br>
-            Dans le cadre de son fonctionnement, {NOM_APP_LEGAL} collecte uniquement l'adresse email de connexion et les données patrimoniales saisies volontairement par l'utilisateur (lignes de portefeuille, PRU, historique d'arbitrages). Ces données sont strictement cloisonnées par identifiant unique (UUID) et ne sont jamais vendues ni cédées à des tiers.<br><br>
-            <b>3. Sous-traitants techniques et Droits de l'Utilisateur</b><br>
-            L'application s'appuie sur trois sous-traitants de confiance : <b>Supabase</b> (authentification et sauvegarde), <b>Stripe</b> (gestion des abonnements) et <b>Google Gemini API</b> (génération des diagnostics IA à la demande). Conformément au Règlement Général sur la Protection des Données (RGPD), vous disposez d'un droit d'accès, de rectification, de portabilité (via le bouton d'export CSV) et de suppression intégrale de votre compte sur simple demande envoyée à <b>{CONTACT_AFFICHE}</b>.
+            <b>2. Données personnelles</b><br>
+            Le traitement de vos données personnelles est décrit dans l'onglet <b>🔒 5. Politique de Confidentialité</b>.
+        </div>
+        """)
+
+    with tab_leg_confid:
+        afficher_html(f"""
+        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
+            <b>1. Responsable du traitement</b><br>
+            {NOM_EDITEUR} — {ADRESSE_EDITEUR} — contact : <a href="mailto:{CONTACT_AFFICHE}">{CONTACT_AFFICHE}</a>.<br><br>
+            <b>2. Données collectées</b><br>
+            • Votre adresse e-mail et votre mot de passe (conservé sous forme chiffrée par Supabase, jamais lisible par l'éditeur).<br>
+            • Les données que vous saisissez : actions suivies, quantités, prix de revient, prix cibles, budget, ventes, dividendes encaissés, préférences d'alertes.<br>
+            • Votre niveau d'abonnement et votre identifiant client Stripe. Vos coordonnées bancaires sont traitées par Stripe uniquement et ne nous sont jamais transmises.<br>
+            • Les questions posées au coach IA, transmises avec un résumé de votre portefeuille au moment de l'analyse.<br>
+            • Des données techniques de connexion (adresse IP, navigateur), traitées par nos hébergeurs pour faire fonctionner le service.<br><br>
+            <b>3. Finalités et base légale</b><br>
+            Ces données servent uniquement à fournir le service que vous avez demandé (suivi de portefeuille, alertes, analyses, gestion de l'abonnement) : la base légale est l'exécution du contrat. Elles ne sont ni vendues, ni louées, ni utilisées à des fins publicitaires.<br><br>
+            <b>4. Durée de conservation</b><br>
+            Tant que votre compte existe. À sa suppression, vos données de portefeuille, votre historique et votre compte sont effacés immédiatement. Les justificatifs de paiement sont conservés par Stripe et par l'éditeur pendant la durée exigée par les obligations comptables.<br><br>
+            <b>5. Destinataires (sous-traitants)</b><br>
+            • <b>Supabase</b> : comptes utilisateurs et base de données.<br>
+            • <b>Streamlit Cloud (Snowflake Inc., États-Unis)</b> : hébergement de l'application.<br>
+            • <b>Stripe</b> : paiement et gestion des abonnements.<br>
+            • <b>Google</b> : API Gemini (analyses du coach IA, à votre demande) et Gmail (envoi des e-mails).<br>
+            • <b>GitHub (Microsoft)</b> : exécution de la tâche quotidienne d'envoi des alertes.<br>
+            Les cours de bourse sont obtenus auprès de Yahoo Finance : seuls les symboles des actions lui sont transmis, jamais vos données personnelles.<br><br>
+            <b>6. Transferts hors de l'Union européenne</b><br>
+            Certains de ces prestataires sont situés aux États-Unis. Ces transferts s'appuient sur les garanties prévues par le RGPD (décision d'adéquation du Data Privacy Framework ou clauses contractuelles types de la Commission européenne, selon le prestataire).<br><br>
+            <b>7. Vos droits</b><br>
+            Vous disposez d'un droit d'accès, de rectification, d'effacement, de limitation, d'opposition et de portabilité. Vous pouvez :<br>
+            • exporter vos données avec le bouton <b>📥 Export CSV</b> ;<br>
+            • supprimer vous-même votre compte et toutes vos données dans <b>⚙️ Mon compte</b> (menu de gauche, une fois connecté) ;<br>
+            • pour toute autre demande, écrire à <a href="mailto:{CONTACT_AFFICHE}">{CONTACT_AFFICHE}</a>.<br>
+            Si vous estimez que vos droits ne sont pas respectés, vous pouvez adresser une réclamation à la <b>CNIL</b> (www.cnil.fr).<br><br>
+            <b>8. Cookies</b><br>
+            Boursy n'utilise aucun cookie publicitaire ni de mesure d'audience. Seuls les cookies techniques nécessaires au fonctionnement de l'application et de la connexion sont utilisés.
         </div>
         """)
 
