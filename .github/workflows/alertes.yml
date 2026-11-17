@@ -26,6 +26,15 @@ jobs:
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           APP_URL: ${{ vars.APP_URL }}
+      - name: Envoyer le résumé mensuel du DCA
+        if: always()
+        run: python resume_mensuel.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          APP_URL: ${{ vars.APP_URL }}
       - name: Enregistrer les signaux du mois (journal en direct)
         if: always()
         run: python journal_signaux.py
