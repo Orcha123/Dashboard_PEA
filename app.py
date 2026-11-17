@@ -11,10 +11,24 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 from supabase import create_client
+from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE  # catalogue partagé avec la tâche planifiée
+from moteur_signaux import (  # moteur de calcul partagé avec la tâche planifiée
+    calculer_rsi,
+    calculer_stochastique,
+    calculer_atr_pct,
+    calculer_bollinger,
+    calculer_macd,
+    analyser_signal_ema_2_12,
+    calculer_score_radar,
+    calculer_regression_lineaire,
+    rejouer_signaux,
+    performance_apres,
+    ALGORITHMES_SIGNAUX,
+)
 
 # ==============================================================================
 # CONFIGURATION DE LA PAGE & DESIGN ARGON UI
@@ -1199,139 +1213,6 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Ajouter / Gérer les actions")
 
 # --- MÉGA-CATALOGUE ENRICHI (+100 VALEURS PEA, SBF 120, EUROPE, ETF & US) ---
-ENRICHISSEMENT_CATALOGUE = {
-    # Actions Françaises (CAC 40 & SBF 120 - PEA)
-    "Air Liquide": ("AI.PA", "EUR", "Chimie/Industrie", 165.0, 3.20, 0.55, "+8.5%", ["Mai"]),
-    "Airbus": ("AIR.PA", "EUR", "Aéronautique/Défense", 145.0, 2.00, 0.35, "+6.5%", ["Avr"]),
-    "Alstom": ("ALO.PA", "EUR", "Ferroviaire", 18.0, 0.25, 0.30, "+2.0%", ["Juil"]),
-    "Alten": ("ATE.PA", "EUR", "Ingénierie/Tech", 95.0, 1.50, 0.25, "+8.0%", ["Juin"]),
-    "Amundi": ("AMUN.PA", "EUR", "Finance/Gestion", 62.0, 4.10, 0.70, "+5.5%", ["Mai"]),
-    "Arkema": ("AKE.PA", "EUR", "Chimie", 82.0, 3.50, 0.45, "+6.5%", ["Mai"]),
-    "AXA": ("CS.PA", "EUR", "Assurance", 35.0, 1.98, 0.55, "+9.2%", ["Mai"]),
-    "Bic": ("BB.PA", "EUR", "Consommation", 58.0, 2.85, 0.50, "+5.0%", ["Mai"]),
-    "BioMérieux": ("BIM.PA", "EUR", "Santé/Diagnostic", 98.0, 0.85, 0.28, "+6.0%", ["Mai"]),
-    "BNP Paribas": ("BNP.PA", "EUR", "Banque", 65.0, 4.60, 0.50, "+7.0%", ["Mai"]),
-    "Bolloré": ("BOL.PA", "EUR", "Holding/Logistique", 5.6, 0.07, 0.25, "+3.0%", ["Juin"]),
-    "Bouygues": ("EN.PA", "EUR", "BTP/Télécoms", 32.0, 1.90, 0.65, "+3.5%", ["Mai"]),
-    "Bureau Veritas": ("BVI.PA", "EUR", "Certification", 27.0, 0.83, 0.55, "+6.0%", ["Mai"]),
-    "Capgemini": ("CAP.PA", "EUR", "Services IT", 165.0, 3.40, 0.35, "+10.0%", ["Mai"]),
-    "Carrefour": ("CA.PA", "EUR", "Distribution", 14.0, 0.87, 0.52, "+8.0%", ["Juin"]),
-    "Coface": ("COFA.PA", "EUR", "Assurance Crédit", 13.5, 1.30, 0.80, "+7.5%", ["Mai"]),
-    "Covivio": ("COV.PA", "EUR", "Immobilier", 48.0, 3.30, 0.78, "+2.0%", ["Mai"]),
-    "Crédit Agricole": ("ACA.PA", "EUR", "Banque", 14.0, 1.05, 0.55, "+6.5%", ["Mai"]),
-    "Danone": ("BN.PA", "EUR", "Agroalimentaire", 60.0, 2.10, 0.60, "+3.5%", ["Mai"]),
-    "Dassault Aviation": ("AM.PA", "EUR", "Aéronautique/Défense", 195.0, 3.37, 0.32, "+9.0%", ["Mai"]),
-    "Dassault Systèmes": ("DSY.PA", "EUR", "Logiciels/Tech", 33.0, 0.23, 0.22, "+7.0%", ["Mai"]),
-    "Edenred": ("EDEN.PA", "EUR", "Paiements/Services", 34.0, 1.10, 0.48, "+9.5%", ["Mai"]),
-    "Eiffage": ("FGR.PA", "EUR", "BTP/Concessions", 88.0, 4.10, 0.42, "+8.5%", ["Mai"]),
-    "Elis": ("ELIS.PA", "EUR", "Services Industriels", 20.0, 0.43, 0.30, "+6.0%", ["Mai"]),
-    "Engie": ("ENGI.PA", "EUR", "Énergie/Utilities", 16.0, 1.43, 0.65, "+5.0%", ["Mai"]),
-    "EssilorLuxottica": ("EL.PA", "EUR", "Santé/Optique", 205.0, 3.95, 0.55, "+7.5%", ["Mai"]),
-    "Eurazeo": ("RF.PA", "EUR", "Private Equity", 72.0, 2.42, 0.45, "+8.0%", ["Mai"]),
-    "Euronext": ("ENX.PA", "EUR", "Bourse/Finance", 92.0, 2.48, 0.50, "+6.5%", ["Mai"]),
-    "FDJ - Française des Jeux": ("FDJ.PA", "EUR", "Loisirs/Loterie", 34.0, 1.78, 0.75, "+7.0%", ["Mai"]),
-    "GTT - Gaztransport": ("GTT.PA", "EUR", "Ingénierie/GNL", 125.0, 7.30, 0.80, "+11.0%", ["Juin", "Déc"]),
-    "Gecina": ("GFC.PA", "EUR", "Immobilier", 92.0, 5.30, 0.75, "+2.0%", ["Mar", "Juil"]),
-    "Getlink": ("GET.PA", "EUR", "Infrastructures", 15.5, 0.55, 0.55, "+6.0%", ["Juin"]),
-    "Hermès": ("RMS.PA", "EUR", "Luxe", 2050.0, 15.00, 0.35, "+14.0%", ["Fév", "Mai"]),
-    "Ipsen": ("IPN.PA", "EUR", "Santé/Pharma", 108.0, 1.20, 0.25, "+4.0%", ["Mai"]),
-    "Icade": ("ICAD.PA", "EUR", "Immobilier", 24.0, 4.30, 0.82, "+1.5%", ["Mar", "Juil"]),
-    "Interparfums": ("ITP.PA", "EUR", "Cosmétiques/Luxe", 42.0, 1.15, 0.55, "+10.0%", ["Mai"]),
-    "Kering": ("KER.PA", "EUR", "Luxe", 230.0, 6.00, 0.58, "+3.0%", ["Jan", "Mai"]),
-    "Klépierre": ("LI.PA", "EUR", "Immobilier Commercial", 26.0, 1.80, 0.72, "+4.5%", ["Mar", "Juil"]),
-    "L'Oréal": ("OR.PA", "EUR", "Cosmétiques", 360.0, 6.60, 0.52, "+8.5%", ["Avr"]),
-    "Legrand": ("LR.PA", "EUR", "Équipement Élec.", 95.0, 2.09, 0.48, "+7.5%", ["Mai"]),
-    "LVMH": ("MC.PA", "EUR", "Luxe", 620.0, 13.00, 0.45, "+12.0%", ["Avr", "Déc"]),
-    "M6 - Métropole TV": ("MMT.PA", "EUR", "Médias", 12.0, 1.25, 0.68, "+4.0%", ["Mai"]),
-    "Michelin": ("ML.PA", "EUR", "Automobile/Pneus", 32.0, 1.35, 0.48, "+6.5%", ["Mai"]),
-    "Nexans": ("NEX.PA", "EUR", "Câbles/Énergie", 105.0, 2.30, 0.35, "+10.0%", ["Mai"]),
-    "Orange": ("ORA.PA", "EUR", "Télécoms", 10.5, 0.72, 0.68, "+2.0%", ["Juin", "Déc"]),
-    "Pernod Ricard": ("RI.PA", "EUR", "Spiritueux", 70.0, 4.70, 0.55, "+6.0%", ["Juil", "Nov"]),
-    "Publicis": ("PUB.PA", "EUR", "Communication", 92.0, 3.40, 0.48, "+8.5%", ["Juil"]),
-    "Rémy Cointreau": ("RCO.PA", "EUR", "Spiritueux", 62.0, 2.00, 0.52, "+4.0%", ["Oct"]),
-    "Renault": ("RNO.PA", "EUR", "Automobile", 42.0, 1.85, 0.30, "+8.0%", ["Mai"]),
-    "Rexel": ("RXL.PA", "EUR", "Distribution Élec.", 24.0, 1.20, 0.45, "+7.0%", ["Mai"]),
-    "Rubis": ("RUI.PA", "EUR", "Énergie/Stockage", 25.0, 1.98, 0.62, "+3.5%", ["Juin"]),
-    "Safran": ("SAF.PA", "EUR", "Aéronautique/Défense", 195.0, 2.20, 0.38, "+9.5%", ["Mai"]),
-    "Saint-Gobain": ("SGO.PA", "EUR", "Matériaux", 78.0, 2.10, 0.38, "+7.5%", ["Juin"]),
-    "Sanofi": ("SAN.PA", "EUR", "Santé", 90.0, 3.76, 0.58, "+4.8%", ["Mai"]),
-    "Schneider Electric": ("SU.PA", "EUR", "Industrie/Tech", 210.0, 3.50, 0.48, "+8.8%", ["Mai"]),
-    "Scor": ("SCR.PA", "EUR", "Réassurance", 20.0, 1.80, 0.55, "+4.0%", ["Mai"]),
-    "Seb": ("SK.PA", "EUR", "Électroménager", 92.0, 2.62, 0.42, "+5.5%", ["Mai"]),
-    "Société Générale": ("GLE.PA", "EUR", "Banque", 25.0, 0.90, 0.40, "+3.0%", ["Mai"]),
-    "Sodexo": ("SW.PA", "EUR", "Restauration/Services", 75.0, 3.10, 0.50, "+6.0%", ["Déc"]),
-    "Sopra Steria": ("SOP.PA", "EUR", "Services IT", 175.0, 4.65, 0.38, "+9.0%", ["Mai"]),
-    "Spie": ("SPIE.PA", "EUR", "Services Énergie", 34.0, 0.83, 0.42, "+7.5%", ["Mai", "Sep"]),
-    "Stellantis": ("STLAP.PA", "EUR", "Automobile", 13.0, 1.55, 0.35, "+6.0%", ["Mai"]),
-    "STMicroelectronics": ("STMPA.PA", "EUR", "Semi-conducteurs", 26.0, 0.36, 0.18, "+5.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Téléperformance": ("TEP.PA", "EUR", "Relation Client", 88.0, 3.85, 0.45, "+7.0%", ["Mai"]),
-    "TF1": ("TFI.PA", "EUR", "Médias", 8.0, 0.55, 0.62, "+5.0%", ["Avr"]),
-    "Thales": ("HO.PA", "EUR", "Défense/Aérospatial", 148.0, 3.40, 0.40, "+8.5%", ["Mai", "Déc"]),
-    "TotalEnergies": ("TTE.PA", "EUR", "Énergie", 58.0, 3.22, 0.42, "+6.1%", ["Jan", "Avr", "Juil", "Oct"]),
-    "Trigano": ("TRI.PA", "EUR", "Loisirs/Camping-cars", 118.0, 3.50, 0.25, "+9.0%", ["Mai", "Déc"]),
-    "Vallourec": ("VK.PA", "EUR", "Énergie/Tubes", 15.0, 1.50, 0.45, "+5.0%", ["Mai"]),
-    "Veolia": ("VIE.PA", "EUR", "Environnement", 28.0, 1.25, 0.65, "+6.5%", ["Mai"]),
-    "Verallia": ("VRLA.PA", "EUR", "Emballage Verre", 27.0, 2.15, 0.50, "+8.0%", ["Mai"]),
-    "Vicat": ("VCT.PA", "EUR", "Matériaux/Ciment", 35.0, 2.00, 0.42, "+4.5%", ["Mai"]),
-    "Vinci": ("DG.PA", "EUR", "Concessions/BTP", 105.0, 4.50, 0.52, "+7.5%", ["Avr", "Nov"]),
-    "Vivendi": ("VIV.PA", "EUR", "Médias/Divertissement", 9.5, 0.25, 0.45, "+3.0%", ["Avr"]),
-    "Wendel": ("MF.PA", "EUR", "Holding/Investissement", 88.0, 4.00, 0.45, "+6.5%", ["Mai"]),
-
-    # Grandes Actions Européennes éligibles PEA
-    "Allianz (Allemagne)": ("ALV.DE", "EUR", "Assurance EUR", 265.0, 13.80, 0.60, "+8.0%", ["Mai"]),
-    "ASML Holding (Pays-Bas)": ("ASML.AS", "EUR", "Semi-conducteurs EUR", 680.0, 6.10, 0.32, "+14.0%", ["Fév", "Mai", "Août", "Nov"]),
-    "BMW (Allemagne)": ("BMW.DE", "EUR", "Automobile EUR", 78.0, 6.00, 0.38, "+5.0%", ["Mai"]),
-    "Deutsche Telekom (All.)": ("DTE.DE", "EUR", "Télécoms EUR", 25.0, 0.77, 0.48, "+6.0%", ["Avr"]),
-    "Enel (Italie)": ("ENEL.MI", "EUR", "Énergie EUR", 6.8, 0.43, 0.65, "+5.5%", ["Jan", "Juil"]),
-    "Ferrari (Italie)": ("RACE.MI", "EUR", "Luxe/Auto EUR", 385.0, 2.44, 0.30, "+12.0%", ["Mai"]),
-    "Iberdrola (Espagne)": ("IBE.MC", "EUR", "Énergie Verte EUR", 12.5, 0.55, 0.65, "+6.5%", ["Jan", "Juil"]),
-    "Inditex - Zara (Espagne)": ("ITX.MC", "EUR", "Mode/Retail EUR", 46.0, 1.54, 0.60, "+9.0%", ["Mai", "Nov"]),
-    "ING Groep (Pays-Bas)": ("INGA.AS", "EUR", "Banque EUR", 15.0, 1.10, 0.50, "+7.0%", ["Mai", "Août"]),
-    "Intesa Sanpaolo (Italie)": ("ISP.MI", "EUR", "Banque EUR", 3.6, 0.30, 0.70, "+8.0%", ["Mai", "Nov"]),
-    "Mercedes-Benz (Allemagne)": ("MBG.DE", "EUR", "Automobile EUR", 58.0, 5.30, 0.42, "+6.0%", ["Mai"]),
-    "SAP (Allemagne)": ("SAP.DE", "EUR", "Logiciels/Cloud EUR", 190.0, 2.20, 0.40, "+7.5%", ["Mai"]),
-    "Shell (Pays-Bas)": ("SHELL.AS", "EUR", "Énergie EUR", 31.0, 1.28, 0.38, "+5.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Siemens (Allemagne)": ("SIE.DE", "EUR", "Industrie/Tech EUR", 170.0, 4.70, 0.48, "+6.5%", ["Fév"]),
-    "Unilever (Pays-Bas)": ("UNA.AS", "EUR", "Consommation EUR", 52.0, 1.73, 0.62, "+3.5%", ["Mar", "Juin", "Sep", "Déc"]),
-
-    # ETFs éligibles PEA (Capitalisants / Distribuants)
-    "ETF Amundi MSCI World PEA (CW8)": ("CW8.PA", "EUR", "ETF Monde PEA", 510.0, 0.0, 0.0, "+9.5%", ["Mai"]),
-    "ETF BNP S&P 500 PEA (ESE)": ("ESE.PA", "EUR", "ETF USA PEA", 25.0, 0.0, 0.0, "+10.5%", ["Mai"]),
-    "ETF Amundi Nasdaq-100 PEA (PUST)": ("PUST.PA", "EUR", "ETF Tech US PEA", 72.0, 0.0, 0.0, "+12.0%", ["Mai"]),
-    "ETF Amundi Euro Stoxx 50 PEA": ("MSE.PA", "EUR", "ETF Europe PEA", 48.0, 1.45, 0.40, "+6.5%", ["Juil", "Déc"]),
-
-    # Actions Américaines (CTO en USD - Dividend Aristocrats & Tech)
-    "AbbVie": ("ABBV", "USD", "Santé US", 175.0, 6.20, 0.58, "+7.5%", ["Fév", "Mai", "Août", "Nov"]),
-    "Alphabet - Google": ("GOOGL", "USD", "Tech US", 170.0, 0.80, 0.12, "+10.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Amazon": ("AMZN", "USD", "Tech/E-Commerce US", 185.0, 0.0, 0.0, "+12.0%", ["Mai"]),
-    "Apple": ("AAPL", "USD", "Tech US", 200.0, 1.00, 0.16, "+5.5%", ["Fév", "Mai", "Août", "Nov"]),
-    "Broadcom": ("AVGO", "USD", "Semi-conducteurs US", 160.0, 2.12, 0.42, "+14.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Caterpillar": ("CAT", "USD", "Industrie US", 330.0, 5.64, 0.28, "+8.0%", ["Fév", "Mai", "Août", "Nov"]),
-    "Chevron": ("CVX", "USD", "Énergie US", 148.0, 6.52, 0.55, "+6.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Coca-Cola": ("KO", "USD", "Consommation US", 62.0, 1.94, 0.70, "+4.5%", ["Avr", "Juil", "Oct", "Déc"]),
-    "Costco": ("COST", "USD", "Distribution US", 820.0, 4.64, 0.28, "+11.0%", ["Fév", "Mai", "Août", "Nov"]),
-    "Eli Lilly": ("LLY", "USD", "Santé/Pharma US", 800.0, 5.20, 0.35, "+15.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "ExxonMobil": ("XOM", "USD", "Énergie US", 112.0, 3.80, 0.44, "+4.5%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Home Depot": ("HD", "USD", "Distribution US", 365.0, 9.00, 0.58, "+8.5%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Johnson & Johnson": ("JNJ", "USD", "Santé US", 155.0, 4.96, 0.52, "+5.5%", ["Mar", "Juin", "Sep", "Déc"]),
-    "JPMorgan Chase": ("JPM", "USD", "Banque US", 205.0, 5.00, 0.28, "+7.0%", ["Jan", "Avr", "Juil", "Oct"]),
-    "Main Street Capital (Mensuel)": ("MAIN", "USD", "Finance/BDC US", 48.0, 3.00, 0.72, "+4.5%", ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]),
-    "Mastercard": ("MA", "USD", "Paiements US", 460.0, 2.64, 0.20, "+13.0%", ["Fév", "Mai", "Août", "Nov"]),
-    "McDonald's": ("MCD", "USD", "Restauration US", 275.0, 7.08, 0.58, "+7.5%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Merck & Co": ("MRK", "USD", "Santé/Pharma US", 112.0, 3.08, 0.48, "+6.5%", ["Jan", "Avr", "Juil", "Oct"]),
-    "Meta Platforms": ("META", "USD", "Tech US", 520.0, 2.00, 0.12, "+10.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Microsoft": ("MSFT", "USD", "Tech US", 400.0, 3.32, 0.25, "+10.2%", ["Mar", "Juin", "Sep", "Déc"]),
-    "NVIDIA": ("NVDA", "USD", "IA & Semi-conducteurs US", 120.0, 0.04, 0.02, "+15.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "PepsiCo": ("PEP", "USD", "Consommation US", 168.0, 5.42, 0.66, "+7.0%", ["Jan", "Mar", "Juin", "Sep"]),
-    "Pfizer": ("PFE", "USD", "Santé/Pharma US", 28.0, 1.68, 0.68, "+3.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Procter & Gamble": ("PG", "USD", "Consommation US", 162.0, 4.03, 0.62, "+6.0%", ["Fév", "Mai", "Août", "Nov"]),
-    "Realty Income": ("O", "USD", "Immobilier US (REIT)", 55.0, 3.16, 0.74, "+3.8%", ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]),
-    "Texas Instruments": ("TXN", "USD", "Semi-conducteurs US", 185.0, 5.44, 0.65, "+7.5%", ["Fév", "Mai", "Août", "Nov"]),
-    "UnitedHealth": ("UNH", "USD", "Santé/Assurance US", 520.0, 8.40, 0.32, "+12.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Verizon": ("VZ", "USD", "Télécoms US", 40.0, 2.71, 0.60, "+2.0%", ["Fév", "Mai", "Août", "Nov"]),
-    "Visa": ("V", "USD", "Paiements US", 275.0, 2.36, 0.22, "+14.0%", ["Mar", "Juin", "Sep", "Déc"]),
-    "Walmart": ("WMT", "USD", "Distribution US", 72.0, 0.83, 0.35, "+4.0%", ["Jan", "Avr", "Mai", "Sep"]),
-}
 
 for nom_e, (sym_e, dev_e, sec_e, cib_e, div_e, pay_e, cr_e, mois_e) in ENRICHISSEMENT_CATALOGUE.items():
     CATALOGUE_ACTIONS[f"{nom_e} ({dev_e})"] = (sym_e, dev_e, sec_e)
@@ -1445,43 +1326,28 @@ def bilan_signaux_symbole(symbole, payout_r):
 @st.cache_data(ttl=21600, max_entries=300)
 def _bilan_signaux_symbole(symbole, payout_r):
     """
-    Rejoue le score du radar une fois par mois sur l'historique : à chaque date, seuls les cours et les dividendes
-    connus à cette date sont utilisés (3 ans de cours, dividendes des 12 derniers mois). Le prix cible, inconnu dans
-    le passé, n'est pas compté. Mesure ensuite la performance des 1, 3 et 6 mois suivants, dividendes inclus.
+    Rejoue les algorithmes une fois par mois sur l'historique (moteur_signaux.rejouer_signaux) : à chaque date, seuls les
+    cours et les dividendes connus à cette date sont utilisés. Mesure ensuite la performance des 1, 3 et 6 mois suivants.
     """
     historique = historique_long(symbole)
     if historique is None or len(historique) < 5:
         raise RuntimeError(f"Historique indisponible : {symbole}")
-    dates, clotures, dividendes, plus_hauts, plus_bas = historique
-    fenetre, pas, horizons = 756, 21, (21, 63, 126)
-    observations = []
-    for rang in range(fenetre - 1, len(clotures) - horizons[0], pas):
-        c = clotures[rang - fenetre + 1:rang + 1]
-        h = plus_hauts[rang - fenetre + 1:rang + 1]
-        b = plus_bas[rang - fenetre + 1:rang + 1]
-        prix = c[-1]
-        date_t = dates[rang]
-        il_y_a_un_an = (datetime.fromisoformat(date_t) - timedelta(days=365)).date().isoformat()
-        dividende_12_mois = sum(montant for date_d, montant in dividendes if il_y_a_un_an < date_d <= date_t)
-        statut_ema, pts_ema = analyser_signal_ema_2_12(c)
-        borne_inf, borne_sup = calculer_bollinger(c, 20)
-        macd_val, macd_sig = calculer_macd(c)
-        _, ecart_reg_pct, _, _ = calculer_regression_lineaire(c)
-        score, _, decision = calculer_score_radar(
-            prix, 0.0, payout_r, (dividende_12_mois / prix) if prix > 0 else 0.0, ecart_reg_pct, pts_ema,
-            calculer_rsi(c, 14), calculer_stochastique(c, h, b, 14), borne_inf, borne_sup, macd_val, macd_sig, statut_ema,
-        )
-        performances = {}
-        for horizon in horizons:
-            if rang + horizon < len(clotures):
-                date_fin = dates[rang + horizon]
-                dividendes_periode = sum(montant for date_d, montant in dividendes if date_t < date_d <= date_fin)
-                performances[horizon] = (clotures[rang + horizon] + dividendes_periode) / prix - 1.0
-            else:
-                performances[horizon] = None
-        observations.append({"date": date_t, "score": score, "decision": decision,
-                             "r1": performances[21], "r3": performances[63], "r6": performances[126]})
-    return observations
+    return rejouer_signaux(historique, payout_r)
+
+
+@st.cache_data(ttl=3600)
+def lire_signaux_mensuels():
+    """Toutes les lignes du journal des signaux en direct (table signaux_mensuels) ; None si la lecture est impossible."""
+    client_serveur = init_supabase_serveur()
+    if client_serveur is None:
+        raise RuntimeError("Clé de service absente")
+    lignes, debut = [], 0
+    while True:
+        lot = client_serveur.table("signaux_mensuels").select("*").order("mois").range(debut, debut + 999).execute().data or []
+        lignes.extend(lot)
+        if len(lot) < 1000:
+            return lignes
+        debut += 1000
 
 
 def cours_a_la_date(historique, date_iso):
@@ -1920,192 +1786,6 @@ def afficher_verrou_saas(titre_module, palier_requis="👑 Offre Pro (8,90 €/m
 # ==============================================================================
 # MOTEUR ALGORITHMIQUE ÉLEVÉ & INDICATEURS TECHNIQUES AVANCÉS
 # ==============================================================================
-def calculer_rsi(clotures, periode=14):
-    if len(clotures) < periode + 1:
-        return 50.0
-    variations = [clotures[i] - clotures[i - 1] for i in range(1, len(clotures))]
-    gains = [v if v > 0 else 0 for v in variations[-periode:]]
-    pertes = [-v if v < 0 else 0 for v in variations[-periode:]]
-    moy_gain = sum(gains) / periode
-    moy_perte = sum(pertes) / periode
-    if moy_perte == 0:
-        return 100.0
-    rs = moy_gain / moy_perte
-    return 100.0 - (100.0 / (1.0 + rs))
-
-def calculer_stochastique(clotures, hauts, bas, periode=14):
-    if len(clotures) < periode or len(hauts) < periode or len(bas) < periode:
-        return 50.0
-    plus_bas = min(bas[-periode:])
-    plus_haut = max(hauts[-periode:])
-    if plus_haut == plus_bas:
-        return 50.0
-    k = ((clotures[-1] - plus_bas) / (plus_haut - plus_bas)) * 100.0
-    return max(0.0, min(100.0, k))
-
-def calculer_atr_pct(clotures, hauts, bas, periode=14):
-    n = min(len(clotures), len(hauts), len(bas))
-    if n < periode + 1 or clotures[-1] <= 0:
-        return 1.5
-    trs = []
-    for i in range(n - periode, n):
-        tr = max(
-            hauts[i] - bas[i],
-            abs(hauts[i] - clotures[i - 1]),
-            abs(bas[i] - clotures[i - 1])
-        )
-        trs.append(tr)
-    atr = sum(trs) / len(trs)
-    return (atr / clotures[-1]) * 100.0
-
-def calculer_bollinger(clotures, periode=20):
-    if len(clotures) < periode:
-        return clotures[-1] * 0.95, clotures[-1] * 1.05
-    fenetre = clotures[-periode:]
-    moyenne = sum(fenetre) / periode
-    variance = sum((x - moyenne) ** 2 for x in fenetre) / periode
-    ecart_type = math.sqrt(variance)
-    return moyenne - (2 * ecart_type), moyenne + (2 * ecart_type)
-
-def calculer_macd(clotures):
-    if len(clotures) < 35:
-        return 0.0, 0.0
-    k12, k26, k9 = 2 / 13, 2 / 27, 2 / 10
-    e12, e26 = sum(clotures[:12]) / 12, sum(clotures[:26]) / 26
-    macds = []
-    for i, prix in enumerate(clotures):
-        if i >= 12:
-            e12 = (prix * k12) + (e12 * (1 - k12))
-        if i >= 26:
-            e26 = (prix * k26) + (e26 * (1 - k26))
-            macds.append(e12 - e26)
-    if len(macds) < 9:
-        return macds[-1], 0.0
-    sig = sum(macds[:9]) / 9
-    for m in macds[9:]:
-        sig = (m * k9) + (sig * (1 - k9))
-    return macds[-1], sig
-
-def calculer_ema_serie(clotures, periode):
-    if not clotures:
-        return []
-    k = 2 / (periode + 1)
-    emas = []
-    if len(clotures) >= periode:
-        sma = sum(clotures[:periode]) / periode
-        ema = sma
-        for i, prix in enumerate(clotures):
-            if i < periode - 1:
-                emas.append(None)
-            elif i == periode - 1:
-                emas.append(sma)
-            else:
-                ema = (prix * k) + (ema * (1 - k))
-                emas.append(ema)
-    else:
-        ema = clotures[0]
-        for prix in clotures:
-            ema = (prix * k) + (ema * (1 - k))
-            emas.append(ema)
-    return emas
-
-def analyser_signal_ema_2_12(clotures):
-    if len(clotures) < 15:
-        return "⚪ Neutre", 0
-    ema2_serie = calculer_ema_serie(clotures, 2)
-    ema12_serie = calculer_ema_serie(clotures, 12)
-    valides = [(e2, e12) for e2, e12 in zip(ema2_serie, ema12_serie) if e2 is not None and e12 is not None]
-    if len(valides) < 2:
-        return "⚪ Neutre", 0
-    veille_e2, veille_e12 = valides[-2]
-    jour_e2, jour_e12 = valides[-1]
-    ecart_pct = ((jour_e2 - jour_e12) / jour_e12 * 100) if jour_e12 > 0 else 0.0
-
-    if veille_e2 <= veille_e12 and jour_e2 > jour_e12:
-        return "🟢 Croisement haussier", 15
-    elif jour_e2 > jour_e12 and ecart_pct >= 0.20:
-        return "🟢 Tendance haussière", 12
-    elif veille_e2 >= veille_e12 and jour_e2 < jour_e12:
-        return "🔴 Croisement baissier", -10
-    else:
-        return "⚪ Neutre", 5
-
-def calculer_score_radar(prix_actuel, prix_cible, payout_r, rendement_actuel, ecart_reg_pct, pts_ema, rsi, stoch_k,
-                         borne_inf, borne_sup, macd_val, macd_sig, statut_ema_2_12):
-    """Score /100 et décision du radar. Renvoie (score, est_surevalue, decision). Utilisée aussi par le bilan des signaux."""
-    score = 0
-    if payout_r <= 0.55:
-        score += 18
-    elif payout_r <= 0.72:
-        score += 13
-    else:
-        score += 6
-
-    if rendement_actuel >= 0.05:
-        score += 15
-    elif rendement_actuel >= 0.03:
-        score += 11
-    else:
-        score += 6
-
-    if prix_cible > 0 and prix_actuel <= prix_cible:
-        score += 15
-    elif prix_cible > 0 and prix_actuel <= prix_cible * 1.05:
-        score += 8
-
-    if ecart_reg_pct <= -10:
-        score += 15
-    elif ecart_reg_pct < 0:
-        score += 10
-    elif ecart_reg_pct <= 5:
-        score += 4
-
-    score += pts_ema
-
-    if rsi <= 32 or stoch_k <= 20:
-        score += 14
-    elif rsi <= 46 or stoch_k <= 35:
-        score += 9
-    elif rsi >= 72 and stoch_k >= 80:
-        score -= 10
-
-    if prix_actuel <= borne_inf * 1.02:
-        score += 6
-    if macd_val > macd_sig:
-        score += 7
-    else:
-        score -= 2
-
-    score = int(min(100, max(0, score)))
-    est_surevalue = (prix_cible > 0 and prix_actuel >= prix_cible * 1.22 and (rsi >= 70 or prix_actuel >= borne_sup))
-
-    if est_surevalue:
-        decision = "🟠 ZONE HAUTE"
-    elif score >= 65 and "🔴" not in statut_ema_2_12:
-        decision = "🟢 SIGNAL FORT"
-    elif score >= 45 and "🔴" not in statut_ema_2_12:
-        decision = "🔵 SIGNAL FAVORABLE"
-    else:
-        decision = "⚪ SIGNAL NEUTRE"
-    return score, est_surevalue, decision
-
-
-def calculer_regression_lineaire(clotures):
-    n = len(clotures)
-    if n < 2:
-        return clotures[-1], 0.0, [], 0.0
-    x = list(range(n))
-    moy_x, moy_y = sum(x) / n, sum(clotures) / n
-    numerateur = sum((x[i] - moy_x) * (clotures[i] - moy_y) for i in range(n))
-    denominateur = sum((x[i] - moy_x) ** 2 for i in range(n))
-    pente = numerateur / denominateur if denominateur != 0 else 0
-    ordonnee = moy_y - (pente * moy_x)
-    droite_regression = [(pente * i) + ordonnee for i in range(n)]
-    residus = [clotures[i] - droite_regression[i] for i in range(n)]
-    std_res = math.sqrt(sum(r ** 2 for r in residus) / n)
-    val_reg = max(0.01, float(droite_regression[-1]))
-    ecart_pct = ((clotures[-1] - val_reg) / val_reg) * 100.0
-    return val_reg, ecart_pct, droite_regression, std_res
 
 
 # ==============================================================================
@@ -3036,7 +2716,7 @@ with onglet_radar:
             )
         else:
             st.caption(
-                "Boursy rejoue son score une fois par mois sur l'historique de chaque valeur de votre radar (jusqu'à 7 ans), "
+                "Boursy rejoue ses algorithmes une fois par mois sur l'historique de chaque valeur (jusqu'à 7 ans), "
                 "avec uniquement les cours et les dividendes connus à chaque date, puis mesure ce que l'action a fait "
                 "dans les 1, 3 et 6 mois suivants, dividendes inclus."
             )
@@ -3079,6 +2759,14 @@ with onglet_radar:
                     for o in obs_b:
                         observations_bilan.append(dict(o, action=nom_b))
                 barre_bilan.empty()
+
+                choix_algorithme_bilan = st.radio(
+                    "Algorithme étudié :", list(ALGORITHMES_SIGNAUX.values()), horizontal=True, key="rad_algorithme_bilan",
+                    help="Score actuel : celui du radar. Filtre de tendance : pas de signal fort sous la moyenne mobile à 200 jours. "
+                         "Nouveau score : tendance, momentum 12-1 mois, faible volatilité, rendement et régularité du dividende.",
+                )
+                cle_algorithme_bilan = next(k for k, v in ALGORITHMES_SIGNAUX.items() if v == choix_algorithme_bilan)
+                observations_bilan = [dict(o, decision=o.get(cle_algorithme_bilan, o["decision"])) for o in observations_bilan]
 
                 if not observations_bilan:
                     st.warning("Aucun historique suffisant (au moins 3 ans de cours) n'a pu être chargé pour les valeurs de votre radar.")
@@ -3153,7 +2841,7 @@ with onglet_radar:
                     mois_observes = [_indice_mois(o["date"]) for o in observations_bilan]
                     premier_mois_b, dernier_mois_b = min(mois_observes), max(mois_observes)
 
-                    def _ecart_ajuste(categorie, cle_r, horizon_mois):
+                    def _ecart_ajuste(categorie, cle_r, horizon_mois, cle_decision="decision"):
                         """
                         Écart moyen entre la performance après le signal et la performance moyenne de LA MÊME action, avec une
                         fourchette à 95 %. L'incertitude tient compte de ce que les actions d'un même mois évoluent ensemble
@@ -3163,7 +2851,7 @@ with onglet_radar:
                         ecarts = [
                             (_indice_mois(o["date"]), o[cle_r] - moyennes_par_valeur[(o["action"], cle_r)])
                             for o in observations_bilan
-                            if o["decision"] == categorie and o[cle_r] is not None and moyennes_par_valeur.get((o["action"], cle_r)) is not None
+                            if o.get(cle_decision) == categorie and o[cle_r] is not None and moyennes_par_valeur.get((o["action"], cle_r)) is not None
                         ]
                         if not ecarts:
                             return None
@@ -3224,12 +2912,35 @@ with onglet_radar:
                     html_verif += "</tbody></table>"
                     afficher_html(html_verif)
 
+                    st.markdown("##### ⚖️ Comparaison des trois algorithmes (signal fort, chaque action comparée à elle-même)")
+                    html_comparaison = (
+                        "<table class='r-table'><thead><tr><th style='text-align:left;'>Algorithme</th><th>Signaux forts</th>"
+                        "<th>Écart à 1 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
+                        "<th>Écart à 6 mois<br><span style='font-size:0.82em; opacity:0.75;'>[fourchette à 95 %]</span></th>"
+                        "<th>Lecture à 6 mois</th></tr></thead><tbody>"
+                    )
+                    for cle_algo, libelle_algo in ALGORITHMES_SIGNAUX.items():
+                        c1 = _ecart_ajuste(categories_bilan[0], "r1", 1, cle_algo)
+                        c6 = _ecart_ajuste(categories_bilan[0], "r6", 6, cle_algo)
+                        nb_forts_algo = sum(1 for o in observations_bilan if o.get(cle_algo) == categories_bilan[0])
+                        marque = " 👈" if cle_algo == cle_algorithme_bilan else ""
+                        html_comparaison += (f"<tr><td class='r-name'>{libelle_algo}{marque}</td><td>{nb_forts_algo}</td>"
+                                             + _cellule_ecart(c1) + _cellule_ecart(c6) + f"<td>{_verdict(c6)}</td></tr>")
+                    html_comparaison += "</tbody></table>"
+                    afficher_html(html_comparaison)
+                    st.caption(
+                        "Les trois algorithmes sont mesurés sur les mêmes valeurs et la même période. La variante et le nouveau score "
+                        "ont été définis avant de regarder leurs résultats, avec des paramètres standards ; seul le suivi en direct, "
+                        "ci-dessous, permettra de les juger sans aucun ajustement possible."
+                    )
+
                     # Lecture factuelle, fondée sur la comparaison de chaque action à elle-même
                     v_fort_1, v_fort_6 = verifications_bilan[categories_bilan[0]]
                     if v_fort_6 is None or v_fort_6["bas"] is None or v_fort_6["nombre"] < 30:
                         nb_fort_r6 = v_fort_6["nombre"] if v_fort_6 else 0
                         lecture_b = (f"Trop peu de signaux forts suivis de 6 mois d'historique ({nb_fort_r6}) pour en tirer une conclusion : "
-                                     "choisissez « Tout le catalogue » ci-dessus, ou revenez quand l'historique sera plus long.")
+                                     + ("cet algorithme en émet trop peu, même sur tout le catalogue." if choix_univers_bilan == "Tout le catalogue"
+                                        else "choisissez « Tout le catalogue » ci-dessus, ou revenez quand l'historique sera plus long."))
                     else:
                         lecture_b = (f"Comparés à la même action, les signaux forts ont été suivis à 6 mois d'un écart moyen de "
                                      f"{_pt(v_fort_6['moyenne'])} point(s) (fourchette à 95 % : {_pt(v_fort_6['bas'])} à {_pt(v_fort_6['haut'])}). ")
@@ -3242,8 +2953,7 @@ with onglet_radar:
                         if v_fort_1 is not None and v_fort_1["bas"] is not None and v_fort_1["nombre"] >= 30:
                             lecture_b += (f" À 1 mois : {_pt(v_fort_1['moyenne'])} point(s) (fourchette {_pt(v_fort_1['bas'])} "
                                           f"à {_pt(v_fort_1['haut'])}), " + ("avantage net." if v_fort_1["bas"] > 0 else "non démontré."))
-                    if choix_periode_bilan.startswith("Sans"):
-                        lecture_b += " (Période étudiée : sans l'année 2020.)"
+                    lecture_b += f" (Algorithme : {choix_algorithme_bilan.lower()}" + ("; période : sans l'année 2020.)" if choix_periode_bilan.startswith("Sans") else ".)")
                     st.info(nombres_fr("📊 " + lecture_b))
 
                     # --- VÉRIFICATION 1 : ANNÉE PAR ANNÉE (comparaison dans la même année, donc dans le même contexte de marché) ---
@@ -3293,11 +3003,75 @@ with onglet_radar:
                         st.caption("Valeurs sans historique suffisant, non comptées : " + ", ".join(valeurs_sans_historique) + ".")
                     st.caption(
                         "Limites : le critère « prix cible » n'est pas compté (Boursy ne connaît pas vos prix cibles passés) ; sans lui, le score "
-                        "plafonne à 85 sur 100, et les signaux forts sont plus rares que dans le radar en direct. Le payout ratio "
-                        "est la valeur actuelle, et les valeurs étudiées sont celles de votre radar d'aujourd'hui, qui ont par définition "
-                        "survécu jusqu'ici. Les observations mensuelles à 6 mois se chevauchent : elles ne sont pas indépendantes. "
-                        "Ce bilan décrit le passé ; il ne garantit rien pour l'avenir."
+                        "actuel plafonne à 85 sur 100, et ses signaux forts sont plus rares que dans le radar en direct. Le payout ratio "
+                        "est la valeur actuelle, et les valeurs étudiées sont "
+                        + ("les actions du catalogue d'aujourd'hui" if choix_univers_bilan == "Tout le catalogue" else "celles de votre radar d'aujourd'hui")
+                        + ", qui ont par définition survécu jusqu'ici. Les observations mensuelles à 6 mois se chevauchent : elles ne sont "
+                        "pas indépendantes. Ce bilan décrit le passé ; il ne garantit rien pour l'avenir."
                     )
+
+                    # --- SIGNAUX ENREGISTRÉS EN DIRECT : LE TEST SANS RETOUCHE POSSIBLE ---
+                    st.markdown("##### 📒 Signaux enregistrés en direct : le test qui compte")
+                    st.caption(
+                        "Chaque mois, la tâche planifiée enregistre les signaux des trois algorithmes sur tout le catalogue, avant de "
+                        "connaître la suite. Personne ne peut les modifier après coup : au fil des mois, ce tableau dira lequel a "
+                        "réellement fonctionné."
+                    )
+                    if st.toggle("Afficher les signaux enregistrés en direct", key="tog_journal_signaux"):
+                        try:
+                            lignes_journal = lire_signaux_mensuels()
+                        except Exception:
+                            lignes_journal = None
+                        if lignes_journal is None:
+                            st.info("Le journal n'est pas lisible : vérifiez le secret SUPABASE_SERVICE_KEY et la table signaux_mensuels (voir README).")
+                        elif not lignes_journal:
+                            st.info("Aucun signal enregistré pour l'instant : le premier enregistrement aura lieu lors de la prochaine exécution de la tâche planifiée (chaque soir de bourse).")
+                        else:
+                            mois_journal = sorted({l["mois"] for l in lignes_journal})
+                            with st.spinner("📥 Mesure de ce qui a suivi chaque signal enregistré..."):
+                                with ThreadPoolExecutor(max_workers=6) as executeur_journal:
+                                    historiques_journal = dict(zip(
+                                        sorted({l["symbole"] for l in lignes_journal}),
+                                        executeur_journal.map(historique_long, sorted({l["symbole"] for l in lignes_journal})),
+                                    ))
+                            mesures_journal = []
+                            for l in lignes_journal:
+                                hist_j = historiques_journal.get(l["symbole"])
+                                if hist_j is None:
+                                    continue
+                                rang_j = bisect.bisect_right(hist_j[0], str(l["date_cours"])[:10]) - 1
+                                if rang_j < 0:
+                                    continue
+                                mesures_journal.append(dict(
+                                    l,
+                                    r1=performance_apres(hist_j[0], hist_j[1], hist_j[2], rang_j, 21),
+                                    r6=performance_apres(hist_j[0], hist_j[1], hist_j[2], rang_j, 126),
+                                ))
+                            html_journal = (
+                                "<table class='r-table'><thead><tr><th style='text-align:left;'>Algorithme</th><th>Signaux forts enregistrés</th>"
+                                "<th>1 mois après un signal fort</th><th>1 mois, toutes les actions</th>"
+                                "<th>6 mois après un signal fort</th><th>6 mois, toutes les actions</th></tr></thead><tbody>"
+                            )
+                            for cle_algo, libelle_algo in ALGORITHMES_SIGNAUX.items():
+                                forts_j = [m for m in mesures_journal if m.get(cle_algo) == categories_bilan[0]]
+                                n1 = sum(1 for m in forts_j if m["r1"] is not None)
+                                n6 = sum(1 for m in forts_j if m["r6"] is not None)
+                                html_journal += (
+                                    f"<tr><td class='r-name'>{libelle_algo}</td><td>{len(forts_j)}</td>"
+                                    + _cellule_perf(_moyenne(m["r1"] for m in forts_j)).replace("</td>", f"<br><span style='font-size:0.78em; color:#9aa5b1; font-weight:600;'>{n1} mesurable(s)</span></td>")
+                                    + _cellule_perf(_moyenne(m["r1"] for m in mesures_journal))
+                                    + _cellule_perf(_moyenne(m["r6"] for m in forts_j)).replace("</td>", f"<br><span style='font-size:0.78em; color:#9aa5b1; font-weight:600;'>{n6} mesurable(s)</span></td>")
+                                    + _cellule_perf(_moyenne(m["r6"] for m in mesures_journal))
+                                    + "</tr>"
+                                )
+                            html_journal += "</tbody></table>"
+                            afficher_html(html_journal)
+                            premier_mois_j = mois_journal[0]
+                            st.caption(nombres_fr(
+                                f"{len(lignes_journal)} signaux enregistrés sur {len(mois_journal)} mois (depuis {premier_mois_j[5:7]}/{premier_mois_j[0:4]}). "
+                                "Les mesures à 6 mois apparaissent 6 mois après chaque enregistrement. Résultats indicatifs : "
+                                "il faudra au moins 12 mois d'enregistrements pour commencer à conclure."
+                            ))
 # ------------------------------------------------------------------------------
 # ONGLET 2 : PORTEFEUILLE, RÉPARTITION SECTORIELLE & TRAJECTOIRE BOURSIÈRE
 # ------------------------------------------------------------------------------

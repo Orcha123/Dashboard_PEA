@@ -42,7 +42,7 @@ def _env(nom, defaut=""):
     return str(os.environ.get(nom, defaut)).strip()
 
 
-def requete_supabase(methode, chemin, corps=None):
+def requete_supabase(methode, chemin, corps=None, preference="return=minimal"):
     """Appel REST à Supabase avec la clé de service. Renvoie le JSON décodé (ou None si la réponse est vide)."""
     url = f"{_env('SUPABASE_URL').rstrip('/')}/rest/v1/{chemin}"
     cle = _env("SUPABASE_SERVICE_KEY")
@@ -51,7 +51,7 @@ def requete_supabase(methode, chemin, corps=None):
         "apikey": cle,
         "Authorization": f"Bearer {cle}",
         "Content-Type": "application/json",
-        "Prefer": "return=minimal",
+        "Prefer": preference,
     })
     with urllib.request.urlopen(req, timeout=20) as rep:
         brut = rep.read().decode("utf-8")

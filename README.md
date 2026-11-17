@@ -85,6 +85,27 @@ Pour tester sans rien envoyer : onglet *Actions* > *Alertes prix cibles Boursy* 
 `ALERTES_DRY_RUN=1 python alertes_quotidiennes.py`. GitHub suspend les tâches planifiées d'un dépôt resté
 60 jours sans activité ; il suffit alors de les réactiver dans l'onglet *Actions*.
 
+## Bilan des signaux et journal en direct
+
+L'onglet Radar contient un bilan qui rejoue les algorithmes sur jusqu'à 7 ans d'historique (votre radar ou tout le
+catalogue) et compare trois algorithmes : le score actuel du radar, le même score avec un filtre de tendance
+(pas de signal fort sous la moyenne mobile à 200 jours) et un nouveau score « Tendance & Dividende » (tendance,
+momentum 12-1 mois, faible volatilité, rendement et régularité du dividende).
+
+Pour un test sans retouche possible, la tâche planifiée enregistre aussi, une fois par mois, les signaux des trois
+algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux_mensuels`. À créer une fois dans
+*SQL Editor* avec `supabase/signaux_mensuels.sql`. Seule la clé `service_role` peut lire et écrire cette table.
+
+## Organisation du code
+
+| Fichier | Rôle |
+| --- | --- |
+| `app.py` | Application Streamlit |
+| `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
+| `catalogue_valeurs.py` | Catalogue des valeurs suivies |
+| `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
+| `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
+
 ## Apparence
 
 Le thème (sombre par défaut) est défini dans `.streamlit/config.toml` ; le reste de l'habillage est dans le bloc
