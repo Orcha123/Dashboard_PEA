@@ -1,6 +1,7 @@
 import urllib.request
 import urllib.error
 import urllib.parse
+import bisect
 import io
 import json
 import math
@@ -1387,6 +1388,82 @@ def _recuperer_donnees_yahoo(symbole, creneau):
         except Exception:
             continue
     raise RuntimeError(f"Cours indisponible pour {symbole}")
+
+def historique_long(symbole):
+    """(dates ISO, clôtures, dividendes [(date ISO, montant)]) sur 10 ans ; None si indisponible (échec non mis en cache)."""
+    try:
+        return _historique_long_yahoo(str(symbole).strip())
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=21600, max_entries=300)
+def _historique_long_yahoo(symbole):
+    sym_enc = urllib.parse.quote(symbole)
+    for srv in ("query1", "query2"):
+        try:
+            req = urllib.request.Request(
+                f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?range=10y&interval=1d&events=div",
+                headers=HEADERS_YAHOO_PRO,
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                resultat = json.loads(response.read().decode("utf-8"))["chart"]["result"][0]
+            horodatages = resultat.get("timestamp") or []
+            clotures = (resultat.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
+            dates, valeurs = [], []
+            for horodatage, cloture in zip(horodatages, clotures):
+                if cloture is not None and float(cloture) > 0:
+                    dates.append(datetime.fromtimestamp(int(horodatage)).date().isoformat())
+                    valeurs.append(float(cloture))
+            dividendes = sorted(
+                (datetime.fromtimestamp(int(d["date"])).date().isoformat(), float(d["amount"]))
+                for d in ((resultat.get("events") or {}).get("dividends") or {}).values()
+                if d.get("date") and float(d.get("amount") or 0) > 0
+            )
+            if dates:
+                return dates, valeurs, dividendes
+        except Exception:
+            continue
+    raise RuntimeError(f"Historique indisponible : {symbole}")
+
+
+def cours_a_la_date(historique, date_iso):
+    """Dernière clôture connue à la date donnée (ou juste avant) ; None si la date précède l'historique."""
+    if not historique:
+        return None
+    dates, valeurs = historique[0], historique[1]
+    indice = bisect.bisect_right(dates, str(date_iso)[:10]) - 1
+    return valeurs[indice] if indice >= 0 else None
+
+
+def taux_rendement_interne(flux):
+    """
+    Rendement annualisé (TRI, équivalent du XIRR d'Excel) d'une suite de flux [(date ISO, montant)] :
+    versements négatifs, retraits et valeur finale positifs. None s'il n'est pas calculable.
+    """
+    flux = [(datetime.fromisoformat(str(d)[:10]), float(m)) for d, m in flux if m]
+    if not flux or all(m >= 0 for _, m in flux) or all(m <= 0 for _, m in flux):
+        return None
+    origine = min(d for d, _ in flux)
+
+    def valeur_actuelle_nette(taux):
+        return sum(m / (1.0 + taux) ** ((d - origine).days / 365.25) for d, m in flux)
+
+    bas, haut = -0.9999, 10.0
+    valeur_bas, valeur_haut = valeur_actuelle_nette(bas), valeur_actuelle_nette(haut)
+    if valeur_bas * valeur_haut > 0:
+        return None
+    for _ in range(200):
+        milieu = (bas + haut) / 2.0
+        valeur_milieu = valeur_actuelle_nette(milieu)
+        if valeur_bas * valeur_milieu <= 0:
+            haut = milieu
+        else:
+            bas, valeur_bas = milieu, valeur_milieu
+        if haut - bas < 1e-7:
+            break
+    return (bas + haut) / 2.0
+
 
 @st.cache_data(ttl=1800)
 def inspecter_dividende_yahoo_live(symbole):
@@ -4076,6 +4153,194 @@ with onglet_portefeuille:
                             f"{len(points_hist)} jour(s) enregistré(s). Contrairement à la trajectoire simulée ci-dessus, cette courbe "
                             "reflète vos vraies valorisations, versements et ventes inclus, telles qu'enregistrées à chaque sauvegarde."
                         )
+
+        # ======================================================================
+        # PERFORMANCE RÉELLE (TRI) COMPARÉE À UN ETF MSCI WORLD AVEC LES MÊMES VERSEMENTS
+        # ======================================================================
+        with st.expander("🏁 Ma performance réelle comparée à un ETF MSCI World (mêmes versements, mêmes dates)", expanded=False):
+            if not est_premium_ou_pro:
+                afficher_verrou_saas(
+                    "Performance réelle annualisée comparée à un ETF MSCI World",
+                    "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                    "Votre vrai rendement annualisé, comparé à ce qu'auraient donné les mêmes sommes, aux mêmes dates, dans un ETF Monde."
+                )
+            else:
+                pf_perf = st.session_state["portefeuille"]
+                journal_perf = pf_perf.get("_journal_achats") if isinstance(pf_perf.get("_journal_achats"), list) else []
+                ventes_perf = [v for v in st.session_state.get("historique_ventes", []) if isinstance(v, dict)]
+                aujourd_hui_iso = datetime.now().date().isoformat()
+
+                achats_par_action = {}
+                for entree_p in journal_perf:
+                    achats_par_action.setdefault(entree_p.get("action"), []).append(entree_p)
+
+                flux_perf, lignes_perf, exclusions_perf = [], [], []
+                for action_p, entrees_p in sorted(achats_par_action.items()):
+                    entrees_p = sorted(entrees_p, key=lambda e: (str(e.get("date", "")), str(e.get("id", ""))))
+                    info_p = WATCHLIST_DEFAUT.get(action_p, {})
+                    est_usd_p = info_p.get("devise") == "USD"
+                    if int((entrees_p[0].get("avant") or {}).get("qte", 0) or 0) > 0:
+                        exclusions_perf.append((action_p, "détenue avant votre premier achat enregistré dans le journal"))
+                        continue
+                    date_debut_p = str(entrees_p[0].get("date", ""))
+                    ventes_p = [v for v in ventes_perf if v.get("action") == action_p and str(v.get("date", "")) >= date_debut_p]
+                    qte_attendue_p = sum(int(e.get("qte", 0)) for e in entrees_p) - sum(int(v.get("qte", 0)) for v in ventes_p)
+                    position_p = pf_perf.get(action_p)
+                    qte_actuelle_p = int(position_p.get("qte", 0)) if isinstance(position_p, dict) else 0
+                    if qte_actuelle_p != qte_attendue_p:
+                        exclusions_perf.append((action_p, "quantité modifiée en dehors du journal et des ventes"))
+                        continue
+                    if qte_actuelle_p > 0 and action_p not in prix_temps_reel:
+                        exclusions_perf.append((action_p, "cours du jour indisponible"))
+                        continue
+                    historique_p = historique_long(info_p.get("symbole", "")) if info_p.get("symbole") else None
+                    if historique_p is None:
+                        exclusions_perf.append((action_p, "historique de cours indisponible"))
+                        continue
+
+                    mouvements_p = []
+                    for e in entrees_p:
+                        taux_e = float(e.get("taux_change") or TAUX_USD_EUR) if est_usd_p else 1.0
+                        montant_e = float(e.get("qte", 0)) * float(e.get("prix", 0)) / taux_e + float(e.get("frais_eur", 0) or 0)
+                        flux_perf.append((str(e["date"]), -montant_e, "Achat"))
+                        mouvements_p.append((str(e["date"]), int(e.get("qte", 0))))
+                    for v in ventes_p:
+                        flux_perf.append((str(v["date"]), float(v.get("montant_eur", 0) or 0), "Vente"))
+                        mouvements_p.append((str(v["date"]), -int(v.get("qte", 0))))
+                    facteur_dividende_p = (0.70 / TAUX_USD_EUR) if est_usd_p else 1.0
+                    for date_div, montant_div in historique_p[2]:
+                        if date_debut_p < date_div <= aujourd_hui_iso:
+                            qte_au_detachement = sum(q for d, q in mouvements_p if d < date_div)
+                            if qte_au_detachement > 0:
+                                flux_perf.append((date_div, qte_au_detachement * montant_div * facteur_dividende_p, "Dividende"))
+                    facteur_valeur_p = (1.0 / TAUX_USD_EUR) if est_usd_p else 1.0
+                    lignes_perf.append({
+                        "action": action_p, "mouvements": mouvements_p, "historique": historique_p, "facteur": facteur_valeur_p,
+                        "valeur_finale": qte_actuelle_p * float(prix_temps_reel.get(action_p, 0.0)) * facteur_valeur_p,
+                    })
+
+                historique_etf = historique_long("CW8.PA")
+                if not lignes_perf:
+                    st.info(
+                        "Pour calculer votre performance réelle, Boursy a besoin de l'historique complet d'au moins une ligne : "
+                        "tous ses achats enregistrés dans le 🧾 Journal des achats (saisie, import CSV ou import par l'IA), depuis le premier."
+                    )
+                elif historique_etf is None:
+                    st.warning("L'historique de l'ETF MSCI World (CW8) est indisponible pour le moment. Réessayez dans quelques minutes.")
+                else:
+                    flux_perf.sort(key=lambda f: f[0])
+                    date_premier_flux = flux_perf[0][0]
+                    # L'ETF reçoit exactement les mêmes versements et retraits, aux mêmes dates (méthode PME de Long et Nickels)
+                    parts_etf, flux_etf_dates = 0.0, []
+                    for date_f, montant_f, _ in flux_perf:
+                        cours_etf = cours_a_la_date(historique_etf, date_f) or historique_etf[1][0]
+                        parts_etf -= montant_f / cours_etf
+                        flux_etf_dates.append((date_f, parts_etf))
+                    valeur_portefeuille_perf = sum(l["valeur_finale"] for l in lignes_perf)
+                    valeur_etf_perf = parts_etf * historique_etf[1][-1]
+                    tri_portefeuille = taux_rendement_interne([(d, m) for d, m, _ in flux_perf] + [(aujourd_hui_iso, valeur_portefeuille_perf)])
+                    tri_etf = taux_rendement_interne([(d, m) for d, m, _ in flux_perf] + [(aujourd_hui_iso, valeur_etf_perf)])
+                    total_verse = -sum(m for _, m, n in flux_perf if n == "Achat")
+                    total_ventes = sum(m for _, m, n in flux_perf if n == "Vente")
+                    total_dividendes = sum(m for _, m, n in flux_perf if n == "Dividende")
+                    gain_portefeuille = valeur_portefeuille_perf + total_ventes + total_dividendes - total_verse
+                    ecart_valeur = valeur_portefeuille_perf - valeur_etf_perf
+                    duree_jours = (datetime.now().date() - datetime.fromisoformat(date_premier_flux).date()).days
+                    c_tri = "#2ecc71" if (tri_portefeuille or 0) >= 0 else "#e74c3c"
+                    c_ecart = "#2ecc71" if ecart_valeur >= 0 else "#f39c12"
+                    texte_tri = f"{tri_portefeuille * 100:+.2f} % / an" if tri_portefeuille is not None else "Non calculable"
+                    texte_tri_etf = f"{tri_etf * 100:+.2f} % / an" if tri_etf is not None else "Non calculable"
+                    texte_ecart_tri = (f"{(tri_portefeuille - tri_etf) * 100:+.2f} point(s) par an"
+                                       if (tri_portefeuille is not None and tri_etf is not None) else "—")
+                    date_premier_fr = f"{date_premier_flux[8:10]}/{date_premier_flux[5:7]}/{date_premier_flux[0:4]}"
+
+                    afficher_html(f"""
+                    <div class="argon-grid">
+                        <div class="argon-card" style="border-top: 3px solid {c_tri};">
+                            <div class="argon-title">🏁 Votre rendement annualisé</div>
+                            <div class="argon-val" style="color:{c_tri};">{texte_tri}</div>
+                            <div class="argon-sub">Gain total : <b>{gain_portefeuille:+,.0f} €</b> depuis le {date_premier_fr}</div>
+                        </div>
+                        <div class="argon-card" style="border-top: 3px solid #3498db;">
+                            <div class="argon-title">🌍 Mêmes versements dans le CW8</div>
+                            <div class="argon-val" style="color:#3498db;">{texte_tri_etf}</div>
+                            <div class="argon-sub">Valeur aujourd'hui : <b>{valeur_etf_perf:,.0f} €</b></div>
+                        </div>
+                        <div class="argon-card" style="border-top: 3px solid {c_ecart};">
+                            <div class="argon-title">⚖️ Écart avec l'ETF</div>
+                            <div class="argon-val" style="color:{c_ecart};">{ecart_valeur:+,.0f} €</div>
+                            <div class="argon-sub">Soit <b>{texte_ecart_tri}</b></div>
+                        </div>
+                        <div class="argon-card" style="border-top: 3px solid #9b59b6;">
+                            <div class="argon-title">💶 Vos flux</div>
+                            <div class="argon-val" style="font-size:1.2em;">{total_verse:,.0f} € versés</div>
+                            <div class="argon-sub">Ventes : <b>{total_ventes:,.0f} €</b> · Dividendes estimés : <b>{total_dividendes:,.0f} €</b></div>
+                        </div>
+                    </div>
+                    """)
+                    if duree_jours < 365:
+                        st.caption("⚠️ Sur moins d'un an, le rendement annualisé est très sensible aux variations récentes : regardez surtout l'écart en euros.")
+
+                    # Courbe mensuelle : valeur des lignes retenues, valeur de l'ETF avec les mêmes flux, argent investi net
+                    points_courbe = sorted(set(
+                        [d.date().isoformat() for d in pd.date_range(date_premier_flux, aujourd_hui_iso, freq="MS")]
+                        + [date_premier_flux, aujourd_hui_iso]
+                    ))
+                    donnees_courbe_perf = []
+                    for date_c in points_courbe:
+                        investi_net = -sum(m for d, m, n in flux_perf if d <= date_c and n in ("Achat", "Vente"))
+                        if date_c == aujourd_hui_iso:
+                            valeur_pf_c = valeur_portefeuille_perf
+                        else:
+                            valeur_pf_c = sum(
+                                sum(q for d, q in l["mouvements"] if d <= date_c) * (cours_a_la_date(l["historique"], date_c) or 0.0) * l["facteur"]
+                                for l in lignes_perf
+                            )
+                        parts_c = next((p for d, p in reversed(flux_etf_dates) if d <= date_c), 0.0)
+                        valeur_etf_c = parts_c * (cours_a_la_date(historique_etf, date_c) or 0.0)
+                        date_fr_c = f"{date_c[8:10]}/{date_c[5:7]}/{date_c[0:4]}"
+                        for serie_c, valeur_c in (("Vos lignes (€)", valeur_pf_c), ("Mêmes versements dans le CW8 (€)", valeur_etf_c), ("Argent investi net (€)", investi_net)):
+                            donnees_courbe_perf.append({"Date": date_c, "DateFR": date_fr_c, "Série": serie_c, "Montant (€)": round(valeur_c, 2)})
+                    series_perf = ["Vos lignes (€)", "Mêmes versements dans le CW8 (€)", "Argent investi net (€)"]
+                    st.vega_lite_chart(
+                        pd.DataFrame(donnees_courbe_perf),
+                        {
+                            "height": 300,
+                            "mark": {"type": "line", "interpolate": "monotone"},
+                            "encoding": {
+                                "x": {"field": "Date", "type": "temporal", "axis": {"title": None, "format": "%m/%y", "grid": False}},
+                                "y": {"field": "Montant (€)", "type": "quantitative", "scale": {"zero": False, "padding": 18}, "axis": {"title": "Valeur (€)", "format": ",.0f"}},
+                                "color": {"field": "Série", "type": "nominal", "scale": {"domain": series_perf, "range": ["#2ecc71", "#3498db", "#95a5a6"]}, "legend": {"orient": "top", "title": None, "labelLimit": 320}},
+                                "strokeDash": {"field": "Série", "type": "nominal", "scale": {"domain": series_perf, "range": [[1, 0], [6, 3], [2, 3]]}, "legend": None},
+                                "tooltip": [
+                                    {"field": "DateFR", "type": "nominal", "title": "Date"},
+                                    {"field": "Série", "type": "nominal", "title": "Courbe"},
+                                    {"field": "Montant (€)", "type": "quantitative", "format": ",.2f"},
+                                ],
+                            },
+                            "view": {"stroke": None},
+                        },
+                        width="stretch",
+                    )
+
+                    texte_lignes = ", ".join(l["action"] for l in lignes_perf)
+                    st.caption(nombres_fr(
+                        f"Calcul sur {len(lignes_perf)} ligne(s) dont tout l'historique est dans le journal : {texte_lignes} "
+                        f"({valeur_portefeuille_perf:,.0f} € aujourd'hui)."
+                    ))
+                    if exclusions_perf:
+                        st.caption(
+                            "Lignes non prises en compte : "
+                            + " ; ".join(f"{a} ({motif})" for a, motif in exclusions_perf)
+                            + ". Pour inclure une ligne détenue avant le journal, enregistrez tous ses achats depuis le premier "
+                              "(par exemple en remettant sa quantité à 0, puis en important l'historique de votre courtier)."
+                        )
+                    st.caption(
+                        "Méthode : rendement annualisé (taux de rendement interne) calculé sur vos flux réels. L'ETF Amundi MSCI World (CW8) "
+                        "reçoit exactement les mêmes versements et retraits, aux mêmes dates. Dividendes estimés d'après l'historique Yahoo "
+                        "(nets de 30 % pour les actions américaines), comptés à leur date de détachement ; lignes en dollars valorisées au taux "
+                        "du jour. Les performances passées ne préjugent pas des performances futures."
+                    )
 
         # ======================================================================
         # COMPTEUR OFFICIEL PLAFOND PEA (150 000 €) & RICHESSE TOTALE CRÉÉE
