@@ -18,12 +18,15 @@ from supabase import create_client
 import importlib
 import catalogue_valeurs
 import moteur_signaux
+import allocation_dca
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
 # Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
 importlib.reload(catalogue_valeurs)
 importlib.reload(moteur_signaux)
-from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE  # catalogue partagé avec la tâche planifiée
+importlib.reload(allocation_dca)
+from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
+from allocation_dca import calculer_achat_du_mois, normaliser_poids  # DCA guidé par l'allocation cible
 from moteur_signaux import (  # moteur de calcul partagé avec la tâche planifiée
     calculer_rsi,
     calculer_stochastique,
@@ -48,7 +51,7 @@ st.set_page_config(
     layout="wide",
 )
 
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible")
 
 
 def _lire_secret(nom, defaut=""):
@@ -1169,6 +1172,11 @@ else:
                 st.session_state.pop(cle_stripe_session, None)
             st.rerun()
 
+# Symboles Yahoo changés depuis l'ajout d'une valeur au radar (ex. FDJ.PA devenu FDJU.PA) : corrigés en mémoire,
+# puis enregistrés avec le radar à la prochaine sauvegarde
+for info_radar in st.session_state["watchlist"].values():
+    if isinstance(info_radar, dict) and info_radar.get("symbole"):
+        info_radar["symbole"] = symbole_a_jour(info_radar["symbole"])
 WATCHLIST = st.session_state["watchlist"]
 WATCHLIST_DEFAUT.update(st.session_state["watchlist"])
 TAUX_USD_EUR = recuperer_taux_change()
@@ -1236,6 +1244,10 @@ for nom_e, (sym_e, dev_e, sec_e, cib_e, div_e, pay_e, cr_e, mois_e) in ENRICHISS
             "mois_div": mois_e,
             "devise": dev_e,
         }
+# Valeur renommée encore enregistrée sous son ancien nom dans un portefeuille : même fiche que le nouveau nom
+for ancien_nom_v, nouveau_nom_v in NOMS_RENOMMES.items():
+    if ancien_nom_v in st.session_state.get("portefeuille", {}) and ancien_nom_v not in WATCHLIST_DEFAUT and nouveau_nom_v in WATCHLIST_DEFAUT:
+        WATCHLIST_DEFAUT[ancien_nom_v] = dict(WATCHLIST_DEFAUT[nouveau_nom_v])
 
 WATCHLIST_DEFAUT.update(st.session_state["watchlist"])
 
@@ -2094,21 +2106,71 @@ for nom, info, (prix_actuel, closes, hauts, bas) in resultats_bruts_yahoo:
 donnees_t2.sort(key=lambda x: (x["OrdreStatut"], x["EcartNum"]))
 
 candidats_tries = sorted(resultats_analysed, key=lambda x: x["score"], reverse=True)
-candidats_dca_top2 = candidats_tries[:2]
-budget_courant = BUDGET_MENSUEL
-achats_simules = {item["nom"]: 0 for item in candidats_tries}
 
-continuer = True
-while continuer:
-    continuer = False
-    for item in candidats_dca_top2:
-        if budget_courant >= item["prix_eur"] and item["prix_eur"] > 0:
-            achats_simules[item["nom"]] += 1
-            budget_courant -= item["prix_eur"]
-            continuer = True
+# ==============================================================================
+# DCA GUIDÉ PAR L'ALLOCATION CIBLE : chaque mois, l'enveloppe va aux lignes les plus en retard sur la cible choisie.
+# Remplace l'ancienne répartition sur les 2 meilleurs scores du radar, dont le bilan des signaux n'a pas montré
+# d'avantage. Calcul dans allocation_dca.py.
+# ==============================================================================
+def lire_allocation_cible(portefeuille):
+    """Poids cibles enregistrés par l'utilisateur ({nom: poids}) ; {} s'il n'en a pas défini."""
+    cibles = {}
+    for entree in (portefeuille or {}).get("_allocation_cible") or []:
+        if isinstance(entree, dict) and entree.get("nom"):
+            try:
+                poids_entree = float(entree.get("poids") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if poids_entree > 0:
+                cibles[str(entree["nom"])] = poids_entree
+    return cibles
 
-montant_investi_dca = BUDGET_MENSUEL - budget_courant
-montant_tot_div_dca = sum(achats_simules[item["nom"]] * item["div_eur"] for item in candidats_dca_top2)
+
+portefeuille_dca = st.session_state["portefeuille"] if isinstance(st.session_state.get("portefeuille"), dict) else {}
+cibles_dca = lire_allocation_cible(portefeuille_dca)
+lignes_detenues_dca = [
+    k for k, v in portefeuille_dca.items()
+    if k not in CLES_TECHNIQUES_PF and isinstance(v, dict) and float(v.get("qte", 0) or 0) > 0
+]
+if mode_gratuit:
+    noms_dca = list(actions_autorisees)
+else:
+    noms_dca = list(dict.fromkeys(list(cibles_dca) + lignes_detenues_dca + list(actions_autorisees)))
+noms_dca = [n for n in noms_dca if n in WATCHLIST_DEFAUT and n not in CLES_TECHNIQUES_PF]
+allocation_personnalisee = any(cibles_dca.get(n, 0.0) > 0 for n in noms_dca)
+# Allocation par défaut : parts égales entre les lignes détenues, ou entre les valeurs du radar si rien n'est détenu
+noms_defaut_dca = [n for n in noms_dca if n in lignes_detenues_dca] or list(noms_dca)
+decision_radar_par_nom = {d["NomBrut"]: d["Décision"] for d in donnees_t1}
+
+lignes_dca = []
+for nom_dca in noms_dca:
+    info_dca = WATCHLIST_DEFAUT[nom_dca]
+    facteur_dca = (1.0 / TAUX_USD_EUR) if info_dca.get("devise") == "USD" else 1.0
+    position_dca = portefeuille_dca.get(nom_dca) if isinstance(portefeuille_dca.get(nom_dca), dict) else {}
+    qte_dca = float(position_dca.get("qte", 0) or 0)
+    cours_dca = prix_temps_reel.get(nom_dca)
+    prix_eur_dca = float(cours_dca) * facteur_dca if cours_dca else None
+    # Valeur détenue au cours du jour, ou à son PRU si le cours manque
+    valeur_dca = qte_dca * (prix_eur_dca if prix_eur_dca else float(position_dca.get("pru", 0) or 0) * facteur_dca)
+    lignes_dca.append({
+        "nom": nom_dca,
+        "poids_cible": cibles_dca.get(nom_dca, 0.0) if allocation_personnalisee else (1.0 if nom_dca in noms_defaut_dca else 0.0),
+        "valeur_eur": valeur_dca,
+        "prix_eur": prix_eur_dca,
+        "qte_detenue": int(qte_dca),
+        "devise": info_dca.get("devise", "EUR"),
+        "div_eur": float(info_dca.get("div_eur", 0.0) or 0.0) * facteur_dca,
+        "decision": decision_radar_par_nom.get(nom_dca, "—"),
+    })
+
+plan_dca = calculer_achat_du_mois(lignes_dca, BUDGET_MENSUEL)
+montant_investi_dca = plan_dca["investi"]
+budget_courant = plan_dca["reste"]
+achats_dca = [l for l in plan_dca["lignes"] if l["qte"] > 0]
+montant_tot_div_dca = sum(l["qte"] * l["div_eur"] for l in achats_dca)
+libelle_allocation_dca = "Selon votre allocation cible" if allocation_personnalisee else "Parts égales (allocation par défaut)"
+detail_defaut_dca = ("parts égales entre les lignes que vous détenez" if any(n in lignes_detenues_dca for n in noms_dca)
+                     else "parts égales entre les valeurs de votre radar (vous ne détenez encore aucune ligne)")
 
 # ==============================================================================
 # NAVIGATION PAR ONGLETS
@@ -2123,7 +2185,7 @@ onglet_radar, onglet_portefeuille, onglet_dividendes, onglet_ia, onglet_ventes =
 
 
 # ------------------------------------------------------------------------------
-# ONGLET 1 : RADAR ALGORITHMIQUE, ALLOCATION DCA (MAX 2 LIGNES) & ALERTES EMAIL
+# ONGLET 1 : RADAR ALGORITHMIQUE, DCA GUIDÉ PAR L'ALLOCATION CIBLE & ALERTES EMAIL
 # ------------------------------------------------------------------------------
 with onglet_radar:
     if mode_gratuit:
@@ -2142,12 +2204,12 @@ with onglet_radar:
         <div class="argon-card">
             <div class="argon-title">💰 Enveloppe DCA Mensuelle</div>
             <div class="argon-val">{BUDGET_MENSUEL:.0f} €</div>
-            <div class="argon-sub">Investi simulé : <b>{montant_investi_dca:.2f} €</b> (Reste {budget_courant:.2f} €)</div>
+            <div class="argon-sub">Achat du mois : <b>{montant_investi_dca:.2f} €</b> (Reste {budget_courant:.2f} €)</div>
         </div>
         <div class="argon-card">
             <div class="argon-title">🌱 Gain de Rente DCA</div>
             <div class="argon-val" style="color: #3498db;">+{montant_tot_div_dca:.2f} € / an</div>
-            <div class="argon-sub">Concentré sur 1 à 2 lignes max</div>
+            <div class="argon-sub">{libelle_allocation_dca}</div>
         </div>
         <div class="argon-card">
             <div class="argon-title">🔔 Alertes Prix Cible / Achat</div>
@@ -2161,20 +2223,62 @@ with onglet_radar:
     col_dca_exp, col_al_exp = st.columns(2)
 
     with col_dca_exp:
-        with st.expander(f"🛒 Simulation de Répartition DCA ({BUDGET_MENSUEL:.0f} € — 2 lignes max)", expanded=True):
-            st.caption("Simulation mathématique : répartition de votre enveloppe sur les 2 scores les plus élevés du radar. Ce n'est pas une recommandation d'achat.")
-            achats_retenus = [item for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0]
-            if not achats_retenus:
-                st.info("Aucune action ne remplit actuellement les critères d'achat DCA.")
+        with st.expander(f"🧭 Achat du mois selon votre allocation cible ({BUDGET_MENSUEL:.0f} €)", expanded=True):
+            if allocation_personnalisee:
+                st.caption("Allocation cible : la vôtre (modifiable plus bas, dans « Définir mon allocation cible »).")
             else:
-                html_dca = "<table class='r-table'><thead><tr><th style='text-align:left;'>Valeur (score le plus élevé)</th><th>Score</th><th>Qté</th><th>Coût (€)</th><th>+Div/an</th></tr></thead><tbody>"
-                for item in achats_retenus:
-                    q_sim = achats_simules[item["nom"]]
-                    cout_tot = q_sim * item["prix_eur"]
-                    div_gagne = q_sim * item["div_eur"]
-                    html_dca += f"<tr><td class='r-name'><b>{item['nom']}</b></td><td><span class='b-green'>{item['score']} / 100</span></td><td><b>{q_sim}</b></td><td>{cout_tot:.1f} €</td><td style='color:#2ecc71; font-weight:700;'>+{div_gagne:.2f} €</td></tr>"
+                st.caption(f"Allocation par défaut : {detail_defaut_dca}. "
+                           "Définissez la vôtre plus bas, dans « Définir mon allocation cible ».")
+            lignes_affichees_dca = [l for l in plan_dca["lignes"] if l["poids_cible"] > 0 or l["qte_detenue"] > 0]
+            if not lignes_affichees_dca:
+                st.info("Ajoutez des valeurs à votre radar ou à votre portefeuille pour calculer l'achat du mois.")
+            else:
+                html_dca = (
+                    "<table class='r-table'><thead><tr><th style='text-align:left;'>Valeur</th><th>Achat proposé</th>"
+                    "<th>Poids actuel → après achat</th><th>Radar</th></tr></thead><tbody>"
+                )
+                for l_dca in sorted(lignes_affichees_dca, key=lambda x: (-x["cout_eur"], x["poids_actuel"] - x["poids_cible"])):
+                    if l_dca["qte"] > 0:
+                        achat_dca_html = (f"<span class='b-green'>{l_dca['qte']} action(s)</span>"
+                                          f"<br><span style='font-size:0.82em; opacity:0.8;'>{l_dca['cout_eur']:.2f} €</span>")
+                    elif l_dca["prix_eur"] is None:
+                        achat_dca_html = "<span class='b-neutral'>Cours indisponible</span>"
+                    elif l_dca["trop_chere"]:
+                        achat_dca_html = "<span class='b-yellow'>1 action > enveloppe</span>"
+                    elif l_dca["poids_cible"] == 0:
+                        achat_dca_html = "<span class='b-neutral'>Hors cible</span>"
+                    elif l_dca["valeur_visee"] - l_dca["valeur_apres"] >= l_dca["prix_eur"] / 2.0:
+                        achat_dca_html = "<span class='b-blue'>Mois suivants</span>"  # en retard, mais l'enveloppe est épuisée
+                    elif l_dca["valeur_apres"] > l_dca["valeur_visee"]:
+                        achat_dca_html = "<span class='b-neutral'>Au-dessus de sa cible</span>"
+                    else:
+                        achat_dca_html = "<span class='b-neutral'>À sa cible</span>"
+                    decision_dca = str(l_dca["decision"])
+                    radar_dca_html = (f"<span style='font-size:0.82em; opacity:0.8;'>{decision_dca.replace('SIGNAL ', '').capitalize() if decision_dca != '—' else '—'}</span>")
+                    html_dca += (
+                        f"<tr><td class='r-name'><b>{l_dca['nom']}</b></td>"
+                        f"<td style='white-space:nowrap;'>{achat_dca_html}</td>"
+                        f"<td style='white-space:nowrap;'>{l_dca['poids_actuel']:.1f} % → {l_dca['poids_apres']:.1f} %"
+                        f"<br><span style='font-size:0.82em; opacity:0.8;'>cible <b>{l_dca['poids_cible']:.1f} %</b></span></td>"
+                        f"<td>{radar_dca_html}</td></tr>"
+                    )
                 html_dca += "</tbody></table>"
                 afficher_html(html_dca)
+                resume_dca = f"Investi : {montant_investi_dca:.2f} €, reste {budget_courant:.2f} € gardé pour le mois suivant."
+                if plan_dca["ecart_avant"] is not None and plan_dca["ecart_apres"] is not None:
+                    resume_dca += (f" Écart à la cible : {plan_dca['ecart_avant']:.1f} % du portefeuille mal réparti avant cet achat, "
+                                   f"{plan_dca['ecart_apres']:.1f} % après.")
+                trop_cheres_dca = [l["nom"] for l in lignes_affichees_dca if l["trop_chere"]]
+                if trop_cheres_dca:
+                    resume_dca += (" Une action de " + ", ".join(trop_cheres_dca) + " coûte plus que l'enveloppe du mois : "
+                                   "elle pourra être achetée un mois où vous cumulez deux enveloppes.")
+                st.caption(nombres_fr(resume_dca))
+            st.caption(
+                "Calcul arithmétique à partir de vos poids cibles : l'enveloppe va d'abord aux lignes les plus en retard sur "
+                "leur cible, en actions entières, sans jamais rien vendre. Le radar n'entre pas dans ce calcul : sur environ "
+                "7 ans et 120 actions, ses signaux forts n'ont pas fait mieux, de façon démontrée, que les autres actions du "
+                "même mois (voir le bilan des signaux). Ce n'est pas une recommandation d'achat."
+            )
 
     with col_al_exp:
         with st.expander(f"🔔 Centre d'Alertes & Notification Email ({len(alertes_detectees)} signal/signaux)", expanded=True):
@@ -2209,6 +2313,85 @@ with onglet_radar:
                 if alertes_auto_voulu != alertes_auto_actuel:
                     st.session_state["portefeuille"]["_alertes_auto"] = bool(alertes_auto_voulu)
                     sauvegarder_dans_cloud()
+
+    # --- ÉDITION DE L'ALLOCATION CIBLE (enregistrée dans le portefeuille, clé technique « _allocation_cible ») ---
+    with st.expander("⚙️ Définir mon allocation cible", expanded=False):
+        st.markdown(
+            "Indiquez la part que chaque ligne devrait représenter dans votre portefeuille. Le total est ramené à 100 %. "
+            "Mettez 0 pour ne plus renforcer une ligne : elle n'est jamais vendue, elle cesse seulement d'être achetée."
+        )
+        if mode_gratuit:
+            st.caption("🌱 Forfait gratuit : l'allocation porte sur les 2 valeurs de votre radar affichées.")
+        if not plan_dca["lignes"]:
+            st.info("Ajoutez d'abord des valeurs à votre radar ou à votre portefeuille.")
+        else:
+            base_allocation = st.session_state.get("_base_allocation", "enregistree")
+            valeur_lignes_dca = sum(l["valeur_eur"] for l in plan_dca["lignes"])
+            if base_allocation == "actuelle" and valeur_lignes_dca > 0:
+                poids_depart = {l["nom"]: round(l["poids_actuel"], 1) for l in plan_dca["lignes"]}
+            elif base_allocation == "egale":
+                poids_depart = {l["nom"]: round(100.0 / len(plan_dca["lignes"]), 1) for l in plan_dca["lignes"]}
+            else:  # allocation enregistrée, ou allocation par défaut affichée au-dessus
+                poids_depart = {l["nom"]: round(l["poids_cible"], 1) for l in plan_dca["lignes"]}
+            df_allocation = pd.DataFrame([
+                {"Valeur": l["nom"], "Poids actuel (%)": round(l["poids_actuel"], 1), "Poids cible (%)": poids_depart.get(l["nom"], 0.0)}
+                for l in plan_dca["lignes"]
+            ])
+            df_allocation_saisie = st.data_editor(
+                df_allocation, hide_index=True, width="stretch",
+                key=f"editeur_allocation_{st.session_state.get('_compteur_allocation', 0)}",
+                disabled=["Valeur", "Poids actuel (%)"],
+                column_config={
+                    "Poids actuel (%)": st.column_config.NumberColumn(format="%.1f"),
+                    "Poids cible (%)": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5, format="%.1f"),
+                },
+            )
+            total_saisi_allocation = float(pd.to_numeric(df_allocation_saisie["Poids cible (%)"], errors="coerce").fillna(0.0).sum())
+            st.caption(nombres_fr(
+                f"Total saisi : {total_saisi_allocation:.1f} %"
+                + ("." if abs(total_saisi_allocation - 100.0) < 0.05 else " : il sera ramené à 100 % à l'enregistrement.")
+            ))
+            col_alloc_1, col_alloc_2, col_alloc_3, col_alloc_4 = st.columns(4)
+            if col_alloc_1.button("💾 Enregistrer", type="primary", width="stretch", key="btn_enregistrer_allocation"):
+                def _poids_saisi(valeur_saisie):
+                    try:
+                        nombre_saisi = float(valeur_saisie)
+                    except (TypeError, ValueError):
+                        return 0.0
+                    return nombre_saisi if nombre_saisi == nombre_saisi else 0.0  # case vide (NaN) : 0
+
+                poids_normalises = normaliser_poids({
+                    str(r["Valeur"]): _poids_saisi(r["Poids cible (%)"]) for r in df_allocation_saisie.to_dict("records")
+                })
+                if not poids_normalises:
+                    st.warning("Indiquez au moins un poids cible supérieur à 0.")
+                else:
+                    st.session_state["portefeuille"]["_allocation_cible"] = [
+                        {"nom": n, "poids": round(p, 2)} for n, p in poids_normalises.items()
+                    ]
+                    st.session_state["_base_allocation"] = "enregistree"
+                    st.session_state["_compteur_allocation"] = st.session_state.get("_compteur_allocation", 0) + 1
+                    sauvegarder_dans_cloud()
+                    st.rerun()
+            if col_alloc_2.button("📊 Partir de mes poids actuels", width="stretch", key="btn_allocation_actuelle",
+                                  disabled=valeur_lignes_dca <= 0):
+                st.session_state["_base_allocation"] = "actuelle"
+                st.session_state["_compteur_allocation"] = st.session_state.get("_compteur_allocation", 0) + 1
+                st.rerun()
+            if col_alloc_3.button("⚖️ Parts égales", width="stretch", key="btn_allocation_egale"):
+                st.session_state["_base_allocation"] = "egale"
+                st.session_state["_compteur_allocation"] = st.session_state.get("_compteur_allocation", 0) + 1
+                st.rerun()
+            if col_alloc_4.button("↺ Supprimer ma cible", width="stretch", key="btn_allocation_supprimer",
+                                  disabled=not allocation_personnalisee,
+                                  help="Revient à l'allocation par défaut : parts égales."):
+                st.session_state["portefeuille"].pop("_allocation_cible", None)
+                st.session_state["_base_allocation"] = "enregistree"
+                st.session_state["_compteur_allocation"] = st.session_state.get("_compteur_allocation", 0) + 1
+                sauvegarder_dans_cloud()
+                st.rerun()
+            st.caption("Les boutons « Partir de mes poids actuels » et « Parts égales » préremplissent le tableau : "
+                       "rien n'est modifié tant que vous n'avez pas cliqué sur « Enregistrer ».")
 
     # --- TITRE DU TABLEAU 1 PLEINE LARGEUR (GAUCHE) + BOUTON ACTUALISER (DROITE) ---
     col_titre_t1, col_btn_t1 = st.columns([4, 1])
@@ -2278,6 +2461,11 @@ with onglet_radar:
         """
     html_t1 += "</tbody></table>"
     afficher_html(html_t1)
+    st.caption(
+        "📏 Ce que valent ces signaux : sur environ 7 ans et 120 actions du catalogue, les actions en signal fort n'ont "
+        "pas fait mieux, de façon démontrée, que les autres actions du même mois (voir « Bilan des signaux » plus bas). "
+        "Le score décrit une situation (baisse récente, survente, dividende solide) : ce n'est pas une prévision."
+    )
 
     tab_val, tab_tech, tab_div = st.tabs([
         "📐 Tableau 2 : Analyse Value & Canal 3 Ans",
@@ -3075,7 +3263,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -5238,7 +5426,7 @@ with onglet_ia:
     """
     afficher_html(html_ia_header)
 
-    top_opps_noms = [f"<b>{c['nom']}</b> ({c['score']}/100)" for c in candidats_dca_top2]
+    top_opps_noms = [f"<b>{c['nom']}</b> ({c['score']}/100)" for c in candidats_tries[:2]]
     texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
     etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
 
@@ -5581,21 +5769,23 @@ with onglet_ia:
 
         elif code_audit == "AUDIT_2":
             achats_txt = "\n".join(
-                f"* **{item['nom']} ({item['devise']})** : Simulation : **{achats_simules[item['nom']]} action(s)** à `{item['prix_eur']:.2f} €` (Score : **{item['score']}/100**, Gain de rente : **+{achats_simules[item['nom']]*item['div_eur']:.2f} €/an**)"
-                for item in candidats_dca_top2 if achats_simules.get(item["nom"], 0) > 0
+                f"* **{l['nom']} ({l['devise']})** : **{l['qte']} action(s)** à `{l['prix_eur']:.2f} €`, poids {l['poids_actuel']:.1f} % → cible {l['poids_cible']:.1f} % (gain de rente : **+{l['qte'] * l['div_eur']:.2f} €/an**)"
+                for l in achats_dca
             )
             if not achats_txt:
-                achats_txt = "* Aucune valeur ne valide simultanément un score ≥ 45/100 et un signal EMA haussier/neutre aujourd'hui."
-            return f"""### 🛒 Simulation de Répartition DCA du Mois ({BUDGET_MENSUEL:.0f} €) selon le VIX & le RSI
+                achats_txt = "* Aucune ligne n'est en retard sur sa cible, ou aucun cours n'est disponible : l'enveloppe reste en liquidités ce mois-ci."
+            return f"""### 🛒 Achat DCA du Mois ({BUDGET_MENSUEL:.0f} €) : allocation cible, VIX & RSI
 
 #### 1. Lecture de la Météo des Marchés
 - **Indice de nervosité VIX :** **{vix_val:.1f}** ({etat_vix}) | **CAC 40 :** {cac_str} | **S&P 500 :** {sp_str}.
-- **Contexte de marché :** {'Le VIX est élevé : la nervosité domine le marché, et ces phases s’accompagnent souvent de cours plus bas sur de nombreuses valeurs.' if vix_val >= 22 else 'Le marché est calme à normal : la simulation retient les valeurs au score le plus élevé, en tenant compte du RSI (14J) et de l’écart au prix cible.'}
+- **Contexte de marché :** {'Le VIX est élevé : la nervosité domine le marché, et ces phases s’accompagnent souvent de cours plus bas sur de nombreuses valeurs.' if vix_val >= 22 else 'Le marché est calme à normal.'}
 
 #### 2. Top 3 des Signaux Techniques du Jour
 {chr(10).join('* ' + s for s in top_3_radar)}
 
-#### 3. Répartition Condensée de votre Enveloppe de {BUDGET_MENSUEL:.0f} € (Max 2 lignes)
+*Ces signaux ne servent pas au calcul de l’achat : sur environ 7 ans et 120 actions, ils n’ont pas fait mieux, de façon démontrée, que les autres actions du même mois.*
+
+#### 3. Achat du Mois : {libelle_allocation_dca.lower()}
 {achats_txt}
 - **Total investi ce mois-ci :** **{montant_investi_dca:.2f} €** (Liquidités restantes : **{budget_courant:.2f} €**)
 - **Nouveaux dividendes annuels acquis :** **+{montant_tot_div_dca:.2f} € / an**.
@@ -5757,7 +5947,8 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Taux de change EUR/USD : 1 € = {TAUX_USD_EUR:.4f} $
 - Valorisation totale active : {valeur_totale_portefeuille:.2f} € (Capital investi : {cout_total_achat:.2f} €, Plus-value latente : {plus_value_glob:+.2f} €)
 - Rente annuelle : {dividendes_bruts_totaux_eur:.2f} € brut / {dividendes_nets_totaux_eur:.2f} € net par an (soit {dividendes_nets_totaux_eur/12:.2f} € net/mois)
-- Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois (condensée sur 1 à 2 lignes max)
+- Enveloppe DCA mensuelle : {BUDGET_MENSUEL:.0f} € / mois, répartie selon {'l’allocation cible de l’utilisateur' if allocation_personnalisee else 'des parts égales (allocation par défaut)'} ; achat du mois calculé : {', '.join(str(l['qte']) + ' ' + l['nom'] for l in achats_dca) or 'aucun'}
+- Bilan historique du radar : sur environ 7 ans et 120 actions, ses signaux forts n’ont pas fait mieux, de façon démontrée, que les autres actions du même mois. Ne présente jamais un signal comme une prévision.
 - Bilan des Plus-Values ou Moins-Values Actées (Réalisées) & Arbitrages :
 {bloc_ventes_prompt}
 - Détail des lignes du portefeuille (triées par poids décroissant) :
@@ -5811,10 +6002,10 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         titre_audit = "Audit Complet 360° & Fiscalité"
         code_audit_choisi = "AUDIT_1"
         prompt_choisi = "Réalise un audit 360° complet de mon portefeuille : équilibre sectoriel, récapitulatif de mes plus-values ou moins-values actées, analyse de mes PRU par rapport aux cours actuels, et optimisation fiscale de ma rente."
-    if col_ia2.button("🛒 2. Simulation DCA du Mois (VIX & RSI)", width="stretch"):
-        titre_audit = "Simulation DCA du Mois"
+    if col_ia2.button("🛒 2. Achat DCA du Mois (allocation cible)", width="stretch"):
+        titre_audit = "Achat DCA du Mois"
         code_audit_choisi = "AUDIT_2"
-        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), que montrent les indicateurs pour les valeurs de mon radar, et comment se répartirait mathématiquement une enveloppe de {BUDGET_MENSUEL:.0f} € selon le score de l'algorithme ?"
+        prompt_choisi = f"Compte tenu du VIX actuel ({vix_val:.1f}) et des indicateurs techniques du radar (RSI, Stochastique, EMA 2/12, écart au prix cible), que montrent les indicateurs pour les valeurs de mon radar, et comment mon enveloppe de {BUDGET_MENSUEL:.0f} € se répartit-elle selon mon allocation cible ?"
     if col_ia3.button("🌍 3. Arbitrage PEA (EUR) vs Actions US ($)", width="stretch"):
         titre_audit = "Arbitrage PEA (EUR) vs Actions US ($)"
         code_audit_choisi = "AUDIT_3"

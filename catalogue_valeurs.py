@@ -35,7 +35,7 @@ ENRICHISSEMENT_CATALOGUE = {
     "EssilorLuxottica": ("EL.PA", "EUR", "Santé/Optique", 205.0, 3.95, 0.55, "+7.5%", ["Mai"]),
     "Eurazeo": ("RF.PA", "EUR", "Private Equity", 72.0, 2.42, 0.45, "+8.0%", ["Mai"]),
     "Euronext": ("ENX.PA", "EUR", "Bourse/Finance", 92.0, 2.48, 0.50, "+6.5%", ["Mai"]),
-    "FDJ - Française des Jeux": ("FDJ.PA", "EUR", "Loisirs/Loterie", 34.0, 1.78, 0.75, "+7.0%", ["Mai"]),
+    "FDJ United": ("FDJU.PA", "EUR", "Loisirs/Loterie", 34.0, 1.78, 0.75, "+7.0%", ["Mai"]),  # ex-Française des Jeux
     "GTT - Gaztransport": ("GTT.PA", "EUR", "Ingénierie/GNL", 125.0, 7.30, 0.80, "+11.0%", ["Juin", "Déc"]),
     "Gecina": ("GFC.PA", "EUR", "Immobilier", 92.0, 5.30, 0.75, "+2.0%", ["Mar", "Juil"]),
     "Getlink": ("GET.PA", "EUR", "Infrastructures", 15.5, 0.55, 0.55, "+6.0%", ["Juin"]),
@@ -138,3 +138,19 @@ ENRICHISSEMENT_CATALOGUE = {
     "Visa": ("V", "USD", "Paiements US", 275.0, 2.36, 0.22, "+14.0%", ["Mar", "Juin", "Sep", "Déc"]),
     "Walmart": ("WMT", "USD", "Distribution US", 72.0, 0.83, 0.35, "+4.0%", ["Jan", "Avr", "Mai", "Sep"]),
 }
+
+
+# Valeurs renommées ou dont le symbole Yahoo a changé. Les radars et portefeuilles enregistrés avant le changement
+# gardent l'ancien nom et l'ancien symbole : l'application et la tâche des alertes les traduisent avec ces tables.
+SYMBOLES_RENOMMES = {
+    "FDJ.PA": "FDJU.PA",  # La Française des Jeux est devenue FDJ United (symbole FDJU)
+}
+NOMS_RENOMMES = {
+    "FDJ - Française des Jeux": "FDJ United",
+}
+
+
+def symbole_a_jour(symbole):
+    """Symbole Yahoo actuel d'une valeur (traduit s'il a changé depuis son ajout au radar)."""
+    texte = str(symbole or "").strip()
+    return SYMBOLES_RENOMMES.get(texte.upper(), texte)
