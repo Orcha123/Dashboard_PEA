@@ -213,6 +213,37 @@ def _stripe_get(chemin, cle_stripe):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def creer_session_portail_stripe(id_client):
+    """
+    Ouvre une session du portail client Stripe pour ce client et renvoie son adresse (valable quelques minutes).
+    Contrairement au lien de connexion du portail, aucun e-mail n'est nécessaire : l'abonné arrive directement
+    sur sa page de gestion (résiliation, factures, moyen de paiement). None si impossible.
+    """
+    cle_stripe = _lire_secret("STRIPE_SECRET_KEY")
+    if not cle_stripe or not (isinstance(id_client, str) and id_client.startswith("cus_")):
+        return None
+    champs = {"customer": id_client}
+    adresse_retour = _lire_secret("APP_URL")
+    if not adresse_retour:
+        try:
+            adresse_retour = str(st.context.url or "").split("?")[0]
+        except Exception:
+            adresse_retour = ""
+    if adresse_retour.startswith("http"):
+        champs["return_url"] = adresse_retour
+    req = urllib.request.Request(
+        "https://api.stripe.com/v1/billing_portal/sessions",
+        data=urllib.parse.urlencode(champs).encode("utf-8"),
+        headers={"Authorization": f"Bearer {cle_stripe}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("url")
+    except Exception:
+        return None
+
+
 def _ids_prix_stripe(nom_secret):
     """Identifiants de prix Stripe (price_...) déclarés dans un secret, séparés par des virgules."""
     return {p.strip() for p in _lire_secret(nom_secret).split(",") if p.strip()}
@@ -454,6 +485,7 @@ def etablir_niveau_abonnement(user, verifier_stripe=True):
     ligne = lire_abonnement_protege(user) or {}
     niveau = ligne.get("niveau") if ligne.get("niveau") in ("gratuit", "premium", "pro") else "gratuit"
     fin = ligne.get("fin_programmee")
+    st.session_state["_stripe_client_id"] = ligne.get("stripe_customer_id")
 
     if verifier_stripe:
         verdict = verifier_abonnement_stripe(str(user.email or "").lower(), user.id, ligne.get("stripe_customer_id"))
@@ -462,6 +494,7 @@ def etablir_niveau_abonnement(user, verifier_stripe=True):
             if (verdict["niveau"], verdict["fin"], client_id) != (niveau, fin, ligne.get("stripe_customer_id")):
                 enregistrer_abonnement_protege(user.id, verdict["niveau"], client_id, verdict["fin"])
             niveau, fin = verdict["niveau"], verdict["fin"]
+            st.session_state["_stripe_client_id"] = client_id
 
     st.session_state.update(est_abonne_pro=(niveau != "gratuit"), niveau_abonnement=niveau, abo_fin_periode=fin)
     return niveau
@@ -1104,6 +1137,8 @@ else:
             st.session_state.pop("_stripe_sync_session_ok", None)
             st.session_state.pop("_historique_snapshots", None)
             st.session_state.pop("abo_fin_periode", None)
+            for cle_stripe_session in ("_stripe_client_id", "_url_portail_session", "_portail_session_echec"):
+                st.session_state.pop(cle_stripe_session, None)
             st.rerun()
 
 WATCHLIST = st.session_state["watchlist"]
@@ -1692,6 +1727,24 @@ def _construire_url_stripe(*cles_possibles, avec_reference=True):
 url_stripe_premium = _construire_url_stripe("STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PRO_URL")
 url_stripe_pro = _construire_url_stripe("STRIPE_PRO_URL", "STRIPE_CHECKOUT_URL", "STRIPE_PREMIUM_URL", "STRIPE_PRENIUM_URL")
 url_portail_stripe = _construire_url_stripe("STRIPE_PORTAL_URL", "STRIPE_BILLING_URL", avec_reference=False)
+def afficher_bouton_portail_stripe():
+    """
+    Bouton « Gérer mon abonnement » : ouvre directement le portail Stripe de l'abonné (session créée à la demande).
+    Repli sur le lien de connexion du portail (secret STRIPE_PORTAL_URL) si la session ne peut pas être créée.
+    """
+    if st.sidebar.button("⚙️ Gérer mon abonnement / Factures", width="stretch", key="btn_portail_stripe"):
+        url_session = creer_session_portail_stripe(st.session_state.get("_stripe_client_id"))
+        st.session_state["_url_portail_session"] = url_session or (url_portail_stripe if portail_configure else None)
+        st.session_state["_portail_session_echec"] = url_session is None
+    url_a_ouvrir = st.session_state.get("_url_portail_session")
+    if url_a_ouvrir:
+        st.sidebar.link_button("➡️ Ouvrir mon espace de facturation Stripe", url_a_ouvrir, type="primary", width="stretch")
+        if st.session_state.get("_portail_session_echec"):
+            st.sidebar.caption("Accès direct indisponible : Stripe vous enverra un lien de connexion par e-mail.")
+    elif st.session_state.get("_portail_session_echec"):
+        st.sidebar.warning("Le portail de facturation n'est pas joignable pour le moment. Réessayez dans un instant.")
+
+
 portail_configure = (url_portail_stripe and not url_portail_stripe.startswith("https://buy.stripe.com/?") and url_portail_stripe != "https://buy.stripe.com/")
 
 if mode_gratuit:
@@ -1705,15 +1758,13 @@ elif niveau_acces == "premium":
     if st.session_state.get("abo_fin_periode"):
         st.sidebar.caption(f"⏳ *Résiliation programmée — accès actif jusqu'au {st.session_state['abo_fin_periode']}.*")
     st.sidebar.link_button("👑 Débloquer Pro Max (8,90 €/mois)", url_stripe_pro, type="primary", width="stretch")
-    if portail_configure:
-        st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, width="stretch")
+    afficher_bouton_portail_stripe()
 else:
     actions_autorisees = list(WATCHLIST.keys())
     st.sidebar.success(f"👑 **Abonné Pro Max (8,90 €/mois)** : Accès intégral ({len(WATCHLIST)} valeurs & 15 audits IA/jour).")
     if st.session_state.get("abo_fin_periode"):
         st.sidebar.caption(f"⏳ *Résiliation programmée — accès actif jusqu'au {st.session_state['abo_fin_periode']}.*")
-    if portail_configure:
-        st.sidebar.link_button("⚙️ Gérer mon abonnement / Factures", url_portail_stripe, width="stretch")
+    afficher_bouton_portail_stripe()
 def afficher_verrou_saas(titre_module, palier_requis="👑 Offre Pro (8,90 €/mois)", description=""):
     """Affiche une bannière Argon élégante pour les fonctionnalités verrouillées."""
     couleur_v = "#f39c12" if "4,90" in palier_requis else "#9b59b6"
