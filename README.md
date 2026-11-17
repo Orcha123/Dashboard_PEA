@@ -24,6 +24,7 @@ sur Streamlit Cloud. Aucun n'est obligatoire pour démarrer.
 | `ADMIN_USER_ID` | UUID Supabase du compte administrateur (recommandé) |
 | `ADMIN_EMAIL` | E-mail du compte administrateur, utilisé si `ADMIN_USER_ID` est absent |
 | `CONTACT_EMAIL` | Adresse de contact des mentions légales (par défaut : `ADMIN_EMAIL`) |
+| `EDITEUR_NOM`, `EDITEUR_SIRET`, `EDITEUR_ADRESSE` | Identité de l'éditeur affichée dans les mentions légales et la politique de confidentialité (obligatoire, loi LCEN) |
 | `STRIPE_SECRET_KEY` | Vérification des abonnements |
 | `STRIPE_PRICE_PREMIUM`, `STRIPE_PRICE_PRO` | Identifiants de prix Stripe (`price_...`), séparés par des virgules |
 | `STRIPE_PREMIUM_URL`, `STRIPE_PRO_URL`, `STRIPE_PORTAL_URL` | Liens de paiement et portail client |
