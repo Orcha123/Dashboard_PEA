@@ -1,6 +1,7 @@
 import urllib.request
 import urllib.error
 import urllib.parse
+import io
 import json
 import math
 import re
@@ -23,7 +24,7 @@ st.set_page_config(
     layout="wide",
 )
 
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats")
 
 
 def _lire_secret(nom, defaut=""):
@@ -2903,7 +2904,7 @@ with onglet_portefeuille:
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -2978,6 +2979,338 @@ with onglet_portefeuille:
         if st.button("💾 Enregistrer mon portefeuille & créer un Snapshot Cloud", type="primary", width="stretch"):
             sauvegarder_dans_cloud()
             st.rerun()
+
+    # ======================================================================
+    # JOURNAL DES ACHATS : CHAQUE ACHAT MET À JOUR LA QUANTITÉ ET LE PRU (FRAIS INCLUS)
+    # ======================================================================
+    def _nombre_lu(valeur):
+        """Lit un nombre écrit à la française ou à l'anglaise ('1 234,56 €', '1,234.56') ; None si illisible."""
+        if valeur is None:
+            return None
+        if isinstance(valeur, (int, float)):
+            return None if (isinstance(valeur, float) and math.isnan(valeur)) else float(valeur)
+        texte = str(valeur)
+        for parasite in (" ", " ", " ", "€", "$", "EUR", "USD"):
+            texte = texte.replace(parasite, "")
+        texte = texte.strip()
+        if not texte:
+            return None
+        if "," in texte and "." in texte:
+            # Le séparateur le plus à droite est celui des décimales
+            texte = texte.replace(".", "").replace(",", ".") if texte.rfind(",") > texte.rfind(".") else texte.replace(",", "")
+        else:
+            texte = texte.replace(",", ".")
+        try:
+            return float(texte)
+        except ValueError:
+            return None
+
+    def _calculer_position_apres_achat(position, est_usd, qte, prix, frais_eur, taux_operation):
+        """Nouvelle position après un achat : PRU moyen pondéré frais inclus, et taux €/$ moyen pour les lignes en dollars."""
+        position = position if isinstance(position, dict) else {}
+        qte_avant = float(position.get("qte", 0) or 0)
+        pru_avant = float(position.get("pru", 0) or 0)
+        frais_devise = frais_eur * taux_operation if est_usd else frais_eur
+        cout_devise = qte_avant * pru_avant + qte * prix + frais_devise
+        qte_apres = qte_avant + qte
+        nouvelle = {"qte": int(round(qte_apres)), "pru": round(cout_devise / qte_apres, 4) if qte_apres > 0 else 0.0}
+        if est_usd:
+            taux_avant = float(position.get("taux_achat") or 0) or float(TAUX_USD_EUR)
+            cout_eur = (qte_avant * pru_avant) / taux_avant + (qte * prix) / taux_operation + frais_eur
+            nouvelle["taux_achat"] = round(cout_devise / cout_eur, 4) if cout_eur > 0 else round(taux_operation, 4)
+        return nouvelle
+
+    def _synchroniser_saisie_position(nom_action, position):
+        """Aligne les champs « Quantité / PRU / Taux » du volet de saisie sur la position (ou les vide si elle disparaît)."""
+        st.session_state[f"qte_{nom_action}"] = int(position.get("qte", 0)) if position else 0
+        if position:
+            st.session_state[f"pru_{nom_action}"] = float(position.get("pru", 0.0))
+        st.session_state[f"txa_{nom_action}"] = float((position or {}).get("taux_achat") or 0.0)
+
+    def appliquer_achat(nom_action, date_achat, qte, prix, frais_eur, taux_operation=0.0, source="saisie"):
+        """Ajoute un achat au journal et met à jour la ligne du portefeuille. Renvoie la nouvelle position."""
+        est_usd = WATCHLIST_DEFAUT.get(nom_action, {}).get("devise") == "USD"
+        taux_operation = float(taux_operation) if (est_usd and taux_operation and float(taux_operation) > 0) else (float(TAUX_USD_EUR) if est_usd else 1.0)
+        pf = st.session_state["portefeuille"]
+        position_avant = pf.get(nom_action) if isinstance(pf.get(nom_action), dict) else {}
+        nouvelle = _calculer_position_apres_achat(position_avant, est_usd, qte, prix, frais_eur, taux_operation)
+        pf[nom_action] = nouvelle
+        journal = pf.get("_journal_achats") if isinstance(pf.get("_journal_achats"), list) else []
+        journal.append({
+            "id": f"{time.time():.6f}",
+            "date": str(date_achat)[:10],
+            "action": nom_action,
+            "qte": int(qte),
+            "prix": float(prix),
+            "frais_eur": float(frais_eur),
+            "devise": "USD" if est_usd else "EUR",
+            "taux_change": round(taux_operation, 4) if est_usd else None,
+            "source": source,
+            "avant": {k: position_avant.get(k) for k in ("qte", "pru", "taux_achat") if position_avant.get(k) is not None},
+            "apres": dict(nouvelle),
+        })
+        pf["_journal_achats"] = journal
+        _synchroniser_saisie_position(nom_action, nouvelle)
+        if nom_action not in st.session_state["watchlist"] and nom_action in WATCHLIST_DEFAUT:
+            st.session_state["watchlist"][nom_action] = WATCHLIST_DEFAUT[nom_action].copy()
+        return nouvelle
+
+    def _achat_annulable(entree):
+        """Un achat n'est annulable que si la ligne n'a pas changé depuis (ni achat, ni vente, ni modification manuelle)."""
+        position = st.session_state["portefeuille"].get(entree.get("action"))
+        apres = entree.get("apres") or {}
+        return (
+            isinstance(position, dict)
+            and int(position.get("qte", 0)) == int(apres.get("qte", -1))
+            and abs(float(position.get("pru", 0)) - float(apres.get("pru", -1))) < 0.005
+        )
+
+    def _enregistrer_achat_saisi():
+        nom_action = st.session_state.get("ja_action")
+        qte = int(st.session_state.get("ja_qte", 0) or 0)
+        prix = float(st.session_state.get(f"ja_prix_{nom_action}", 0.0) or 0.0)
+        frais = float(st.session_state.get("ja_frais", 0.0) or 0.0)
+        if not nom_action or qte <= 0 or prix <= 0:
+            st.session_state["_notif_journal"] = ("erreur", "Indiquez une action, une quantité et un prix supérieurs à zéro.")
+            return
+        position = appliquer_achat(nom_action, st.session_state.get("ja_date", datetime.now().date()), qte, prix, frais,
+                                   st.session_state.get(f"ja_taux_{nom_action}", 0.0))
+        sauvegarder_dans_cloud()
+        st.session_state["_notif_journal"] = ("ok", f"✅ Achat enregistré : +{qte} {nom_action}. Nouvelle ligne : {position['qte']} titre(s), PRU {position['pru']:.2f}.")
+
+    def _annuler_achat(id_achat):
+        pf = st.session_state["portefeuille"]
+        journal = list(pf.get("_journal_achats") or [])
+        entree = next((e for e in journal if e.get("id") == id_achat), None)
+        if entree is None or not _achat_annulable(entree):
+            st.session_state["_notif_journal"] = ("erreur", "Cet achat ne peut plus être annulé : la ligne a changé depuis.")
+            return
+        nom_action = entree["action"]
+        avant = entree.get("avant") or {}
+        if int(avant.get("qte", 0) or 0) > 0:
+            pf[nom_action] = {k: avant[k] for k in ("qte", "pru", "taux_achat") if avant.get(k) is not None}
+            _synchroniser_saisie_position(nom_action, pf[nom_action])
+        else:
+            pf.pop(nom_action, None)
+            _synchroniser_saisie_position(nom_action, None)
+        pf["_journal_achats"] = [e for e in journal if e.get("id") != id_achat]
+        sauvegarder_dans_cloud()
+        st.session_state["_notif_journal"] = ("ok", f"🔄 Achat annulé : la ligne {nom_action} est revenue à son état précédent.")
+
+    def _importer_achats(lignes_a_importer):
+        for ligne in sorted(lignes_a_importer, key=lambda l: l["date"]):
+            appliquer_achat(ligne["action"], ligne["date"], ligne["qte"], ligne["prix"], ligne["frais"], ligne["taux"], source="import")
+        sauvegarder_dans_cloud()
+        # Nouveau champ de dépôt (clé différente) : le fichier importé disparaît de l'écran
+        st.session_state["_compteur_import_achats"] = int(st.session_state.get("_compteur_import_achats", 0)) + 1
+        st.session_state["_notif_journal"] = ("ok", f"✅ {len(lignes_a_importer)} achat(s) importé(s). Quantités et PRU mis à jour.")
+
+    def _sans_accents(texte):
+        import unicodedata
+        return "".join(c for c in unicodedata.normalize("NFD", str(texte)) if unicodedata.category(c) != "Mn")
+
+    def _normaliser(texte):
+        return re.sub(r"[^a-z0-9]+", " ", _sans_accents(texte).lower()).strip()
+
+    def _reconnaitre_action(texte):
+        """Retrouve une action connue à partir d'un libellé ou d'un symbole de courtier ; None si aucune ne correspond."""
+        cherche = _normaliser(texte)
+        if not cherche:
+            return None
+        meilleure, longueur = None, 0
+        for nom_c, info_c in WATCHLIST_DEFAUT.items():
+            if nom_c in CLES_TECHNIQUES_PF or not isinstance(info_c, dict):
+                continue
+            nom_n = _normaliser(nom_c)
+            symbole = str(info_c.get("symbole", ""))
+            if cherche in (nom_n, _normaliser(symbole)) or (len(symbole.split(".")[0]) >= 2 and cherche == _normaliser(symbole.split(".")[0])):
+                return nom_c
+            nom_court = _normaliser(re.sub(r"\(.*?\)", "", nom_c))
+            for candidat in {nom_n, nom_court}:
+                if len(candidat) >= 4 and (candidat in cherche or (len(cherche) >= 4 and cherche in candidat)) and len(candidat) > longueur:
+                    meilleure, longueur = nom_c, len(candidat)
+        return meilleure
+
+    with st.expander("🧾 Journal des achats : enregistrer un achat (PRU recalculé automatiquement)", expanded=False):
+        notif_journal = st.session_state.pop("_notif_journal", None)
+        if notif_journal:
+            (st.success if notif_journal[0] == "ok" else st.error)(nombres_fr(notif_journal[1]))
+        st.caption(
+            "Chaque achat enregistré met à jour la quantité et le PRU de la ligne, frais de courtage inclus. "
+            "Vos lignes déjà saisies servent de point de départ."
+        )
+
+        options_achat = sorted([k for k in WATCHLIST_DEFAUT.keys() if k not in CLES_TECHNIQUES_PF])
+        lignes_detenues = [k for k, v in st.session_state["portefeuille"].items() if k not in CLES_TECHNIQUES_PF and isinstance(v, dict)]
+        index_defaut = options_achat.index(lignes_detenues[0]) if lignes_detenues and lignes_detenues[0] in options_achat else 0
+        col_ja1, col_ja2 = st.columns([2, 1])
+        with col_ja1:
+            action_achat = st.selectbox("Action achetée :", options_achat, index=index_defaut, key="ja_action")
+        with col_ja2:
+            st.date_input("Date de l'achat :", value=datetime.now().date(), max_value=datetime.now().date(), key="ja_date", format="DD/MM/YYYY")
+
+        est_usd_achat = WATCHLIST_DEFAUT.get(action_achat, {}).get("devise") == "USD"
+        symbole_achat = "$" if est_usd_achat else "€"
+        cours_reference = float(prix_temps_reel.get(action_achat, WATCHLIST_DEFAUT.get(action_achat, {}).get("prix_cible", 0.0)) or 0.0)
+        col_ja3, col_ja4, col_ja5 = st.columns(3)
+        with col_ja3:
+            st.number_input("Quantité achetée :", min_value=0, value=0, step=1, key="ja_qte")
+        with col_ja4:
+            st.number_input(f"Prix unitaire ({symbole_achat}) :", min_value=0.0, value=round(cours_reference, 2), step=0.5, key=f"ja_prix_{action_achat}")
+        with col_ja5:
+            st.number_input("Frais de courtage (€) :", min_value=0.0, value=0.0, step=0.5, key="ja_frais")
+        if est_usd_achat:
+            st.number_input("Taux €/$ de l'achat (1 € = ? $) :", min_value=0.0, max_value=5.0, value=round(float(TAUX_USD_EUR), 4),
+                            step=0.01, format="%.4f", key=f"ja_taux_{action_achat}")
+
+        qte_apercu = int(st.session_state.get("ja_qte", 0) or 0)
+        prix_apercu = float(st.session_state.get(f"ja_prix_{action_achat}", 0.0) or 0.0)
+        if qte_apercu > 0 and prix_apercu > 0:
+            taux_apercu = float(st.session_state.get(f"ja_taux_{action_achat}", TAUX_USD_EUR) or TAUX_USD_EUR) if est_usd_achat else 1.0
+            position_actuelle = st.session_state["portefeuille"].get(action_achat)
+            position_apercu = _calculer_position_apres_achat(position_actuelle, est_usd_achat, qte_apercu, prix_apercu,
+                                                             float(st.session_state.get("ja_frais", 0.0) or 0.0), taux_apercu)
+            qte_actuelle_ap = int(position_actuelle.get("qte", 0)) if isinstance(position_actuelle, dict) else 0
+            pru_actuel_ap = float(position_actuelle.get("pru", 0.0)) if isinstance(position_actuelle, dict) else 0.0
+            afficher_html(f"""
+            <div style="background:rgba(128,128,128,0.05); border:1px dashed #3498db; padding:10px 14px; border-radius:8px; margin:6px 0 10px 0; font-size:0.88em;">
+                🔎 <b>Aperçu :</b> {qte_actuelle_ap} ➔ <b>{position_apercu['qte']} titre(s)</b> |
+                PRU {pru_actuel_ap:.2f} ➔ <b>{position_apercu['pru']:.2f} {symbole_achat}</b> (frais inclus) |
+                Montant de l'achat : <b>{qte_apercu * prix_apercu:,.2f} {symbole_achat}</b>
+            </div>
+            """)
+        st.button("➕ Enregistrer cet achat", type="primary", width="stretch", on_click=_enregistrer_achat_saisi, key="btn_enregistrer_achat")
+
+        journal_achats = st.session_state["portefeuille"].get("_journal_achats") if isinstance(st.session_state["portefeuille"].get("_journal_achats"), list) else []
+        if journal_achats:
+            st.markdown("#### 📜 Historique des achats")
+            montant_total_achats = sum(
+                (e["qte"] * e["prix"]) / (e.get("taux_change") or TAUX_USD_EUR) + e.get("frais_eur", 0.0) if e.get("devise") == "USD"
+                else e["qte"] * e["prix"] + e.get("frais_eur", 0.0)
+                for e in journal_achats
+            )
+            st.caption(nombres_fr(f"{len(journal_achats)} achat(s) enregistré(s), pour un total de {montant_total_achats:,.2f} € frais inclus."))
+            entrees_triees = sorted(journal_achats, key=lambda e: (e.get("date", ""), e.get("id", "")), reverse=True)
+            for entree in entrees_triees[:30]:
+                sym_e = "$" if entree.get("devise") == "USD" else "€"
+                date_e = str(entree.get("date", ""))
+                date_fr_e = f"{date_e[8:10]}/{date_e[5:7]}/{date_e[0:4]}" if len(date_e) == 10 else date_e
+                col_h1, col_h2 = st.columns([5, 1])
+                with col_h1:
+                    markdown_fr(
+                        f"**{date_fr_e}** — **{entree['action']}** : +{entree['qte']} à {entree['prix']:.2f} {sym_e}"
+                        + (f" (frais {entree.get('frais_eur', 0.0):.2f} €)" if entree.get("frais_eur") else "")
+                        + (" · *importé*" if entree.get("source") == "import" else "")
+                    )
+                with col_h2:
+                    annulable = _achat_annulable(entree)
+                    st.button("↩️ Annuler", key=f"annuler_achat_{entree['id']}", on_click=_annuler_achat, args=(entree["id"],),
+                              disabled=not annulable, width="stretch",
+                              help=None if annulable else "La ligne a changé depuis cet achat (autre achat, vente ou modification) : il ne peut plus être annulé.")
+            if len(entrees_triees) > 30:
+                st.caption(f"… et {len(entrees_triees) - 30} achat(s) plus ancien(s).")
+
+        # --- IMPORT D'UN HISTORIQUE D'ACHATS (CSV EXPORTÉ DEPUIS LE COURTIER) ---
+        st.markdown("#### 📥 Importer un historique d'achats (fichier CSV de votre courtier)")
+        if not est_premium_ou_pro:
+            afficher_verrou_saas(
+                "Import d'un historique d'achats depuis votre courtier (CSV)",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Importez en une fois tous vos achats passés : quantités et PRU sont recalculés automatiquement."
+            )
+        else:
+            st.caption(
+                "Exportez l'historique de vos opérations depuis votre courtier au format CSV, puis déposez-le ici. "
+                "Indiquez quelle colonne contient quoi : seuls les achats d'actions reconnues sont importés."
+            )
+            fichier_achats = st.file_uploader("Fichier CSV des opérations", type=["csv", "txt"], key=f"up_csv_achats_{st.session_state.get('_compteur_import_achats', 0)}")
+            if fichier_achats is not None:
+                tableau_csv = None
+                for encodage in ("utf-8-sig", "latin-1"):
+                    try:
+                        tableau_csv = pd.read_csv(io.BytesIO(fichier_achats.getvalue()), sep=None, engine="python", encoding=encodage, dtype=str)
+                        break
+                    except Exception:
+                        continue
+                if tableau_csv is None or tableau_csv.empty:
+                    st.error("Ce fichier n'a pas pu être lu. Vérifiez qu'il s'agit bien d'un export CSV (texte séparé par des points-virgules ou des virgules).")
+                else:
+                    colonnes_csv = [str(c) for c in tableau_csv.columns]
+                    tableau_csv.columns = colonnes_csv
+
+                    def _colonne_probable(mots):
+                        for c in colonnes_csv:
+                            if any(m in _normaliser(c) for m in mots):
+                                return colonnes_csv.index(c) + 1
+                        return 0
+
+                    choix_aucune = ["(aucune)"] + colonnes_csv
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    with col_m1:
+                        col_date = st.selectbox("Colonne Date :", choix_aucune, index=_colonne_probable(["date"]), key="map_date")
+                        col_valeur = st.selectbox("Colonne Valeur (nom ou symbole) :", choix_aucune,
+                                                  index=_colonne_probable(["libelle", "valeur", "titre", "instrument", "produit", "nom", "symbole", "ticker", "action"]), key="map_valeur")
+                    with col_m2:
+                        col_qte = st.selectbox("Colonne Quantité :", choix_aucune, index=_colonne_probable(["quantite", "qte", "nombre", "quantity"]), key="map_qte")
+                        col_prix = st.selectbox("Colonne Prix unitaire :", choix_aucune, index=_colonne_probable(["cours", "prix", "price"]), key="map_prix")
+                    with col_m3:
+                        col_frais = st.selectbox("Colonne Frais (facultatif, en €) :", choix_aucune, index=_colonne_probable(["frais", "commission", "courtage"]), key="map_frais")
+                        col_sens = st.selectbox("Colonne Sens (facultatif : achat / vente) :", choix_aucune,
+                                                index=_colonne_probable(["sens", "operation", "nature", "type"]), key="map_sens")
+                    taux_import = st.number_input("Taux €/$ appliqué aux achats en dollars de ce fichier (1 € = ? $) :", min_value=0.0, max_value=5.0,
+                                                  value=round(float(TAUX_USD_EUR), 4), step=0.01, format="%.4f", key="map_taux")
+
+                    if "(aucune)" in (col_date, col_valeur, col_qte, col_prix):
+                        st.info("Indiquez au minimum les colonnes Date, Valeur, Quantité et Prix unitaire.")
+                    else:
+                        signatures_existantes = {
+                            f"{e.get('date')}|{e.get('action')}|{int(e.get('qte', 0))}|{float(e.get('prix', 0)):.4f}" for e in journal_achats
+                        }
+                        lignes_valides, apercu_import = [], []
+                        for _, rangee in tableau_csv.iterrows():
+                            libelle = str(rangee.get(col_valeur, "") or "")
+                            date_lue = pd.to_datetime(rangee.get(col_date), dayfirst=True, errors="coerce")
+                            qte_lue = _nombre_lu(rangee.get(col_qte))
+                            prix_lu = _nombre_lu(rangee.get(col_prix))
+                            frais_lus = _nombre_lu(rangee.get(col_frais)) if col_frais != "(aucune)" else 0.0
+                            sens_lu = _normaliser(rangee.get(col_sens, "")) if col_sens != "(aucune)" else ""
+                            action_lue = _reconnaitre_action(libelle)
+                            if any(m in sens_lu for m in ("vente", "sell", "cession")):
+                                statut = "Ignorée : vente (à saisir dans l'onglet Arbitrages)"
+                            elif pd.isna(date_lue) or not qte_lue or not prix_lu or prix_lu <= 0:
+                                statut = "Ignorée : date, quantité ou prix illisible"
+                            elif action_lue is None:
+                                statut = "Ignorée : action non reconnue (ajoutez-la d'abord à votre radar)"
+                            elif date_lue.date() > datetime.now().date():
+                                statut = "Ignorée : date dans le futur"
+                            else:
+                                ligne = {
+                                    "date": date_lue.date().isoformat(), "action": action_lue, "qte": int(round(abs(qte_lue))),
+                                    "prix": float(prix_lu), "frais": abs(float(frais_lus or 0.0)), "taux": float(taux_import),
+                                }
+                                signature = f"{ligne['date']}|{ligne['action']}|{ligne['qte']}|{ligne['prix']:.4f}"
+                                if ligne["qte"] <= 0:
+                                    statut = "Ignorée : quantité nulle"
+                                elif signature in signatures_existantes:
+                                    statut = "Ignorée : déjà dans le journal"
+                                else:
+                                    signatures_existantes.add(signature)
+                                    lignes_valides.append(ligne)
+                                    statut = "✅ À importer"
+                            apercu_import.append({
+                                "Date": date_lue.strftime("%d/%m/%Y") if not pd.isna(date_lue) else "?",
+                                "Valeur (fichier)": libelle,
+                                "Action reconnue": action_lue or "—",
+                                "Quantité": qte_lue,
+                                "Prix": prix_lu,
+                                "Statut": statut,
+                            })
+                        st.dataframe(pd.DataFrame(apercu_import), width="stretch", hide_index=True)
+                        if lignes_valides:
+                            st.button(f"📥 Importer {len(lignes_valides)} achat(s)", type="primary", width="stretch",
+                                      on_click=_importer_achats, args=(lignes_valides,), key="btn_importer_achats")
+                        else:
+                            st.warning("Aucun achat importable dans ce fichier.")
 
     portefeuille_utilisateur = st.session_state["portefeuille"]
     valeur_totale_portefeuille = 0.0
