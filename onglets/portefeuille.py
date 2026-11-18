@@ -51,6 +51,7 @@ def afficher(
 ):
     # Versements nets estimés du PEA (jauge du plafond), repris par le Super-Pack ; None si le portefeuille est vide
     versements_nets_pea = None
+    performance_vs_etf = None  # rendement annualisé comparé à un ETF Monde (calculé plus bas si possible), pour le coach
     st.subheader("💼 Gestionnaire de Portefeuille Multidevises & Fiscalité")
 
     # Intègre toutes les actions du catalogue pour pouvoir les sélectionner librement
@@ -1549,6 +1550,11 @@ def afficher(
                     texte_ecart_tri = (f"{(tri_portefeuille - tri_etf) * 100:+.2f} point(s) par an"
                                        if (tri_portefeuille is not None and tri_etf is not None) else "—")
                     date_premier_fr = f"{date_premier_flux[8:10]}/{date_premier_flux[5:7]}/{date_premier_flux[0:4]}"
+                    performance_vs_etf = {
+                        "tri": tri_portefeuille, "tri_etf": tri_etf, "depuis": date_premier_flux, "jours": duree_jours,
+                        "valeur": valeur_portefeuille_perf, "valeur_etf": valeur_etf_perf,
+                        "lignes": len(lignes_perf), "exclues": len(exclusions_perf),
+                    }
 
                     afficher_html(f"""
                     <div class="argon-grid">
@@ -1989,6 +1995,7 @@ def afficher(
         "exposition_usd": exposition_usd,
         "lignes_triees": lignes_triees,
         "noter_dans_carnet": noter_dans_carnet,
+        "performance_vs_etf": performance_vs_etf,
         "plus_value_globale": plus_value_globale,
         "plus_value_pct": plus_value_pct,
         "portefeuille_utilisateur": portefeuille_utilisateur,

@@ -412,6 +412,58 @@ def test_coach_ia_gemini_recoit_la_rente(monkeypatch, tmp_path):
         st.cache_resource.clear()
 
 
+def _synthese_affichee(application):
+    return next((str(m.value) for m in application.markdown if "Synthèse stratégique, critiques & plan d'action" in str(m.value)), "")
+
+
+def test_coach_synthese_strategique_et_audit_0(monkeypatch, tmp_path):
+    """Onglet 4 : synthèse et plan d'action en tête (sans crédit d'audit), audit 0 local puis par Gemini."""
+    import streamlit as st
+
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    monkeypatch.setenv("BOURSY_DIVIDENDES_10_ANS", "1")
+    try:
+        application = lancer("pro", monkeypatch)
+        synthese = _synthese_affichee(application)
+        for partie in ("**En bref.**", "Critiques et points de vigilance", "Plan d'action", "Stratégie : ce que disent les études"):
+            assert partie in synthese, partie
+        assert "Diagnostic de Boursy" in textes(application)
+        _bouton(application, "🛡️ Ajouter la solidité de ma rente").click()
+        application.run()
+        verifier_sans_erreur(application)
+        assert "issus de dividendes solides" in _synthese_affichee(application)
+        _bouton(application, "🧭 0. Synthèse").click()
+        application.run()
+        verifier_sans_erreur(application)
+        assert application.session_state["reponse_ia_coach"].startswith("### 🧭 Synthèse stratégique")
+
+        texte_envoye = tmp_path / "gemini.txt"
+        monkeypatch.setenv("BOURSY_GEMINI_TEST", str(texte_envoye))
+        monkeypatch.setenv("BOURSY_PROFIL_TEST", "pro")
+        avec_gemini = AppTest.from_file(BANC, default_timeout=240)
+        avec_gemini.secrets["GEMINI_API_KEY"] = "cle-de-test"
+        avec_gemini.run()
+        _bouton(avec_gemini, "🧭 0. Synthèse").click()
+        avec_gemini.run()
+        verifier_sans_erreur(avec_gemini)
+        assert avec_gemini.session_state["reponse_ia_coach"] == "Réponse Gemini simulée"
+        envoye = texte_envoye.read_text(encoding="utf-8")
+        for partie in ("PORTEFEUILLE", "APPORTS ET ALLOCATION", "PERFORMANCE RÉELLE", "DIAGNOSTIC DE BOURSY",
+                       "PRINCIPES ISSUS DES ÉTUDES", "## 5. Plan d'action", "n'invente aucun chiffre"):
+            assert partie in envoye, partie
+    finally:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+
+
+def test_coach_synthese_offre_gratuite(monkeypatch):
+    application = lancer("gratuit", monkeypatch)
+    synthese = _synthese_affichee(application)
+    assert "Plan d'action" in synthese and "Réservées aux offres Premium et Pro" in synthese
+    assert not any(b.label.startswith("🛡️ Ajouter la solidité") for b in application.button)
+
+
 def test_plafond_pea_identique_dans_le_portefeuille_et_le_super_pack(monkeypatch):
     """Le Super-Pack reprend les versements nets PEA calculés par l'onglet Portefeuille (même marge restante)."""
     import re

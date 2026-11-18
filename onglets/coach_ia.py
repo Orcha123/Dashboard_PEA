@@ -18,6 +18,7 @@ from habillage import afficher_html, markdown_fr
 from solidite_dividendes import (
     EVOLUTION_REVENU, TAUX_MESURES, bilan_rente, categorie_projection, projeter_rente, rendement_median_solides,
 )
+from strategie_coach import CONSIGNES_SYNTHESE, construire_dossier, diagnostiquer, dossier_texte, plan_action, rapport_markdown
 
 
 def afficher(
@@ -51,6 +52,8 @@ def afficher(
     montant_investi_dca,
     montant_tot_div_dca,
     niveau_acces,
+    performance_vs_etf,
+    plan_dca,
     plus_value_pct,
     portefeuille_utilisateur,
     prix_temps_reel,
@@ -59,6 +62,7 @@ def afficher(
     sauvegarder_dans_cloud,
     sp_str,
     valeur_totale_portefeuille,
+    versements_nets_pea,
     vix_val,
 ):
     st.subheader("🤖 Coach & Audit IA 2.0 (Diagnostic Instantané & Intelligence Gemini)")
@@ -80,38 +84,10 @@ def afficher(
                     poids_max_ligne = p_it
                     nom_max_ligne = l_it["nom_act"]
 
-    note_sante_pf = min(100, max(20, int(40 + min(30, nb_lignes_actions * 5) + (20 if poids_max_ligne <= 30 else 5) + (10 if len(repartition_secteurs) >= 3 else 0))))
     taux_couverture_dca = (dividendes_bruts_totaux_eur / (BUDGET_MENSUEL * 12) * 100.0) if BUDGET_MENSUEL > 0 else 0.0
-
-    html_ia_header = f"""
-    <div class="argon-grid">
-        <div class="argon-card">
-            <div class="argon-title">🩺 Score de Santé Portefeuille</div>
-            <div class="argon-val" style="color:#2ecc71;">{note_sante_pf} / 100</div>
-            <div class="argon-sub">{nb_lignes_actions} ligne(s) | {len(repartition_secteurs)} secteur(s)</div>
-        </div>
-        <div class="argon-card">
-            <div class="argon-title">⚖️ Ligne Principale (Concentration)</div>
-            <div class="argon-val" style="color:{'#2ecc71' if poids_max_ligne <= 30 else '#f39c12'};">{poids_max_ligne:.1f}%</div>
-            <div class="argon-sub">Plus forte position : <b>{nom_max_ligne}</b></div>
-        </div>
-        <div class="argon-card">
-            <div class="argon-title">🔄 Autonomie Financière DCA</div>
-            <div class="argon-val" style="color:#3498db;">{taux_couverture_dca:.1f}%</div>
-            <div class="argon-sub">Part du DCA annuel financée par vos dividendes</div>
-        </div>
-        <div class="argon-card">
-            <div class="argon-title">⚡ Crédits d'Audit IA du Jour</div>
-            <div class="argon-val" style="color:#9b59b6;">{quota_restant} / {quota_ia_max}</div>
-            <div class="argon-sub">Forfait actif : <b>{niveau_acces.upper()}</b> | VIX : {vix_val:.1f}</div>
-        </div>
-    </div>
-    """
-    afficher_html(html_ia_header)
-
-    top_opps_noms = [f"<b>{c['nom']}</b> ({c['score']}/100)" for c in candidats_tries[:2]]
-    texte_opps_moment = " et ".join(top_opps_noms) if top_opps_noms else "aucune valeur en signal fort actuellement"
-    etat_conc_court = "bien équilibré" if poids_max_ligne <= 30 else f"concentré sur <b>{nom_max_ligne}</b> ({poids_max_ligne:.1f}%)"
+    # En-tête, synthèse flash et synthèse stratégique : remplis plus bas, une fois le dossier et le diagnostic établis
+    zone_entete = st.container()
+    zone_synthese = st.container()
 
     # --- SYNTHÈSE DES PLUS-VALUES ACTÉES POUR LE COACH IA ---
     hist_ventes_ia = st.session_state.get("historique_ventes", []) if est_pro_max else []
@@ -126,12 +102,6 @@ def afficher(
         if hist_ventes_ia else ""
     )
 
-    html_phrase_flash = f"""
-    <div class="ia-flash">
-        💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille actif de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}% latent) est {etat_conc_court} et génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois).{texte_bilan_ventes_flash} Les signaux techniques les plus forts du moment concernent {texte_opps_moment}.
-    </div>
-    """
-    afficher_html(html_phrase_flash)
 
     # ==========================================================================
     # SYNTHÈSE CROISÉE 360° DES OPPORTUNITÉS DU MOMENT (RADAR + TECH + DIV + PF)
@@ -539,6 +509,23 @@ def afficher(
         )
         return "\n".join("- " + l for l in lignes)
 
+    # ==========================================================================
+    # DOSSIER COMPLET (TOUS LES ONGLETS), DIAGNOSTIC ET PLAN D'ACTION
+    # ==========================================================================
+    signaux_forts_radar = [d["NomBrut"] for d in donnees_t1 if "SIGNAL FORT" in str(d.get("Décision", ""))]
+
+    def dossier_courant(calculer=False):
+        return construire_dossier(
+            lignes_portefeuille=lignes_triees, valeur_totale=valeur_totale_portefeuille, cout_total=cout_total_achat,
+            budget_mensuel=BUDGET_MENSUEL, dividendes_bruts=dividendes_bruts_totaux_eur,
+            dividendes_nets=dividendes_nets_totaux_eur, rente=contexte_rente(calculer=calculer), acces_rente=acces_rente,
+            plan_dca=plan_dca, allocation_personnalisee=allocation_personnalisee, portefeuille=portefeuille_utilisateur,
+            ventes=hist_ventes_ia, performance_vs_etf=performance_vs_etf if acces_rente else None,
+            versements_pea=versements_nets_pea, exposition_eur=exposition_eur, exposition_usd=exposition_usd,
+            marche={"vix": round(float(vix_val), 1), "cac": cac_str, "sp": sp_str, "eurusd": round(float(TAUX_USD_EUR), 4)},
+            signaux_forts=signaux_forts_radar, fiches=WATCHLIST_DEFAUT, taux_usd_eur=TAUX_USD_EUR,
+        )
+
     def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
         if question_utilisateur:
             for s_a, a_a in [
@@ -580,12 +567,17 @@ def afficher(
             bloc_recap_pv_md = """#### 💰 Bilan de vos Arbitrages & Plus/Moins-Values Actées (Réalisées)
 - *Aucune vente actée active (ou module Arbitrages réservé à l'offre Pro 8,90 €/mois).*"""
 
+        if code_audit == "AUDIT_0":
+            dossier_0 = dossier_courant(calculer=True)
+            return rapport_markdown(dossier_0, diagnostiquer(dossier_0))
+
         if code_audit == "AUDIT_1":
+            constats_1 = diagnostiquer(dossier_courant(calculer=True))
             return f"""### 🔍 Audit Complet 360°, Plus-Values Actées & Optimisation Fiscale
 
 #### 1. Bilan Patrimonial & Performance Globale
 - **Valorisation Active :** Votre portefeuille s'élève à **{valeur_totale_portefeuille:,.2f} €** pour un capital investi de **{cout_total_achat:,.2f} €**, soit une performance latente de **{plus_value_glob:+,.2f} € ({pv_pct_glob:+.2f}%)**.
-- **Score de Santé Global :** **{note_sante_pf}/100** avec **{nb_lignes_actions} ligne(s) active(s)** répartie(s) sur **{len(repartition_secteurs)} secteur(s)**.
+- **Diagnostic Boursy :** **{sum(1 for c in constats_1 if c['niveau'] == 'critique')} critique(s)**, **{sum(1 for c in constats_1 if c['niveau'] == 'vigilance')} point(s) de vigilance**, avec **{nb_lignes_actions} ligne(s) active(s)** sur **{len(repartition_secteurs)} secteur(s)** (détail : synthèse stratégique en tête de l'onglet).
 - **Vos Piliers Principaux :** {', '.join(top_3_lignes) if top_3_lignes else 'Aucune ligne enregistrée'}.
 
 {bloc_recap_pv_md}
@@ -786,7 +778,9 @@ def afficher(
             if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
         )
 
-        rente_ctx = contexte_rente(calculer=audit_sur_la_rente(question_utilisateur, code_audit))
+        rente_ctx = contexte_rente(calculer=audit_sur_la_rente(question_utilisateur, code_audit) or code_audit == "AUDIT_0")
+        dossier_ia = dossier_courant(calculer=code_audit == "AUDIT_0" or audit_sur_la_rente(question_utilisateur, code_audit))
+        constats_ia = diagnostiquer(dossier_ia)
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
@@ -803,11 +797,20 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 {chr(10).join(resume_radar)}
 - Rente : solidité, diversification et projection (mêmes calculs que les onglets Radar et Calendrier de Boursy) :
 {bloc_rente_prompt(rente_ctx)}
+- Diagnostic de Boursy (règles explicites, chiffres vérifiés), à utiliser et à ne pas contredire sans raison chiffrée :
+{chr(10).join(f"- [{c['niveau']}] {c['titre']} : {c['preuve']}" for c in constats_ia)}
 
 Mission demandée par l'utilisateur : {question_utilisateur}
 
 Réponds en français avec une structure claire (titres, puces, chiffres précis tirés de son portefeuille, un récapitulatif dédié aux performances de ses plus-values ou moins-values actées, ses points forts, points de vigilance et pistes de réflexion). Ne formule jamais de recommandation personnalisée d'achat ou de vente : pas de « achetez » ni « vendez », pas de quantités ni de prix d'ordre à passer. Décris ce que montrent les indicateurs et laisse la décision à l'utilisateur. Rappelle discrètement en fin de message qu'il s'agit d'un audit pédagogique et statistique (non-CIF).
 """
+        if code_audit == "AUDIT_0":
+            prompt_complet = (
+                "Tu es le coach patrimonial de Boursy, exigeant et bienveillant, spécialiste des PEA, des dividendes et des "
+                "achats réguliers (DCA). Voici le dossier complet de l'utilisateur, tiré de tous les onglets de Boursy, puis "
+                "le diagnostic établi par Boursy avec des règles explicites et des chiffres vérifiés.\n\n"
+                + dossier_texte(dossier_ia, constats_ia) + "\n\nMission : " + question_utilisateur + "\n\n" + CONSIGNES_SYNTHESE
+            )
         modeles_candidats = lister_modeles_gemini_actifs(cle_gemini)
         priorite_modeles = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.5-pro"]
         modeles_propres = [
@@ -824,13 +827,16 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
         for mod in modeles_ordonnes[:8]:
             try:
                 url_api = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={urllib.parse.quote(cle_gemini)}"
-                payload_ia = json.dumps({"contents": [{"parts": [{"text": prompt_complet}]}]}).encode("utf-8")
+                payload_ia = json.dumps({
+                    "contents": [{"parts": [{"text": prompt_complet}]}],
+                    "generationConfig": {"temperature": 0.4},  # factuel : les chiffres viennent du dossier
+                }).encode("utf-8")
                 req_ia = urllib.request.Request(
                     url_api,
                     data=payload_ia,
                     headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
                 )
-                with urllib.request.urlopen(req_ia, timeout=25) as resp_ia:
+                with urllib.request.urlopen(req_ia, timeout=60) as resp_ia:
                     res_json = json.loads(resp_ia.read().decode("utf-8"))
                     texte_rep = res_json["candidates"][0]["content"]["parts"][0]["text"]
                     if texte_rep:
@@ -840,11 +846,65 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
 
         return generer_audit_expert_hybride(question_utilisateur, code_audit)
 
+    dossier_affiche = dossier_courant(calculer=bool(st.session_state.get("_coach_solidite_demandee")))
+    constats_affiches = diagnostiquer(dossier_affiche)
+    plan_affiche = plan_action(constats_affiches)
+    nb_par_niveau = {n: sum(1 for c in constats_affiches if c["niveau"] == n) for n in ("critique", "vigilance", "force")}
+    premiere_action = next((c for h in plan_affiche.values() for c in h), None)
+    with zone_entete:
+        afficher_html(f"""
+        <div class="argon-grid">
+            <div class="argon-card">
+                <div class="argon-title">🧭 Diagnostic de Boursy</div>
+                <div class="argon-val" style="color:{'#e74c3c' if nb_par_niveau['critique'] else ('#f39c12' if nb_par_niveau['vigilance'] else '#2ecc71')};">{nb_par_niveau['critique']} 🔴 · {nb_par_niveau['vigilance']} 🟠 · {nb_par_niveau['force']} 🟢</div>
+                <div class="argon-sub">Critiques · vigilances · forces (détail ci-dessous)</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">⚖️ Ligne Principale (Concentration)</div>
+                <div class="argon-val" style="color:{'#2ecc71' if poids_max_ligne <= 30 else '#f39c12'};">{poids_max_ligne:.1f}%</div>
+                <div class="argon-sub">Plus forte position : <b>{nom_max_ligne}</b></div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">🔄 Autonomie Financière DCA</div>
+                <div class="argon-val" style="color:#3498db;">{taux_couverture_dca:.1f}%</div>
+                <div class="argon-sub">Part du DCA annuel financée par vos dividendes</div>
+            </div>
+            <div class="argon-card">
+                <div class="argon-title">⚡ Crédits d'Audit IA du Jour</div>
+                <div class="argon-val" style="color:#9b59b6;">{quota_restant} / {quota_ia_max}</div>
+                <div class="argon-sub">Forfait actif : <b>{niveau_acces.upper()}</b> | VIX : {vix_val:.1f}</div>
+            </div>
+        </div>
+        """)
+        texte_bilan_ventes_flash = (
+            f" Vos ventes ont acté <b>{total_pv_actee_ia:+,.2f} €</b> de plus-values ({len(hist_ventes_ia)} vente(s))."
+            if hist_ventes_ia else ""
+        )
+        afficher_html(f"""
+        <div class="ia-flash">
+            💡 <b>Synthèse Flash du Coach :</b> Votre portefeuille de <b>{valeur_totale_portefeuille:,.0f} €</b> ({plus_value_pct:+.1f}% latent) génère <b>{dividendes_nets_totaux_eur:,.0f} € net/an</b> ({dividendes_nets_totaux_eur/12.0:.1f} €/mois).{texte_bilan_ventes_flash} {f"Première action du plan : <b>{premiere_action['action']}</b>" if premiere_action else "Aucune action urgente : continuez vos apports réguliers."}
+        </div>
+        """)
+    with zone_synthese:
+        with st.expander("🧭 Synthèse stratégique, critiques & plan d'action (à partir de tous vos onglets)", expanded=True):
+            markdown_fr(rapport_markdown(dossier_affiche, constats_affiches))
+            if acces_rente and (dossier_affiche["rente"] or {}).get("solidite") is None:
+                if st.button("🛡️ Ajouter la solidité de ma rente au diagnostic (lecture du catalogue)", key="btn_coach_solidite"):
+                    st.session_state["_coach_solidite_demandee"] = True
+                    st.rerun()
+            st.caption("Ce diagnostic suit des règles explicites et ne consomme aucun crédit d'audit. Pour une synthèse rédigée "
+                       "par l'IA à partir des mêmes données, lancez l'audit « 🧭 0 » ci-dessous.")
+
     st.markdown("#### 🚀 Choisissez un Audit Prédéfini en 1 Clic (ou posez votre question ci-dessous)")
-    col_ia1, col_ia2, col_ia3 = st.columns(3)
     prompt_choisi = None
     code_audit_choisi = ""
     titre_audit = ""
+    if st.button("🧭 0. Synthèse, Critiques & Plan d'Action (IA, à partir de tous vos onglets)", type="primary", width="stretch"):
+        titre_audit = "Synthèse, Critiques & Plan d'Action"
+        code_audit_choisi = "AUDIT_0"
+        prompt_choisi = ("À partir de toutes mes données, fais une synthèse franche de ma situation, critique ma stratégie "
+                         "et construis-moi un plan d'action concret, daté et chiffré, cohérent avec mon objectif de rente.")
+    col_ia1, col_ia2, col_ia3 = st.columns(3)
 
     if col_ia1.button("🔍 1. Audit Complet 360° & Fiscalité", width="stretch"):
         titre_audit = "Audit Complet 360° & Fiscalité"
