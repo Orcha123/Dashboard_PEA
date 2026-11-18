@@ -212,6 +212,30 @@ def test_decisions_a_relire_dans_le_resume():
     assert "Décisions à relire" not in R.composer_email_resume(sans, "a@b.c", "d@e.f").get_payload()[0].get_payload(decode=True).decode()
 
 
+
+def test_echeances_du_pea_dans_le_resume():
+    def corps(resume):
+        return R.composer_email_resume(resume, "a@b.c", "d@e.f").get_payload()[0].get_payload(decode=True).decode()
+
+    jour = date(2026, 12, 3)
+    bientot = R.construire_resume(dict(PORTEFEUILLE, _pea={"premier_versement": "2022-01-10"}), WATCHLIST, 450.0, COURS,
+                                  1.10, date(2026, 12, 5), aujourd_hui=jour)
+    assert bientot["echeance_pea"]["type"] == "bientot" and bientot["plafond_pea"] is None
+    texte = corps(bientot)
+    assert "Votre PEA" in texte and "5 ans le 10 janvier 2027" in texte and "31,4 %" in texte and "18,6 %" in texte
+    atteint = R.construire_resume(dict(PORTEFEUILLE, _pea={"premier_versement": "2021-11-20"}), WATCHLIST, 450.0, COURS,
+                                  1.10, date(2026, 12, 5), aujourd_hui=jour)
+    assert "5 ans depuis le 20 novembre 2026" in corps(atteint)
+    # plafond : 2 500 x 50 € de lignes en euros, plus 120 € d'espèces, moins 2 000 € de dividendes encaissés ; la ligne
+    # en dollars (hors PEA) ne compte pas
+    gros = dict(PORTEFEUILLE, Alpha={"qte": 2500, "pru": 50.0}, _div_encaisses_cumul=2000.0)
+    plafond = R.construire_resume(gros, WATCHLIST, 450.0, COURS, 1.10, date(2026, 12, 5), aujourd_hui=jour)
+    assert plafond["echeance_pea"] is None and abs(plafond["plafond_pea"]["versements"] - (125000.0 + 120.0 - 2000.0)) < 1e-6
+    assert "Plafond : environ <b>123\xa0120 €</b> versés" in corps(plafond)  # espace insécable des montants
+    rien = R.construire_resume(PORTEFEUILLE, WATCHLIST, 450.0, COURS, 1.10, date(2026, 12, 5), aujourd_hui=jour)
+    assert "Votre PEA" not in corps(rien)
+
+
 if __name__ == "__main__":
     for nom_test, fonction in list(globals().items()):
         if nom_test.startswith("test_") and callable(fonction):

@@ -139,6 +139,22 @@ def test_rapport_et_dossier_pour_gemini():
     assert "L'achat du mois n'est jamais une recommandation" in S.CONSIGNES_SYNTHESE
 
 
+
+def test_echeances_du_pea():
+    inconnue = S.diagnostiquer(_dossier())
+    assert "Date des 5 ans du PEA inconnue" in _titres(inconnue, "info")
+    assert "Date du premier versement PEA : non renseignée" in S.dossier_texte(_dossier(), inconnue)
+    # PEA ouvert le 10/01/2023 : 10 000 € de lignes en euros et 4 000 € d'espèces pour 10 000 € versés, gain 4 000 €
+    jeune = _dossier(portefeuille={"_pea": {"premier_versement": "2023-01-10"}})
+    constat = next(c for c in S.diagnostiquer(jeune) if c["titre"] == "PEA de moins de 5 ans")
+    assert constat["niveau"] == "vigilance" and "10 janvier 2028" in constat["preuve"]
+    assert "31,4 %" in constat["preuve"] and "1 256 €" in constat["preuve"] and "744 €" in constat["preuve"]
+    assert "épargne de précaution hors du PEA" in constat["action"]
+    assert "5 ans le 10 janvier 2028" in S.dossier_texte(jeune, S.diagnostiquer(jeune))
+    ancien = S.diagnostiquer(_dossier(portefeuille={"_pea": {"premier_versement": "2020-05-04"}}))
+    assert "PEA de plus de 5 ans" in _titres(ancien, "force")
+
+
 if __name__ == "__main__":
     import pytest
 

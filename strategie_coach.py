@@ -12,9 +12,9 @@ from datetime import date
 from allocation_dca import lire_allocation_cible
 from carnet_decisions import decisions_a_relire, lire_carnet
 from diversification_rente import BAISSES_CRISES, grand_secteur, phrase_crise
+from fiscalite_pea import PLAFOND_PEA, TAUX_IMPOT_REVENU, TAUX_PRELEVEMENTS_SOCIAUX, date_fr, etat_pea
 from solidite_dividendes import TAUX_MESURES
 
-PLAFOND_PEA = 150000.0
 SEUIL_RENTE_A_SURVEILLER = 0.25
 SEUIL_RENTE_SOLIDE = 0.60
 SEUIL_BAISSE_CRISE = 0.25
@@ -48,6 +48,10 @@ def _eur(x):
 
 def _pc(x):
     return f"{x * 100:.0f} %"
+
+
+def _taux(x):
+    return f"{x * 100:.1f}".replace(".", ",") + " %"
 
 
 def _pc1(x, signe=True):
@@ -98,6 +102,8 @@ def construire_dossier(*, lignes_portefeuille, valeur_totale, cout_total, budget
 
     carnet = lire_carnet(portefeuille)
     ventes = [v for v in (ventes or []) if isinstance(v, dict)]
+    # Lignes du PEA (actions en euros) et espèces, comme la jauge du plafond de l'onglet Portefeuille
+    valeur_pea = sum(a["valeur"] for a in actions if a["enveloppe"] == "PEA") + especes
     return {
         "aujourd_hui": aujourd_hui,
         "valeur": float(valeur_totale or 0), "cout": float(cout_total or 0), "especes": especes,
@@ -118,6 +124,7 @@ def construire_dossier(*, lignes_portefeuille, valeur_totale, cout_total, budget
                    "a_perte": sum(1 for v in ventes if float(v.get("plus_value_eur", 0) or 0) < 0)},
         "performance_vs_etf": performance_vs_etf,
         "versements_pea": versements_pea,
+        "pea": etat_pea(portefeuille, aujourd_hui, versements_pea, valeur_pea if versements_pea is not None else None),
         "exposition_eur": float(exposition_eur or 0), "exposition_usd": float(exposition_usd or 0),
         "marche": marche or {},
         "signaux_forts": list(signaux_forts or []),
@@ -293,6 +300,29 @@ def diagnostiquer(d):
         else:
             c.append(_constat("info", "PEA", "Marge de versements sur le PEA",
                               f"{_eur(PLAFOND_PEA - d['versements_pea'])} encore possibles ({_pc(taux)} du plafond utilisé).", 5))
+    pea = d.get("pea") or {}
+    taux_avant, taux_apres = _taux(TAUX_IMPOT_REVENU + TAUX_PRELEVEMENTS_SOCIAUX), _taux(TAUX_PRELEVEMENTS_SOCIAUX)
+    if pea.get("premier_versement") is None:
+        if d["versements_pea"] or any(a["enveloppe"] == "PEA" for a in d["actions"]):
+            c.append(_constat("info", "PEA", "Date des 5 ans du PEA inconnue",
+                              "Boursy ne connaît pas la date de votre premier versement sur le PEA : c'est d'elle que partent "
+                              "les 5 ans qui changent la fiscalité d'un retrait.", 20,
+                              "Renseignez la date de votre premier versement (sur un relevé du courtier ; ce n'est pas la date "
+                              "de signature du contrat).", "Ce mois-ci", "Portefeuille > Échéances fiscales du PEA"))
+    elif not pea["plus_de_5_ans"]:
+        preuve = (f"Votre PEA aura 5 ans le {date_fr(pea['date_5_ans'])} (dans {pea['jours_restants']} jours). D'ici là, "
+                  "un retrait clôturerait le plan")
+        if pea.get("gain"):
+            preuve += (f" et le gain d'environ {_eur(pea['gain'])} serait imposé à {taux_avant} (environ "
+                       f"{_eur(pea['impot_avant_5_ans'])}), contre {taux_apres} après cette date (environ "
+                       f"{_eur(pea['impot_apres_5_ans'])})")
+        c.append(_constat("vigilance", "PEA", "PEA de moins de 5 ans", preuve + ".", 30,
+                          f"Gardez votre épargne de précaution hors du PEA, pour ne pas avoir à y toucher avant le "
+                          f"{date_fr(pea['date_5_ans'])}.", "En continu", "Portefeuille > Échéances fiscales du PEA"))
+    else:
+        c.append(_constat("force", "PEA", "PEA de plus de 5 ans",
+                          f"Depuis le {date_fr(pea['date_5_ans'])} : retraits partiels possibles sans clôturer le plan, gain "
+                          f"retiré exonéré d'impôt sur le revenu ({taux_apres} de prélèvements sociaux seulement).", 15))
     total_expo = d["exposition_eur"] + d["exposition_usd"]
     if total_expo > 0 and d["exposition_usd"] / total_expo >= 0.3:
         c.append(_constat("info", "Devises", "Une part importante en dollars",
@@ -475,6 +505,17 @@ def dossier_texte(d, constats):
              else "- Non mesurée (journal des achats incomplet ou offre gratuite)")
     t.append("PEA, DÉCISIONS, VENTES, MARCHÉ")
     t.append(f"- Versements nets PEA : {_eur(d['versements_pea'])} sur {_eur(PLAFOND_PEA)}" if d["versements_pea"] else "- Versements PEA : inconnus")
+    pea = d.get("pea") or {}
+    if pea.get("premier_versement") is None:
+        t.append("- Date du premier versement PEA : non renseignée (date des 5 ans inconnue)")
+    elif pea["plus_de_5_ans"]:
+        t.append(f"- PEA : premier versement le {date_fr(pea['premier_versement'])}, 5 ans atteints le "
+                 f"{date_fr(pea['date_5_ans'])} (retraits partiels sans clôture, gain exonéré d'impôt sur le revenu, "
+                 f"{_taux(TAUX_PRELEVEMENTS_SOCIAUX)} de prélèvements sociaux)")
+    else:
+        t.append(f"- PEA : premier versement le {date_fr(pea['premier_versement'])}, 5 ans le {date_fr(pea['date_5_ans'])} "
+                 f"(dans {pea['jours_restants']} jours ; avant, tout retrait clôture le plan et le gain est imposé à "
+                 f"{_taux(TAUX_IMPOT_REVENU + TAUX_PRELEVEMENTS_SOCIAUX)}, contre {_taux(TAUX_PRELEVEMENTS_SOCIAUX)} après)")
     c = d["carnet"]
     t.append(f"- Carnet de décisions : {c['total']} décision(s), {c['a_relire']} à relire, {c['avec_lecon']} avec leçon écrite")
     v = d["ventes"]

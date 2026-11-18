@@ -24,6 +24,10 @@ import streamlit as st
 from carnet_decisions import HORIZONS_MOIS, HORIZON_RELECTURE_MOIS, LONGUEUR_NOTE_MAX, NOM_REFERENCE, RAISONS, SYMBOLE_REFERENCE, TYPES_DECISION, ajouter_decision, ajouter_mois, bilan_par_raison, decisions_a_relire, enregistrer_lecon, evaluer_decision, lire_carnet, nouvelle_decision, phrase_resultat, supprimer_decision
 from catalogue_valeurs import symbole_a_jour
 from donnees_marche import cours_a_la_date, taux_rendement_interne
+from fiscalite_pea import (
+    PLAFOND_PEA, PLAFOND_PEA_ET_PEA_PME, TAUX_IMPOT_REVENU, TAUX_PRELEVEMENTS_SOCIAUX, date_fr, etat_pea, texte_anciennete,
+    versements_nets_estimes,
+)
 from habillage import afficher_html, markdown_fr, nombres_fr
 
 
@@ -76,7 +80,7 @@ def afficher(
         montant_especes = st.number_input("Montant Espèces (€)", min_value=0.0, value=float(st.session_state.get("pru_Espèces", pru_esp_defaut)), step=50.0, key="pru_Espèces")
 
         nouveau_portefeuille_temp = {}
-        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions"):
+        for cle_t in ("_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions", "_pea"):
             if cle_t in st.session_state["portefeuille"]:
                 nouveau_portefeuille_temp[cle_t] = st.session_state["portefeuille"][cle_t]
         if st.session_state.get("historique_ventes"):
@@ -1652,15 +1656,10 @@ def afficher(
         div_encaisses_cumul = float(st.session_state.get("dividendes_encaisses_cumul", 0.0))
         # Plafond PEA : seules les plus-values actées DANS le PEA (ventes en €) réduisent les versements estimés.
         # Cette valeur est réutilisée telle quelle par la carte « Plafond Légal PEA » plus bas dans l'onglet.
-        pv_actees_pea_pf = sum(
-            float(v.get("plus_value_eur", 0.0))
-            for v in st.session_state.get("historique_ventes", [])
-            if v.get("devise", "€") != "$"
-        )
-        capital_autofinance = max(0.0, pv_actees_pea_pf + div_encaisses_cumul)
         cout_pru_pea_seul = sum(l["cout_eur"] for l in lignes_triees if l["devise"] == "EUR")
-        versements_nets_pea = max(0.0, cout_pru_pea_seul - capital_autofinance)
-        plafond_legal_pea = 150000.0
+        versements_nets_pea = versements_nets_estimes(cout_pru_pea_seul, st.session_state.get("historique_ventes", []),
+                                                      div_encaisses_cumul)
+        plafond_legal_pea = PLAFOND_PEA
         pct_plafond_pea = min(100.0, (versements_nets_pea / plafond_legal_pea) * 100.0)
         marge_restante_pea = max(0.0, plafond_legal_pea - versements_nets_pea)
 
@@ -1698,6 +1697,16 @@ def afficher(
         </div>
         """
         afficher_html(html_pea_tri)
+
+        # ======================================================================
+        # ÉCHÉANCES FISCALES DU PEA : 5 ANS DEPUIS LE PREMIER VERSEMENT, PLAFOND, IMPÔT D'UN RETRAIT
+        # ======================================================================
+        aujourd_hui_pea = datetime.now().date()
+        valeur_pea_pf = sum(l["val_eur"] for l in lignes_triees if l["devise"] == "EUR")
+        echeances_pea = etat_pea(st.session_state["portefeuille"], aujourd_hui_pea, versements_nets_pea, valeur_pea_pf)
+        afficher_html(_carte_echeances_pea(echeances_pea))
+        with st.expander("📅 Échéances fiscales du PEA : date des 5 ans, plafond et impôt d'un retrait", expanded=False):
+            _reglage_echeances_pea(echeances_pea, aujourd_hui_pea, sauvegarder_dans_cloud)
 
         # ======================================================================
         # MODULE PRIME DE FIDÉLITÉ NOMINATIF ADMINISTRÉ (+10% & ACTIONS GRATUITES)
@@ -2003,3 +2012,108 @@ def afficher(
         "valeur_totale_portefeuille": valeur_totale_portefeuille,
         "versements_nets_pea": versements_nets_pea,
     }
+
+
+# ==============================================================================
+# ÉCHÉANCES FISCALES DU PEA
+# ==============================================================================
+def _eur_pea(montant):
+    return f"{montant:,.0f} €".replace(",", " ")
+
+
+def _pct_pea(taux):
+    return f"{taux * 100:.1f}".replace(".", ",").replace(",0", "") + " %"
+
+
+def _carte_echeances_pea(etat):
+    """Carte d'ancienneté du PEA : date des 5 ans et ce qu'un retrait coûterait avant et après."""
+    taux_avant = _pct_pea(TAUX_IMPOT_REVENU + TAUX_PRELEVEMENTS_SOCIAUX)
+    taux_apres = _pct_pea(TAUX_PRELEVEMENTS_SOCIAUX)
+    if etat["premier_versement"] is None:
+        couleur, titre, badge = "#95a5a6", "📅 Ancienneté fiscale du PEA : date du premier versement à renseigner", "5 ans : ?"
+        texte = ("Les 5 ans qui changent la fiscalité d'un retrait se comptent à partir du <b>premier versement</b> sur le "
+                 "plan. Renseignez-le dans le volet « Échéances fiscales du PEA » ci-dessous.")
+        progression = 0.0
+    else:
+        ans, mois = etat["anciennete"]
+        progression = min(100.0, (ans * 12 + mois) / 60.0 * 100.0)  # part des 5 ans écoulée
+        if etat["plus_de_5_ans"]:
+            couleur, badge = "#2ecc71", f"5 ans depuis le {date_fr(etat['date_5_ans'])}"
+            titre = f"✅ PEA de plus de 5 ans ({texte_anciennete(ans, mois)})"
+            texte = ("Retraits partiels possibles sans clôturer le plan, versements toujours possibles. Le gain retiré est "
+                     f"exonéré d'impôt sur le revenu : seuls {taux_apres} de prélèvements sociaux restent dus")
+            texte += (f" (environ <b>{_eur_pea(etat['impot_apres_5_ans'])}</b> pour une clôture aujourd'hui)."
+                      if etat["gain"] else ".")
+        else:
+            jours = etat["jours_restants"]
+            couleur, badge = "#f39c12", f"5 ans le {date_fr(etat['date_5_ans'])}"
+            titre = f"📅 Ancienneté fiscale du PEA : {texte_anciennete(ans, mois)} (5 ans dans {jours} jour{'s' if jours > 1 else ''})"
+            texte = "D'ici là, un retrait clôturerait le plan (sauf licenciement, invalidité, retraite anticipée, création d'entreprise)"
+            if etat["gain"]:
+                texte += (f" et le gain serait imposé à {taux_avant} : environ <b>{_eur_pea(etat['impot_avant_5_ans'])}</b> "
+                          f"aujourd'hui, contre {_eur_pea(etat['impot_apres_5_ans'])} ({taux_apres}) après les 5 ans.")
+            else:
+                texte += "."
+    return f"""
+    <div class="argon-card" style="text-align:left; border-left: 4px solid {couleur}; margin-bottom: 18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="argon-title" style="color:{couleur}; margin:0;">{titre}</span>
+            <span class="b-neutral">{badge}</span>
+        </div>
+        <div class="score-bg" style="height:8px; margin:8px 0;">
+            <div style="width:{max(2.0, progression):.0f}%; background:{couleur}; height:100%;"></div>
+        </div>
+        <div style="font-size:0.84em; opacity:0.92; line-height:1.5;">{texte}</div>
+    </div>
+    """
+
+
+def _reglage_echeances_pea(etat, aujourd_hui, sauvegarder_dans_cloud):
+    """Saisie de la date du premier versement, règles des 5 ans et du plafond, impôt estimé d'une clôture."""
+    from datetime import date as _date
+
+    defaut = etat["premier_versement"] or etat["suggestion"]
+    date_saisie = st.date_input(
+        "Date de votre premier versement sur le PEA",
+        value=defaut, min_value=_date(1992, 1, 1), max_value=aujourd_hui, format="DD/MM/YYYY", key="date_premier_versement_pea",
+        help="C'est elle qui compte pour les 5 ans, pas la date de signature du contrat (article D. 221-113-3 du Code "
+             "monétaire et financier). Elle figure sur les relevés de votre courtier.",
+    )
+    if etat["premier_versement"] is None and etat["suggestion"]:
+        st.caption(f"Proposée : votre plus ancien achat en euros noté dans le journal ({date_fr(etat['suggestion'])}). "
+                   "Le premier versement peut être plus ancien : vérifiez-le sur un relevé.")
+    if date_saisie and date_saisie != etat["premier_versement"]:
+        if st.button("💾 Enregistrer cette date", key="btn_premier_versement_pea"):
+            st.session_state["portefeuille"]["_pea"] = {"premier_versement": date_saisie.isoformat()}
+            sauvegarder_dans_cloud()
+            st.rerun()
+
+    taux_avant = _pct_pea(TAUX_IMPOT_REVENU + TAUX_PRELEVEMENTS_SOCIAUX)
+    taux_apres = _pct_pea(TAUX_PRELEVEMENTS_SOCIAUX)
+    ligne_impot = ""
+    if etat["gain"] is not None:
+        ligne_impot = (f"| Sur votre PEA (clôture aujourd'hui, gain estimé {_eur_pea(etat['gain'])}) | environ "
+                       f"{_eur_pea(etat['impot_avant_5_ans'])} | environ {_eur_pea(etat['impot_apres_5_ans'])} |\n")
+    st.markdown(
+        "| | Avant 5 ans | Après 5 ans |\n| --- | --- | --- |\n"
+        "| Un retrait | clôture le plan (sauf licenciement, invalidité ou retraite anticipée, de vous ou de votre conjoint, "
+        "ou création ou reprise d'entreprise dans les 3 mois) | possible sans clôture ; les versements restent possibles |\n"
+        f"| Impôt sur le gain retiré | {taux_avant} ({_pct_pea(TAUX_IMPOT_REVENU)} d'impôt sur le revenu et {taux_apres} "
+        f"de prélèvements sociaux) | {taux_apres} de prélèvements sociaux seulement |\n"
+        + ligne_impot
+        + "| Sortie en rente viagère | — | exonérée d'impôt sur le revenu |"
+    )
+    if etat["versements"] is not None:
+        st.markdown(
+            f"**Plafond** : versements nets estimés {_eur_pea(etat['versements'])} sur {_eur_pea(PLAFOND_PEA)} "
+            f"({_pct_pea(etat['part_plafond'])}), soit {_eur_pea(etat['reste_versable'])} encore possibles. Les gains ne "
+            f"comptent pas dans le plafond ({_eur_pea(PLAFOND_PEA_ET_PEA_PME)} pour le PEA et le PEA-PME réunis)."
+            + (" Le plafond approche : prévoyez où iront les apports suivants." if etat["plafond_proche"] else "")
+        )
+    st.caption(
+        "Ordres de grandeur : gain = valeur des lignes en euros (espèces comprises) moins les versements nets estimés, "
+        "imposé seulement s'il est positif. Votre courtier calcule le montant exact ; des taux plus anciens de "
+        "prélèvements sociaux peuvent s'appliquer à une partie des gains d'un PEA ouvert avant 2018. Règles en vigueur en "
+        "2026 (prélèvements sociaux à 18,6 % sur le PEA depuis le 1er janvier 2026). Information générale, qui ne "
+        "constitue pas un conseil fiscal."
+    )

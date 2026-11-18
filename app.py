@@ -93,7 +93,7 @@ st.set_page_config(
     layout="wide",
 )
 
-CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions")
+CLES_TECHNIQUES_PF = ("Espèces", "_historique_ventes", "_quota_ia", "_niveau_abo", "_div_encaisses_cumul", "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible", "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions", "_pea")
 
 
 def _lire_secret(nom, defaut=""):
