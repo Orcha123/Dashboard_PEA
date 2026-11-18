@@ -11,7 +11,7 @@ import math
 import pandas as pd
 import streamlit as st
 
-from diversification_rente import BAISSES_CRISES, SEUIL_LIGNE, SEUIL_SECTEUR, repartition_rente
+from diversification_rente import BAISSES_CRISES, SEUIL_LIGNE, SEUIL_SECTEUR, phrase_crise, repartition_rente
 from donnees_marche import prochain_detachement
 from habillage import afficher_html, nombres_fr
 from solidite_dividendes import (
@@ -443,18 +443,6 @@ def afficher(
             def crise_secteur(secteur, annee):
                 baisses, versantes = BAISSES_CRISES.get(secteur, {}).get(annee, (0, 0))
                 return f"{baisses} sur {versantes}" if versantes else "—"
-
-            def phrase_crise(secteur):
-                """Ce que ce secteur a vécu en 2020 et en 2009, dans le catalogue de l'étude."""
-                mesures = BAISSES_CRISES.get(secteur)
-                if not mesures:
-                    return ""
-                (b20, v20), (b09, v09) = mesures[2020], mesures[2009]
-                faits = (f" Dans le catalogue, {b20} des {v20} valeurs de ce secteur {'a' if b20 <= 1 else 'ont'} baissé ou "
-                         f"suspendu {'son' if b20 <= 1 else 'leur'} dividende en 2020 ({b09} sur {v09} en 2009)")
-                if b20 / v20 >= 0.5:
-                    return faits + " : une seule mauvaise année peut toucher une grosse part de votre rente."
-                return faits + " : il a plutôt bien tenu, mais votre rente dépend fortement de lui."
 
             col_div1, col_div2 = st.columns(2)
             with col_div1:

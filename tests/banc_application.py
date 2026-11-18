@@ -9,6 +9,7 @@ d'environnement BOURSY_PROFIL_TEST :
 - « pro » : compte connecté, abonnement Pro dans la table protégée.
 Avec BOURSY_STRIPE_TEST=pro (et le secret STRIPE_SECRET_KEY), un faux Stripe répond qu'un abonnement Pro est actif.
 Avec BOURSY_DIVIDENDES_10_ANS=1, les historiques sur 10 ans contiennent 10 ans de dividendes trimestriels.
+Avec BOURSY_GEMINI_TEST=<fichier>, un faux Gemini écrit dans ce fichier le texte que l'application lui envoie.
 """
 import calendar
 import io
@@ -61,6 +62,13 @@ def _faux_urlopen(requete, timeout=None):
             return _Reponse(json.dumps({"data": [{"status": "active", "items": {"data": [{"price": {
                 "id": "price_x", "unit_amount": 890, "recurring": {"interval": "month"}}}]}}]}).encode())
         return _Reponse(json.dumps({"data": []}).encode())
+    if "generativelanguage.googleapis.com" in url and os.environ.get("BOURSY_GEMINI_TEST"):
+        # faux Gemini : enregistre le texte reçu dans le fichier indiqué et répond une phrase fixe
+        if ":generateContent" in url:
+            with open(os.environ["BOURSY_GEMINI_TEST"], "w", encoding="utf-8") as fichier:
+                fichier.write(json.loads(requete.data)["contents"][0]["parts"][0]["text"])
+            return _Reponse(json.dumps({"candidates": [{"content": {"parts": [{"text": "Réponse Gemini simulée"}]}}]}).encode())
+        return _Reponse(json.dumps({"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]}]}).encode())
     if "finance.yahoo.com" not in url:
         raise urllib.error.URLError("réseau coupé (banc d'essai)")
     adresse = urllib.parse.urlparse(url)

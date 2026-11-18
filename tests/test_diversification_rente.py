@@ -61,6 +61,25 @@ def test_rente_bien_repartie_ou_vide():
     assert vide["rente"] == 0.0 and vide["par_secteur"] == [] and vide["lignes_trop_lourdes"] == []
 
 
+def test_lignes_de_rente():
+    portefeuille = {"LVMH": {"qte": 2, "pru": 600}, "Coca-Cola": {"qte": 10, "pru": 50}, "Vendue": {"qte": 0, "pru": 10},
+                    "Inconnue": {"qte": 5, "pru": 10}, "_allocation_cible": [], "Espèces": {"qte": 1, "pru": 100}}
+    fiches = {"LVMH": {"symbole": "MC.PA ", "secteur": "Luxe", "div_eur": 13.0, "devise": "EUR"},
+              "Coca-Cola": {"symbole": "KO", "secteur": "Consommation US", "div_eur": 2.0, "devise": "USD"},
+              "Vendue": {"symbole": "V.PA", "secteur": "Luxe", "div_eur": 1.0, "devise": "EUR"}}
+    lignes = R.lignes_de_rente(portefeuille, fiches, 1.25)
+    assert lignes == [("LVMH", "MC.PA", "Luxe", 26.0), ("Coca-Cola", "KO", "Consommation US", 10 * 2.0 / 1.25)]
+    assert R.lignes_de_rente(portefeuille, fiches, 1.25, noms=["Coca-Cola"]) == [lignes[1]]
+
+
+def test_phrase_de_crise():
+    assert "1 des 6 valeurs de ce secteur a baissé ou suspendu son dividende" in R.phrase_crise("Énergie")
+    assert "plutôt bien tenu" in R.phrase_crise("Énergie")
+    assert "4 des 4 valeurs de ce secteur ont baissé ou suspendu leur dividende" in R.phrase_crise("Automobile")
+    assert "une seule mauvaise année" in R.phrase_crise("Automobile")
+    assert R.phrase_crise("Autre") == ""
+
+
 if __name__ == "__main__":
     import pytest
 

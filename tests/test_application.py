@@ -352,6 +352,66 @@ def test_coach_ia_achat_du_mois(monkeypatch):
     assert application.session_state["quota_ia_utilise"] == 1
 
 
+def test_coach_ia_audit_de_la_rente(monkeypatch):
+    """Onglet 4 : l'audit de la rente reprend solidité, diversification et projection ; le gratuit voit le verrou."""
+    import streamlit as st
+
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    monkeypatch.setenv("BOURSY_DIVIDENDES_10_ANS", "1")
+    try:
+        application = lancer("pro", monkeypatch)
+        _bouton(application, "💵 5. Ma Rente").click()
+        application.run()
+        verifier_sans_erreur(application)
+        rapport = application.session_state["reponse_ia_coach"]
+        for titre in ("Ma Rente : Solidité, Diversification & Projection Prudente", "Solidité de votre rente",
+                      "Diversification de votre rente", "Projection prudente", "crise comme 2020", "Palier des 100"):
+            assert titre in rapport, titre
+        assert "5,5 %" not in rapport and "5.5 %" not in rapport  # plus de rendement supposé
+        _bouton(application, "🛡️ 4. Stress-Test").click()
+        application.run()
+        stress = application.session_state["reponse_ia_coach"]
+        assert "n'est pas à l'abri" in stress and "Diversification de votre rente" in stress
+        assert "dépend du nombre d'actions détenues" not in stress
+        gratuit = lancer("gratuit", monkeypatch)
+        _bouton(gratuit, "💵 5. Ma Rente").click()
+        gratuit.run()
+        verifier_sans_erreur(gratuit)
+        assert "Réservées aux offres" in gratuit.session_state["reponse_ia_coach"]
+    finally:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+
+
+def test_coach_ia_gemini_recoit_la_rente(monkeypatch, tmp_path):
+    """Onglet 4 : avec Gemini, le texte envoyé contient la solidité, la diversification, la projection et l'étude."""
+    import streamlit as st
+
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    texte_envoye = tmp_path / "gemini.txt"
+    monkeypatch.setenv("BOURSY_DIVIDENDES_10_ANS", "1")
+    monkeypatch.setenv("BOURSY_GEMINI_TEST", str(texte_envoye))
+    monkeypatch.setenv("BOURSY_PROFIL_TEST", "pro")
+    try:
+        application = AppTest.from_file(BANC, default_timeout=240)
+        application.secrets["GEMINI_API_KEY"] = "cle-de-test"
+        application.run()
+        _bouton(application, "💵 5. Ma Rente").click()
+        application.run()
+        verifier_sans_erreur(application)
+        assert application.session_state["reponse_ia_coach"] == "Réponse Gemini simulée"
+        envoye = texte_envoye.read_text(encoding="utf-8")
+        for morceau in ("Répartition de la rente par grand secteur", "Solidité de la rente", "crise comme 2020",
+                        "Projection prudente", "Résultats de l'étude des dividendes de Boursy",
+                        "Ne présente jamais un rendement élevé comme une qualité en soi"):
+            assert morceau in envoye, morceau
+    finally:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+
+
 def test_plafond_pea_identique_dans_le_portefeuille_et_le_super_pack(monkeypatch):
     """Le Super-Pack reprend les versements nets PEA calculés par l'onglet Portefeuille (même marge restante)."""
     import re
