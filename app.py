@@ -1752,6 +1752,7 @@ exposition_eur = resultat_portefeuille["exposition_eur"]
 exposition_usd = resultat_portefeuille["exposition_usd"]
 lignes_triees = resultat_portefeuille["lignes_triees"]
 noter_dans_carnet = resultat_portefeuille["noter_dans_carnet"]
+performance_vs_etf = resultat_portefeuille["performance_vs_etf"]
 plus_value_globale = resultat_portefeuille["plus_value_globale"]
 plus_value_pct = resultat_portefeuille["plus_value_pct"]
 portefeuille_utilisateur = resultat_portefeuille["portefeuille_utilisateur"]
@@ -1815,6 +1816,8 @@ with onglet_ia:
         montant_investi_dca=montant_investi_dca,
         montant_tot_div_dca=montant_tot_div_dca,
         niveau_acces=niveau_acces,
+        performance_vs_etf=performance_vs_etf,
+        plan_dca=plan_dca,
         plus_value_pct=plus_value_pct,
         portefeuille_utilisateur=portefeuille_utilisateur,
         prix_temps_reel=prix_temps_reel,
@@ -1823,6 +1826,7 @@ with onglet_ia:
         sauvegarder_dans_cloud=sauvegarder_dans_cloud,
         sp_str=sp_str,
         valeur_totale_portefeuille=valeur_totale_portefeuille,
+        versements_nets_pea=versements_nets_pea,
         vix_val=vix_val,
     )
 

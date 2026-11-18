@@ -179,6 +179,15 @@ mensuels (et, au choix, les dividendes réinvestis) placés en dividendes solide
 rente l'année d'une crise comme 2020 (pire année mesurée). La croissance passée du catalogue (+7,4 % par an pour les
 solides) n'est pas utilisée : elle est gonflée par le biais du survivant et le rattrapage d'après 2009.
 
+**Coach IA : synthèse, critiques et plan d'action** (onglet 4, `strategie_coach.py`) : en tête de l'onglet, sans
+consommer de crédit d'audit, un diagnostic à règles explicites établi à partir des données de tous les onglets
+(portefeuille, rente et sa solidité, diversification, crise, projection prudente, achat du mois et allocation cible,
+journal des achats, carnet de décisions, ventes, performance réelle face à un ETF Monde, plafond du PEA, marché, radar) :
+ce qui va bien, critiques chiffrées, principes issus des études de Boursy et plan d'action daté (ce mois-ci, ce
+trimestre, cette année, en continu), chaque action reliée à l'outil de Boursy qui la réalise. L'audit « 🧭 0 » confie
+le même dossier et ce diagnostic à Gemini, avec une structure imposée et l'interdiction d'inventer un chiffre ou de
+recommander l'achat ou la vente d'un titre précis (Boursy n'est pas conseiller en investissements financiers).
+
 **Coach IA** (onglet 4) : l'audit « 💵 5. Ma rente » reprend la solidité, la diversification, la rente en cas de crise
 et la projection prudente (mêmes calculs que les onglets Radar et Calendrier), le stress-test (audit 4) utilise les
 baisses de dividendes mesurées par secteur en 2009 et 2020, et Gemini reçoit ces éléments avec les résultats de l'étude,
@@ -209,6 +218,7 @@ source étrangères non récupérables dans un PEA.
 | `onglets/portefeuille.py` | Onglet 2 : lignes, journal des achats, carnet de décisions, valorisation, trajectoire, performance vs ETF |
 | `onglets/super_pack.py` | Super-Pack Pro : sections ajoutées dans les onglets 1 à 3 (PEA/CTO, plafond PEA, rendement sur PRU, duel ETF, station 360°) |
 | `onglets/radar.py` | Onglet 1 : radar, achat du mois, centre d'alertes, résumé mensuel, bilan des signaux |
+| `strategie_coach.py` | Coach : dossier de tous les onglets, diagnostic à règles explicites, plan d'action, rapport et texte pour Gemini (sans Streamlit) |
 | `onglets/coach_ia.py` | Onglet 4 : coach et audits IA (Gemini ou moteur local), dont l'audit de la rente : solidité, diversification, projection prudente |
 | `onglets/calendrier.py` | Onglet 3 : objectif de rente, calendrier des dividendes, détachements, boule de neige |
 | `onglets/ventes.py` | Onglet 5 : arbitrages, ventes et plus-values actées (Pro) |
