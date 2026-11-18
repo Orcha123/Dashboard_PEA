@@ -161,6 +161,29 @@ que ce qui est robuste : l'écart entre catégories (les lignes « alerte » fin
 les neutres ne sont jamais comptées mieux que les solides) et la pire année, 2020 (solides −13 %, neutres −24 %,
 alerte −52 %). Elle suppose ensuite, en euros d'aujourd'hui, une croissance réelle nulle du dividende.
 
+## Pour la diversification de la rente (exploratoire) : les crises par grand secteur
+
+Part des actions du catalogue qui ont baissé leur dividende de plus de 10 % (suppression comprise), parmi celles qui en versaient un l'année précédente, par grand secteur (`diversification_rente.grand_secteur`). (Tâche GitHub « Étude des dividendes » n° 7, commit b0fa3c8.)
+
+| Grand secteur | 2009 : baisses / actions | 2009 | 2020 : baisses / actions | 2020 |
+| --- | --- | --- | --- | --- |
+| Automobile | 5 / 5 | 100 % | 4 / 4 | 100 % |
+| Aéronautique et défense | 2 / 4 | 50 % | 4 / 4 | 100 % |
+| Consommation | 3 / 15 | 20 % | 4 / 15 | 27 % |
+| Finance et holdings | 11 / 14 | 79 % | 12 / 19 | 63 % |
+| Immobilier | 1 / 5 | 20 % | 1 / 5 | 20 % |
+| Industrie et construction | 5 / 15 | 33 % | 11 / 18 | 61 % |
+| Luxe et spiritueux | 5 / 6 | 83 % | 5 / 7 | 71 % |
+| Santé | 2 / 9 | 22 % | 2 / 10 | 20 % |
+| Services publics | 0 / 4 | 0 % | 2 / 4 | 50 % |
+| Technologie | 3 / 9 | 33 % | 5 / 13 | 38 % |
+| Télécoms et médias | 3 / 7 | 43 % | 5 / 7 | 71 % |
+| Énergie | 1 / 6 | 17 % | 1 / 6 | 17 % |
+
+Les crises frappent des secteurs entiers : une rente concentrée sur l'automobile, l'aéronautique, la finance ou le
+luxe aurait perdu une grande partie de ses dividendes la même année. Petits effectifs par secteur : ce sont des faits
+passés, pas des probabilités. Utilisé par l'onglet Calendrier (« Diversification de votre rente »).
+
 ## Verdict selon les critères pré-enregistrés
 
 - **R Régularité (5 ans sans baisse)** : dividende plus fiable : non démontré ; rendement : pas de différence démontrée ; perte maximale : pas de différence démontrée.

@@ -13,6 +13,7 @@ from datetime import date
 
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE
 from donnees_marche import SERVEURS_YAHOO, dividendes_du_resultat, lire_chart
+from diversification_rente import grand_secteur
 from etudes import dividendes as D
 from etudes.lancer_etude_tendances import (
     DEBUT_HISTORIQUE, clotures_par_mois, derniere_suite_complete, fourchette, mois_manquants, pct, pts,
@@ -234,6 +235,23 @@ def main():
             l.append(f"| {categorie} | {k} an{'s' if k > 1 else ''} | {min(departs)}-{max(departs)} ({len(departs)}) | "
                      f"{moyenne_actions:.0f} | {pct(r['mediane'] - 1.0)} | {pct(r['mediane'] ** (1.0 / k) - 1.0)} | "
                      f"{pct(r['pire'] - 1.0)} (départ {r['annee_pire']}) |")
+    l.append("")
+
+    l.append("## Pour la diversification de la rente (exploratoire) : les crises par grand secteur")
+    l.append("")
+    l.append("Part des actions du catalogue qui ont baissé leur dividende de plus de 10 % (suppression comprise), parmi celles "
+             "qui en versaient un l'année précédente, par grand secteur (`diversification_rente.grand_secteur`).")
+    l.append("")
+    groupes = {nom: grand_secteur(ENRICHISSEMENT_CATALOGUE[nom][2], ENRICHISSEMENT_CATALOGUE[nom][0]) for nom in series}
+    crises = D.baisses_par_groupe(series, groupes, (2009, 2020))
+    l.append("| Grand secteur | 2009 : baisses / actions | 2009 | 2020 : baisses / actions | 2020 |")
+    l.append("| --- | --- | --- | --- | --- |")
+    for groupe in sorted(set(groupes.values())):
+        cellules = []
+        for annee in (2009, 2020):
+            versantes, baisses = crises[annee].get(groupe, (0, 0))
+            cellules += [f"{baisses} / {versantes}", taux(baisses / versantes) if versantes else "—"]
+        l.append(f"| {groupe} | " + " | ".join(cellules) + " |")
     l.append("")
 
     l.append("## Verdict selon les critères pré-enregistrés")

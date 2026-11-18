@@ -366,3 +366,20 @@ def evolution_revenu_par_categorie(observations, series, horizons=HORIZONS_REVEN
             r["mediane"] = valeurs[milieu] if len(valeurs) % 2 else (valeurs[milieu - 1] + valeurs[milieu]) / 2.0
             r["annee_pire"], (r["pire"], _) = min(r["departs"].items(), key=lambda kv: kv[1][0])
     return resultat
+
+
+def baisses_par_groupe(series, groupes, annees):
+    """
+    Exploratoire (pour la diversification de la rente) : {année: {groupe: (actions qui versaient un dividende l'année
+    précédente, baisses)}}, mêmes règles que taux_de_baisse_par_annee. groupes : {action: groupe}.
+    """
+    resultat = {}
+    for annee in annees:
+        par_groupe = {}
+        for nom, serie in series.items():
+            if nom not in groupes or not couverte_depuis(serie, f"{annee - 1}-01") or dividende(serie, annee - 1) <= 0:
+                continue
+            versantes, baisses = par_groupe.get(groupes[nom], (0, 0))
+            par_groupe[groupes[nom]] = (versantes + 1, baisses + est_baisse(dividende(serie, annee - 1), dividende(serie, annee)))
+        resultat[annee] = par_groupe
+    return resultat
