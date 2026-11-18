@@ -141,10 +141,40 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
 | `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |
+| `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
-| `tests/` | Tests automatiques : `python tests/test_allocation_dca.py`, `python tests/test_resume_mensuel.py`, `python tests/test_carnet_decisions.py` (ou `python -m pytest tests`) |
+| `tests/` | Tests automatiques (voir ci-dessous) |
+
+## Tests et vérification automatique
+
+```bash
+pip install pytest pyflakes
+python -m pyflakes $(git ls-files '*.py')
+python -m pytest tests
+```
+
+- `tests/test_application.py` lance l'application complète en mode test de Streamlit, sans réseau
+  (`tests/banc_application.py` remplace Yahoo Finance, Supabase et Stripe par des versions factices). Pour chaque
+  profil (visiteur, gratuit, Pro), il vérifie que les 5 onglets et les principaux volets s'affichent sans erreur, puis
+  rejoue les actions clés : noter une décision, enregistrer une allocation cible, enregistrer un achat, et ouvrir
+  les fonctions Pro à un abonné vérifié sur Stripe.
+- Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe).
+
+À chaque pull request, GitHub lance ces vérifications (`.github/workflows/tests.yml`) et affiche un voyant vert ou
+rouge avant la fusion. Pour rendre ce voyant obligatoire : *Settings > Branches > Add branch ruleset* sur `main`,
+avec « Require status checks to pass » et la vérification `tests`.
+
+### Découpage d'`app.py`
+
+`app.py` est découpé étape par étape, chaque étape vérifiée par ces tests :
+
+1. ✅ Paiements Stripe (`paiements_stripe.py`), avec le filet de tests.
+2. Comptes et abonnement protégé (Supabase), e-mails.
+3. Données de marché (Yahoo Finance : cours, historiques, change).
+4. Habillage (styles) et pages légales.
+5. Les onglets, un par un.
 
 ## Apparence
 

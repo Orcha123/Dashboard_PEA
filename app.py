@@ -22,6 +22,7 @@ import moteur_signaux
 import allocation_dca
 import carnet_decisions
 import resume_mensuel
+import paiements_stripe
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
 # Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
@@ -30,8 +31,10 @@ importlib.reload(moteur_signaux)
 importlib.reload(allocation_dca)
 importlib.reload(carnet_decisions)
 importlib.reload(resume_mensuel)
+importlib.reload(paiements_stripe)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
 from allocation_dca import calculer_achat_du_mois, normaliser_poids, preparer_lignes_dca, statut_achat  # DCA guidé par l'allocation cible
+from paiements_stripe import creer_session_portail, ids_prix, verifier_abonnement  # abonnements Stripe (testés)
 from carnet_decisions import (  # carnet de décisions : pourquoi j'achète, pourquoi je vends
     HORIZON_RELECTURE_MOIS,
     HORIZONS_MOIS,
@@ -267,202 +270,29 @@ def init_supabase():
 
 supabase = init_supabase()
 
-def _stripe_get(chemin, cle_stripe):
-    """Appel GET authentifié à l'API Stripe (lève une exception en cas d'erreur HTTP ou réseau)."""
-    req = urllib.request.Request(
-        f"https://api.stripe.com/v1/{chemin}",
-        headers={"Authorization": f"Bearer {cle_stripe}"},
-    )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+# --- ABONNEMENTS STRIPE : la logique (qui a droit à Premium ou Pro) est dans paiements_stripe.py, couverte par des
+# tests ; ici, seulement la lecture des secrets ---
+def _config_stripe():
+    """Clé secrète et identifiants de prix Stripe (secrets Streamlit)."""
+    return (_lire_secret("STRIPE_SECRET_KEY"), ids_prix(_lire_secret("STRIPE_PRICE_PREMIUM")),
+            ids_prix(_lire_secret("STRIPE_PRICE_PRO")))
 
 
 def creer_session_portail_stripe(id_client):
-    """
-    Ouvre une session du portail client Stripe pour ce client et renvoie son adresse (valable quelques minutes).
-    Contrairement au lien de connexion du portail, aucun e-mail n'est nécessaire : l'abonné arrive directement
-    sur sa page de gestion (résiliation, factures, moyen de paiement). None si impossible.
-    """
-    cle_stripe = _lire_secret("STRIPE_SECRET_KEY")
-    if not cle_stripe or not (isinstance(id_client, str) and id_client.startswith("cus_")):
-        return None
-    champs = {"customer": id_client}
+    """Adresse d'une session du portail client Stripe (gestion de l'abonnement sans e-mail) ; None si impossible."""
     adresse_retour = _lire_secret("APP_URL")
     if not adresse_retour:
         try:
             adresse_retour = str(st.context.url or "").split("?")[0]
         except Exception:
             adresse_retour = ""
-    if adresse_retour.startswith("http"):
-        champs["return_url"] = adresse_retour
-    req = urllib.request.Request(
-        "https://api.stripe.com/v1/billing_portal/sessions",
-        data=urllib.parse.urlencode(champs).encode("utf-8"),
-        headers={"Authorization": f"Bearer {cle_stripe}"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            return json.loads(resp.read().decode("utf-8")).get("url")
-    except Exception:
-        return None
-
-
-def _ids_prix_stripe(nom_secret):
-    """Identifiants de prix Stripe (price_...) déclarés dans un secret, séparés par des virgules."""
-    return {p.strip() for p in _lire_secret(nom_secret).split(",") if p.strip()}
-
-
-def _palier_depuis_abonnement_stripe(sub):
-    """
-    Déduit le palier ('premium' ou 'pro') d'un abonnement Stripe.
-    - Fiable : par identifiant de prix, via les secrets STRIPE_PRICE_PREMIUM et STRIPE_PRICE_PRO.
-    - Repli (si ces secrets sont absents) : par montant RAMENÉ AU MOIS (un abonnement annuel est divisé par 12),
-      <= 6,00 EUR/mois = Premium, au-delà = Pro. Un montant inconnu ou nul donne Premium (jamais Pro par défaut).
-    """
-    prix_premium = _ids_prix_stripe("STRIPE_PRICE_PREMIUM")
-    prix_pro = _ids_prix_stripe("STRIPE_PRICE_PRO")
-    palier = None
-    for ligne in ((sub.get("items") or {}).get("data") or []):
-        prix = ligne.get("price") or {}
-        id_prix = str(prix.get("id") or "")
-        if id_prix and id_prix in prix_pro:
-            palier_ligne = "pro"
-        elif id_prix and id_prix in prix_premium:
-            palier_ligne = "premium"
-        else:
-            try:
-                montant_cts = float(prix.get("unit_amount") or prix.get("unit_amount_decimal") or 0)
-            except Exception:
-                montant_cts = 0.0
-            recurrence = prix.get("recurring") or {}
-            try:
-                nb_periodes = max(1, int(recurrence.get("interval_count") or 1))
-            except Exception:
-                nb_periodes = 1
-            mois_par_periode = {"day": 1.0 / 30.0, "week": 12.0 / 52.0, "month": 1.0, "year": 12.0}.get(
-                str(recurrence.get("interval") or "month"), 1.0
-            )
-            montant_mensuel_cts = montant_cts / (mois_par_periode * nb_periodes)
-            palier_ligne = "pro" if montant_mensuel_cts > 600 else "premium"
-        if palier_ligne == "pro":
-            return "pro"
-        palier = palier_ligne
-    return palier or "premium"
-
-
-def _fin_programmee_abonnement_stripe(sub):
-    """Date (JJ/MM/AAAA) de fin d'accès si une résiliation est programmée, sinon None."""
-    if not (sub.get("cancel_at_period_end") or sub.get("cancel_at")):
-        return None
-    ts_fin = sub.get("cancel_at") or sub.get("current_period_end")
-    if not ts_fin:
-        # Versions récentes de l'API Stripe : la fin de période est portée par les lignes de l'abonnement
-        lignes = (sub.get("items") or {}).get("data") or []
-        if lignes:
-            ts_fin = lignes[0].get("current_period_end")
-    try:
-        return datetime.fromtimestamp(int(ts_fin)).strftime("%d/%m/%Y") if ts_fin else None
-    except Exception:
-        return None
-
-
-def _etat_abonnements_client_stripe(id_client, cle_stripe):
-    """(palier, date_fin_programmée) du meilleur abonnement actif d'un client Stripe ; (None, None) si aucun."""
-    try:
-        data_sub = _stripe_get(
-            f"subscriptions?customer={urllib.parse.quote(str(id_client))}&status=all&limit=10", cle_stripe
-        )
-    except urllib.error.HTTPError as err_http:
-        if err_http.code in (400, 404):  # client Stripe supprimé ou inconnu : aucun abonnement
-            return None, None
-        raise
-    palier, date_fin = None, None
-    for sub in data_sub.get("data", []):
-        if sub.get("status") not in ("active", "trialing"):
-            continue
-        if palier != "pro":
-            palier = _palier_depuis_abonnement_stripe(sub)
-            date_fin = _fin_programmee_abonnement_stripe(sub)
-    return palier, date_fin
-
-
-def _clients_stripe_par_reference(user_id, cle_stripe):
-    """
-    Clients Stripe ayant finalisé un paiement lancé depuis CE compte Boursy.
-    Les liens de paiement transportent client_reference_id = UUID du compte : l'abonné est donc retrouvé
-    même s'il a payé avec une autre adresse e-mail que celle de son compte.
-    """
-    try:
-        try:
-            data_cs = _stripe_get("checkout/sessions?limit=100&status=complete", cle_stripe)
-        except urllib.error.HTTPError:
-            data_cs = _stripe_get("checkout/sessions?limit=100", cle_stripe)
-    except Exception:
-        return []
-    trouves = []
-    for cs in data_cs.get("data", []):
-        if cs.get("status") == "complete" and str(cs.get("client_reference_id") or "") == str(user_id):
-            id_c = cs.get("customer")
-            if isinstance(id_c, dict):
-                id_c = id_c.get("id")
-            if id_c and id_c not in trouves:
-                trouves.append(id_c)
-    return trouves
+    return creer_session_portail(id_client, _lire_secret("STRIPE_SECRET_KEY"), adresse_retour)
 
 
 def verifier_abonnement_stripe(email_client, user_id=None, id_client_memorise=None):
-    """
-    Vérifie en direct sur Stripe l'état de l'abonnement du client. Retourne :
-    - {"niveau": "premium" | "pro" | "gratuit", "fin": date de fin programmée ou None, "client_id": "cus_..." ou None} ;
-    - None si la clé Stripe n'est pas configurée ou en cas d'erreur réseau (rien n'est alors conclu).
-
-    Le client Stripe est recherché dans cet ordre :
-    1. identifiant client mémorisé dans la table protégée « abonnements » ;
-    2. adresse e-mail du compte ;
-    3. paiements portant le client_reference_id du compte (paiement fait avec une autre adresse).
-    """
-    cle_stripe = _lire_secret("STRIPE_SECRET_KEY")
-    if not email_client or not cle_stripe:
-        return None
-    uid = str(user_id) if user_id else ""
-    try:
-        ids_clients = []
-
-        # 1. Identifiant mémorisé dans la table protégée (jamais dans le portefeuille, que l'utilisateur peut modifier)
-        if isinstance(id_client_memorise, str) and id_client_memorise.startswith("cus_"):
-            ids_clients.append(id_client_memorise)
-
-        # 2. Recherche par adresse e-mail
-        data_cust = _stripe_get(f"customers?email={urllib.parse.quote(email_client.strip())}&limit=5", cle_stripe)
-        for client in data_cust.get("data", []):
-            id_c = client.get("id")
-            if id_c and id_c not in ids_clients:
-                ids_clients.append(id_c)
-
-        meilleur_palier, date_fin_programmee, id_retenu = None, None, None
-
-        def _evaluer(id_c):
-            nonlocal meilleur_palier, date_fin_programmee, id_retenu
-            palier_c, fin_c = _etat_abonnements_client_stripe(id_c, cle_stripe)
-            if palier_c and meilleur_palier != "pro":
-                meilleur_palier, date_fin_programmee, id_retenu = palier_c, fin_c, id_c
-
-        for id_c in ids_clients:
-            _evaluer(id_c)
-
-        # 3. Aucun abonnement trouvé : recherche par référence de compte
-        if meilleur_palier is None and uid:
-            for id_c in _clients_stripe_par_reference(uid, cle_stripe):
-                if id_c not in ids_clients:
-                    ids_clients.append(id_c)
-                    _evaluer(id_c)
-
-        if meilleur_palier in ("premium", "pro"):
-            return {"niveau": meilleur_palier, "fin": date_fin_programmee, "client_id": id_retenu}
-        return {"niveau": "gratuit", "fin": None, "client_id": None}
-    except Exception:
-        return None
+    """Niveau vérifié en direct sur Stripe (voir paiements_stripe.verifier_abonnement) ; None si rien n'est conclu."""
+    cle_stripe, prix_premium, prix_pro = _config_stripe()
+    return verifier_abonnement(email_client, cle_stripe, prix_premium, prix_pro, user_id, id_client_memorise)
 
 
 # ==============================================================================
@@ -7894,7 +7724,7 @@ with st.expander(f"⚖️ Mentions Légales, CGV, Droit de Rétractation & Avert
         """)
 
     with tab_leg_retract:
-        afficher_html(f"""
+        afficher_html("""
         <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
             <b>Renoncement exprès au droit de rétractation (Article L221-28 13° du Code de la consommation)</b><br>
             Conformément aux dispositions de l'article L221-28 13° du Code de la consommation français, le droit de rétractation de quatorze (14) jours ne peut être exercé pour les contrats de fourniture d'un contenu numérique non fourni sur un support matériel dont l'exécution a commencé après accord préalable exprès du consommateur et renoncement exprès à son droit de rétractation.<br><br>

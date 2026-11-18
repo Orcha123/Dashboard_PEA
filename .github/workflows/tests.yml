@@ -1,0 +1,30 @@
+name: Tests Boursy
+
+# Filet de sécurité : à chaque pull request (et à chaque mise à jour de main), GitHub vérifie le code et lance tous
+# les tests, dont l'application complète en mode test (sans réseau). Un voyant vert ou rouge s'affiche sur la
+# pull request avant la fusion.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt pytest pyflakes
+      - name: Vérifier le code (erreurs de nom, imports inutilisés...)
+        run: python -m pyflakes $(git ls-files '*.py')
+      - name: Lancer les tests
+        run: python -m pytest tests -q
