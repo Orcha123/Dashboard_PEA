@@ -101,3 +101,76 @@ def test_abonnement_pro_verifie_sur_stripe(monkeypatch):
     verifier_sans_erreur(application)
     assert application.session_state["niveau_abonnement"] == "pro"
     assert any("Enregistrer une nouvelle vente" in e.label for e in application.expander)
+
+
+def _bouton(application, debut_du_libelle):
+    return next(b for b in application.button if b.label.startswith(debut_du_libelle))
+
+
+def test_suppression_du_compte_protegee(monkeypatch):
+    # Abonné Pro actif : il doit d'abord résilier, la suppression n'est pas proposée
+    application = lancer("pro", monkeypatch)
+    application.run()
+    assert any("Votre abonnement est encore actif" in a.value for a in application.warning)
+    assert not [b for b in application.button if b.label.startswith("🗑️ Supprimer définitivement")]
+    # Compte gratuit, sans clé de service : message clair, le compte reste connecté
+    application = lancer("gratuit", monkeypatch)
+    assert _bouton(application, "🗑️ Supprimer définitivement").disabled  # tant que SUPPRIMER n'est pas tapé
+    application.text_input(key="txt_confirmer_suppression").input("SUPPRIMER")
+    application.run()
+    _bouton(application, "🗑️ Supprimer définitivement").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert any("pas disponible" in e.value for e in application.error)
+    assert application.session_state["user"] is not None
+
+
+def test_suppression_refusee_si_abonnement_souscrit_entre_temps(monkeypatch):
+    """La session croit le compte gratuit, mais un abonnement vient d'être souscrit (autre onglet) : refus au clic."""
+    monkeypatch.setenv("BOURSY_PROFIL_TEST", "gratuit")
+    monkeypatch.delenv("BOURSY_STRIPE_TEST", raising=False)
+    application = AppTest.from_file(BANC, default_timeout=240)
+    application.secrets["STRIPE_SECRET_KEY"] = "sk_test_cle"
+    application.run()
+    assert application.session_state["niveau_abonnement"] == "gratuit"
+    application.text_input(key="txt_confirmer_suppression").input("SUPPRIMER")
+    application.run()
+    monkeypatch.setenv("BOURSY_STRIPE_TEST", "pro")  # paiement Stripe fait entre-temps
+    _bouton(application, "🗑️ Supprimer définitivement").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert any("abonnement est encore actif" in e.value for e in application.error)
+    assert application.session_state["user"] is not None
+
+
+def test_rapport_d_alertes_par_email(monkeypatch):
+    import smtplib
+    envois = []
+
+    class FauxSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def login(self, *args):
+            pass
+
+        def sendmail(self, expediteur, destinataire, corps):
+            envois.append((destinataire, corps))
+
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FauxSMTP)
+    monkeypatch.setenv("BOURSY_PROFIL_TEST", "pro")
+    application = AppTest.from_file(BANC, default_timeout=240)
+    application.secrets["SMTP_EMAIL"] = "envoi@exemple.test"
+    application.secrets["SMTP_PASSWORD"] = "secret"
+    application.run()
+    _bouton(application, "📧 M'envoyer ce rapport d'alertes").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert [d for d, _ in envois] == ["test@exemple.test"]
+    assert any("envoyé avec succès" in s.value for s in application.success)

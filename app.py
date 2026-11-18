@@ -7,11 +7,8 @@ import json
 import math
 import re
 import html as html_lib
-import smtplib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -23,6 +20,8 @@ import allocation_dca
 import carnet_decisions
 import resume_mensuel
 import paiements_stripe
+import comptes
+import courriels
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
 # Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
@@ -32,9 +31,13 @@ importlib.reload(allocation_dca)
 importlib.reload(carnet_decisions)
 importlib.reload(resume_mensuel)
 importlib.reload(paiements_stripe)
+importlib.reload(comptes)
+importlib.reload(courriels)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
 from allocation_dca import calculer_achat_du_mois, normaliser_poids, preparer_lignes_dca, statut_achat  # DCA guidé par l'allocation cible
 from paiements_stripe import creer_session_portail, ids_prix, verifier_abonnement  # abonnements Stripe (testés)
+from comptes import decider_niveau  # comptes et abonnement protégé (testés)
+from courriels import ADRESSE_APPLICATION, composer_email_alertes_radar, envoyer_smtp  # envoi des e-mails
 from carnet_decisions import (  # carnet de décisions : pourquoi j'achète, pourquoi je vends
     HORIZON_RELECTURE_MOIS,
     HORIZONS_MOIS,
@@ -109,16 +112,9 @@ def est_compte_admin(user):
     """
     Reconnaît le compte administrateur à partir d'un utilisateur AUTHENTIFIÉ (jamais d'une simple saisie).
     - Recommandé : ajoutez le secret ADMIN_USER_ID (UUID de votre compte, visible dans Supabase > Authentication > Users).
-    - Sinon, repli sur l'adresse e-mail du compte connecté.
+    - Sinon, repli sur l'adresse e-mail du compte connecté (secret ADMIN_EMAIL). Règle dans comptes.py.
     """
-    if user is None:
-        return False
-    id_admin = _lire_secret("ADMIN_USER_ID")
-    if id_admin:
-        return str(getattr(user, "id", "")) == id_admin
-    if not ADMIN_EMAIL:
-        return False
-    return str(getattr(user, "email", "") or "").lower() == ADMIN_EMAIL.lower()
+    return comptes.est_compte_admin(user, _lire_secret("ADMIN_USER_ID"), ADMIN_EMAIL)
 _MOTIF_NOMBRE_FR = re.compile(r"(?<![\w.,/])(?<!IA )(?<!Boursy )(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?!\w|[.,/]\d)")
 
 
@@ -317,57 +313,24 @@ def init_supabase_serveur():
 
 def lire_abonnement_protege(user):
     """Ligne de l'utilisateur dans la table abonnements (dict), {} s'il n'en a pas, None si la lecture échoue."""
-    client = st.session_state.get("_supabase_client")
-    if client is None or user is None:
-        return None
-    try:
-        rep_abo = client.table("abonnements").select("niveau, stripe_customer_id, fin_programmee").eq("user_id", str(user.id)).execute()
-        return dict(rep_abo.data[0]) if rep_abo.data else {}
-    except Exception:
-        return None
+    return comptes.lire_abonnement_protege(st.session_state.get("_supabase_client"), getattr(user, "id", None))
 
 
 def enregistrer_abonnement_protege(user_id, niveau, client_id, fin):
-    """Écrit le niveau vérifié sur Stripe dans la table abonnements. Retourne False si la clé de service manque."""
-    client_serveur = init_supabase_serveur()
-    if client_serveur is None:
-        return False
-    try:
-        client_serveur.table("abonnements").upsert({
-            "user_id": str(user_id),
-            "niveau": niveau,
-            "stripe_customer_id": client_id,
-            "fin_programmee": fin,
-            "verifie_le": datetime.now().astimezone().isoformat(),
-        }).execute()
-        return True
-    except Exception:
-        return False
+    """Écrit le niveau vérifié sur Stripe dans la table abonnements (clé de service). False si impossible."""
+    return comptes.enregistrer_abonnement_protege(init_supabase_serveur(), user_id, niveau, client_id, fin)
 
 
 def supprimer_compte_utilisateur(user):
-    """
-    Efface définitivement un compte : snapshots, données de portefeuille, abonnement, puis le compte de connexion.
-    Nécessite la clé de service. Retourne (succès, message d'erreur éventuel).
-    """
-    client_serveur = init_supabase_serveur()
-    if client_serveur is None or user is None:
-        return False, "La suppression automatique n'est pas disponible pour le moment. Écrivez-nous à l'adresse de contact des mentions légales."
-    uid = str(user.id)
-    try:
-        for table_a_vider in ("portfolio_history", "user_data", "abonnements"):
-            client_serveur.table(table_a_vider).delete().eq("user_id", uid).execute()
-        client_serveur.auth.admin.delete_user(uid)
-        return True, ""
-    except Exception as erreur_suppr:
-        return False, f"La suppression n'a pas pu aboutir ({erreur_suppr}). Réessayez ou écrivez-nous à l'adresse de contact des mentions légales."
+    """Efface définitivement le compte (clé de service nécessaire). Renvoie (succès, message d'erreur éventuel)."""
+    return comptes.supprimer_compte(init_supabase_serveur(), getattr(user, "id", None))
 
 
 def etablir_niveau_abonnement(user, verifier_stripe=True):
     """
     Fixe le niveau d'abonnement de la session à partir de sources fiables uniquement :
     compte administrateur, puis Stripe (si configuré et joignable), sinon la table protégée « abonnements ».
-    Retourne le niveau retenu ("gratuit", "premium" ou "pro").
+    La décision est prise par comptes.decider_niveau (testée). Retourne "gratuit", "premium" ou "pro".
     """
     if user is None:
         return "gratuit"
@@ -375,67 +338,46 @@ def etablir_niveau_abonnement(user, verifier_stripe=True):
     if est_compte_admin(user):
         st.session_state.update(est_abonne_pro=True, niveau_abonnement="pro", abo_fin_periode=None)
         return "pro"
-
     ligne = lire_abonnement_protege(user) or {}
-    niveau = ligne.get("niveau") if ligne.get("niveau") in ("gratuit", "premium", "pro") else "gratuit"
-    fin = ligne.get("fin_programmee")
-    st.session_state["_stripe_client_id"] = ligne.get("stripe_customer_id")
+    verdict = (verifier_abonnement_stripe(str(user.email or "").lower(), user.id, ligne.get("stripe_customer_id"))
+               if verifier_stripe else None)
+    decision = decider_niveau(ligne, verdict)
+    if decision["a_enregistrer"]:
+        enregistrer_abonnement_protege(user.id, decision["niveau"], decision["client_id"], decision["fin"])
+    st.session_state["_stripe_client_id"] = decision["client_id"]
+    st.session_state.update(est_abonne_pro=(decision["niveau"] != "gratuit"), niveau_abonnement=decision["niveau"],
+                            abo_fin_periode=decision["fin"])
+    return decision["niveau"]
 
-    if verifier_stripe:
-        verdict = verifier_abonnement_stripe(str(user.email or "").lower(), user.id, ligne.get("stripe_customer_id"))
-        if verdict is not None:
-            client_id = verdict["client_id"] or ligne.get("stripe_customer_id")
-            if (verdict["niveau"], verdict["fin"], client_id) != (niveau, fin, ligne.get("stripe_customer_id")):
-                enregistrer_abonnement_protege(user.id, verdict["niveau"], client_id, verdict["fin"])
-            niveau, fin = verdict["niveau"], verdict["fin"]
-            st.session_state["_stripe_client_id"] = client_id
 
-    st.session_state.update(est_abonne_pro=(niveau != "gratuit"), niveau_abonnement=niveau, abo_fin_periode=fin)
-    return niveau
+# --- E-MAILS : composition et envoi dans courriels.py ; identifiants lus ici dans les secrets ---
+MESSAGE_SMTP_ABSENT = "Pour activer l'envoi d'emails, ajoutez `SMTP_EMAIL` et `SMTP_PASSWORD` dans vos Secrets Streamlit."
+
+
+def _identifiants_smtp():
+    return _lire_secret("SMTP_EMAIL"), _lire_secret("SMTP_PASSWORD")
+
+
 def envoyer_email_alerte(destinataire, liste_alertes):
-    smtp_user = _lire_secret("SMTP_EMAIL")
-    smtp_pass = _lire_secret("SMTP_PASSWORD")
+    smtp_user, smtp_pass = _identifiants_smtp()
     if not smtp_user or not smtp_pass:
-        return False, "Pour activer l'envoi d'emails, ajoutez `SMTP_EMAIL` et `SMTP_PASSWORD` dans vos Secrets Streamlit."
-
+        return False, MESSAGE_SMTP_ABSENT
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🔔 Boursy — {len(liste_alertes)} Alerte(s) Prix Cible & Signaux"
-        msg["From"] = smtp_user
-        msg["To"] = destinataire
-
-        lignes_html = "".join(
-            f"<li style='margin-bottom:8px;'><b>{a['Actif']}</b> : Cours <b>{a['Prix']}</b> (Cible : {a['Cible']}) — Score : <b>{a['Score']}/100</b> ({a['Motif']})</li>"
-            for a in liste_alertes
-        )
-        corps_html = f"""
-        <html><body style="font-family: Arial, sans-serif; color: #2c3e50;">
-            <h2>📈 Rapport d'Alertes Boursy ({datetime.now().strftime('%d/%m/%Y')})</h2>
-            <p>Votre radar a relevé les signaux suivants (information statistique, pas un conseil en investissement) :</p>
-            <ul>{lignes_html}</ul>
-            <p><a href="https://boursy.streamlit.app" style="background:#2ecc71; color:white; padding:10px 16px; text-decoration:none; border-radius:6px; font-weight:bold;">Ouvrir mon Dashboard Boursy</a></p>
-        </body></html>
-        """
-        msg.attach(MIMEText(corps_html, "html", "utf-8"))
-
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, destinataire, msg.as_string())
+        message = composer_email_alertes_radar(smtp_user, destinataire, liste_alertes, _lire_secret("APP_URL") or ADRESSE_APPLICATION)
+        envoyer_smtp(message, smtp_user, smtp_pass, timeout=10)
         return True, f"✅ Email d'alerte envoyé avec succès à {destinataire} !"
     except Exception as e:
         return False, f"Erreur SMTP : {e}"
 
+
 def envoyer_apercu_resume_mensuel(destinataire, resume):
     """Envoie tout de suite le résumé mensuel (marqué « Aperçu ») : le vrai envoi du mois n'est pas touché."""
-    smtp_user = _lire_secret("SMTP_EMAIL")
-    smtp_pass = _lire_secret("SMTP_PASSWORD")
+    smtp_user, smtp_pass = _identifiants_smtp()
     if not smtp_user or not smtp_pass:
-        return False, "Pour activer l'envoi d'emails, ajoutez `SMTP_EMAIL` et `SMTP_PASSWORD` dans vos Secrets Streamlit."
+        return False, MESSAGE_SMTP_ABSENT
     try:
-        message = composer_email_resume(resume, smtp_user, destinataire, _lire_secret("APP_URL") or "https://boursy.streamlit.app", apercu=True)
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, destinataire, message.as_string())
+        message = composer_email_resume(resume, smtp_user, destinataire, _lire_secret("APP_URL") or ADRESSE_APPLICATION, apercu=True)
+        envoyer_smtp(message, smtp_user, smtp_pass, timeout=10)
         return True, f"✅ Aperçu du résumé envoyé à {destinataire}."
     except Exception as e:
         return False, f"Erreur SMTP : {e}"
@@ -1025,7 +967,13 @@ else:
             else:
                 confirmation_suppr = st.text_input("Tapez SUPPRIMER pour confirmer", key="txt_confirmer_suppression")
                 if st.button("🗑️ Supprimer définitivement mon compte", width="stretch", disabled=(confirmation_suppr.strip() != "SUPPRIMER")):
-                    ok_suppr, msg_suppr = supprimer_compte_utilisateur(st.session_state["user"])
+                    # Vérification au moment du clic (Stripe ou table protégée) : un abonnement encore actif bloque la
+                    # suppression, même si l'affichage précédent ne le savait pas encore
+                    if etablir_niveau_abonnement(st.session_state["user"]) in ("premium", "pro") and not st.session_state.get("abo_fin_periode"):
+                        ok_suppr, msg_suppr = False, ("Votre abonnement est encore actif : résiliez-le d'abord avec « ⚙️ Gérer mon "
+                                                      "abonnement / Factures », pour ne plus être prélevé, puis revenez ici.")
+                    else:
+                        ok_suppr, msg_suppr = supprimer_compte_utilisateur(st.session_state["user"])
                     if ok_suppr:
                         try:
                             supabase.auth.sign_out()
