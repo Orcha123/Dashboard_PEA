@@ -161,6 +161,42 @@ def test_tache_du_soir_avec_faux_services():
         A._cache_cours.clear()
 
 
+def test_solidite_de_la_rente_dans_le_resume():
+    categories = {"AAA.PA": "solide", "BBB": "alerte"}
+    resume = R.construire_resume(PORTEFEUILLE, WATCHLIST, 450.0, COURS, 1.10, date(2026, 12, 5),
+                                 categorie_de=categories.get, rendement_achats=0.03)
+    solidite = resume["solidite_rente"]
+    assert abs(solidite["parts"]["solide"] - 30.0) < 1e-9 and abs(solidite["parts"]["alerte"] - 10.0 / 1.10) < 1e-9
+    assert solidite["a_surveiller"] == ["Beta"] and solidite["apport_annuel"] == 12 * 450.0
+    corps = R.composer_email_resume(resume, "a@b.c", "d@e.f").get_payload()[0].get_payload(decode=True).decode()
+    assert "Solidité de votre rente" in corps and "à surveiller" in corps and "Beta" in corps
+    assert "crise comme 2020" in corps and "Projection prudente dans 10 ans" in corps
+    # sans classement (historiques indisponibles), l'e-mail part sans cette section
+    sans = R.construire_resume(PORTEFEUILLE, WATCHLIST, 450.0, COURS, 1.10, date(2026, 12, 5))
+    assert sans["solidite_rente"] is None
+    assert "Solidité de votre rente" not in R.composer_email_resume(sans, "a@b.c", "d@e.f").get_payload()[0].get_payload(decode=True).decode()
+
+
+def test_preparer_solidite_pour_la_tache_du_soir():
+    from datetime import timedelta
+
+    def historique(symbole):
+        if symbole == "INCONNU":
+            return None
+        jours, jour = [], date(2016, 11, 21)
+        while jour <= date(2026, 11, 17):
+            if jour.weekday() < 5:
+                jours.append(jour.isoformat())
+            jour += timedelta(days=1)
+        cours = [40.0 + (sum(map(ord, symbole)) % 60)] * len(jours)
+        return jours, cours, [(f"{a}-05-15", 1.0 + 0.05 * (a - 2016)) for a in range(2016, 2027)], cours, cours
+
+    categorie_de, rendement = R.preparer_solidite(date(2026, 11, 18), historique)
+    assert categorie_de("TTE.PA") in ("solide", "alerte") and 0.0 < rendement < 0.2
+    assert categorie_de("INCONNU") == "neutre"  # hors catalogue et sans historique : non classée
+    assert R.preparer_solidite(date(2026, 11, 18), lambda symbole: None) == (None, 0.0)
+
+
 def test_decisions_a_relire_dans_le_resume():
     carnet = [
         {"id": "1", "date": "2026-06-01", "action": "Alpha", "type": "achat", "raison": "Sous mon prix cible", "note": "Cible <atteinte>"},

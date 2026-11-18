@@ -13,11 +13,11 @@ import bisect
 import pandas as pd
 import streamlit as st
 
-from allocation_dca import normaliser_poids, statut_achat
+from allocation_dca import lignes_detenues, normaliser_poids, statut_achat
 from habillage import afficher_html, markdown_fr, nombres_fr
 from moteur_signaux import ALGORITHMES_SIGNAUX, ecart_vs_autres_actions_du_mois, performance_apres
 from resume_mensuel import JOURS_AVANT_ACHAT, construire_resume, date_en_toutes_lettres, fiches_valeurs, jour_dca_valide, prochaine_date_dca
-from solidite_dividendes import TAUX_MESURES, evolution_dividende
+from solidite_dividendes import TAUX_MESURES, categorie_projection, evolution_dividende, rendement_median_solides
 
 
 def afficher(
@@ -211,9 +211,20 @@ def afficher(
                            else f"le résumé partira le soir de bourse qui le précède (jusqu'à {JOURS_AVANT_ACHAT} jours avant).")
                     )
                     if st.button("👁️ M'envoyer un aperçu maintenant", width="stretch", key="btn_apercu_resume"):
+                        fiches_apercu = fiches_valeurs(st.session_state.get("watchlist", {}))
+                        symboles_detenus = sorted({str(fiches_apercu[n].get("symbole", "")).strip()
+                                                   for n in lignes_detenues(pf_resume) if n in fiches_apercu})
+                        with st.spinner("🛡️ Solidité de votre rente (étude des dividendes)..."):
+                            analyse_apercu = analyse_solidite_dividendes(symboles_detenus, calculer=True)
+                        def categorie_selon_analyse(symbole):
+                            return categorie_projection((analyse_apercu["demandes"].get(symbole) or (None, None))[1])
+
+                        # sans analyse (Yahoo indisponible), l'aperçu part sans la section solidité, comme l'e-mail du soir
+                        categorie_apercu = categorie_selon_analyse if analyse_apercu else None
+                        rendement_apercu = rendement_median_solides(analyse_apercu["catalogue"].values()) if analyse_apercu else 0.0
                         resume_apercu = construire_resume(
                             pf_resume, st.session_state.get("watchlist", {}), BUDGET_MENSUEL, prix_temps_reel, TAUX_USD_EUR,
-                            prochain_achat, fiches_valeurs(st.session_state.get("watchlist", {})),
+                            prochain_achat, fiches_apercu, categorie_de=categorie_apercu, rendement_achats=rendement_apercu,
                         )
                         ok_apercu, msg_apercu = envoyer_apercu_resume_mensuel(str(st.session_state["user"].email), resume_apercu)
                         (st.success if ok_apercu else st.info)(msg_apercu)

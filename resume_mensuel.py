@@ -8,7 +8,9 @@ les JOURS_AVANT_ACHAT jours qui précèdent le jour d'achat choisi. Il contient 
 - la valeur du portefeuille et la rente annuelle estimée ;
 - les dividendes attendus le mois de l'achat ;
 - les valeurs du radar passées sous leur prix cible ;
-- les décisions du carnet arrivées à leur échéance de relecture (6 mois).
+- les décisions du carnet arrivées à leur échéance de relecture (6 mois) ;
+- la solidité de la rente (étude des dividendes) : part solide, part à surveiller, rente l'année d'une crise comme 2020
+  et rente prudente dans 10 ans.
 L'application utilise les mêmes fonctions pour l'aperçu immédiat.
 
 Variables d'environnement : celles de alertes_quotidiennes.py (SUPABASE_URL, SUPABASE_SERVICE_KEY, SMTP_EMAIL,
@@ -32,6 +34,10 @@ from allocation_dca import (
 )
 from carnet_decisions import HORIZON_RELECTURE_MOIS, TYPES_DECISION, decisions_arrivees_a_echeance, lire_carnet
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour
+from solidite_dividendes import (
+    TAUX_MESURES, analyser_catalogue, annee_de_reference, bilan_rente, caracteristiques, categorie_projection,
+    rendement_median_solides, statut,
+)
 
 JOURS_AVANT_ACHAT = 3
 MOIS_ABREGES = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
@@ -102,9 +108,12 @@ def noms_a_coter(portefeuille, watchlist, fiches):
     return sorted(n for n in noms if n in fiches)
 
 
-def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date_achat, fiches=None, aujourd_hui=None):
+def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date_achat, fiches=None, aujourd_hui=None,
+                      categorie_de=None, rendement_achats=0.0):
     """
     Données du résumé. cours : {nom: dernier cours dans la devise de la valeur} ; taux_usd_eur : dollars pour 1 euro.
+    categorie_de(symbole) : « solide », « neutre » ou « alerte » (solidité des dividendes) ; sans elle, pas de section
+    solidité. rendement_achats : rendement médian des dividendes solides, pour la projection prudente.
     """
     portefeuille = portefeuille if isinstance(portefeuille, dict) else {}
     fiches = fiches if fiches is not None else fiches_valeurs(watchlist)
@@ -131,6 +140,11 @@ def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date
         if prix and cible > 0 and prix <= cible:
             sous_cible.append({"nom": nom, "prix": float(prix), "cible": cible,
                                "devise": "$" if fiche.get("devise") == "USD" else "€", "ecart_pct": (prix - cible) / cible * 100.0})
+    solidite_rente = None
+    if categorie_de is not None:
+        lignes_rente = [(l["nom"], l["qte_detenue"] * l["div_eur"], categorie_de(str(fiches[l["nom"]].get("symbole", "")).strip()))
+                        for l in detenues if l["div_eur"] > 0]
+        solidite_rente = bilan_rente(lignes_rente, rendement_achats=rendement_achats, apport_annuel=12.0 * float(budget))
     return {
         "date_achat": date_achat,
         "budget": float(budget),
@@ -144,6 +158,7 @@ def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date
         "sous_cible": sorted(sous_cible, key=lambda v: v["ecart_pct"]),
         # Décisions du carnet dont les 6 mois sont tombés depuis environ un mois, sans leçon écrite
         "decisions_a_relire": decisions_arrivees_a_echeance(lire_carnet(portefeuille), aujourd_hui or date.today()),
+        "solidite_rente": solidite_rente,
     }
 
 
@@ -217,6 +232,31 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
         + "</ul><p>Voyez ce qu'elles sont devenues dans Boursy (onglet Portefeuille, Carnet de décisions) et notez ce que "
           "vous en retenez.</p>"
     ) if decisions else ""
+    solidite = resume.get("solidite_rente")
+    solidite_html = ""
+    if solidite and (solidite["rente"] > 0 or solidite["apport_annuel"] > 0):
+        rente, parts = solidite["rente"], solidite["parts"]
+
+        def part(montant):
+            return f"{_fr(montant)} € ({_fr(montant / rente * 100.0, 0)} %)" if rente > 0 else f"{_fr(montant)} €"
+
+        solidite_html = (
+            "<h3>🛡️ Solidité de votre rente</h3>"
+            f"<p>Sur {_fr(rente)} € de dividendes attendus par an : <b>{part(parts['solide'])} solides</b>, "
+            f"{part(parts['neutre'])} neutres ou non classés, <b>{part(parts['alerte'])} à surveiller</b>.</p>"
+        )
+        if solidite["a_surveiller"]:
+            solidite_html += (
+                "<p>À surveiller (rendement élevé ou anormal) : " + ", ".join(html.escape(n) for n in solidite["a_surveiller"])
+                + f". Dans l'étude de Boursy, {_fr(TAUX_MESURES['rendement_eleve'][0] * 100, 0)} % des rendements les plus "
+                "élevés ont baissé leur dividende dans les 3 années suivantes.</p>"
+            )
+        solidite_html += (
+            f"<p>L'année d'une crise comme 2020 : environ <b>{_fr(solidite['rente_crise'], 0)} €</b> au lieu de "
+            f"{_fr(rente, 0)} €. Projection prudente dans {solidite['horizon']} ans, en euros d'aujourd'hui, avec votre achat "
+            f"mensuel de {_fr(solidite['apport_annuel'] / 12.0, 0)} € et les dividendes réinvestis : environ "
+            f"<b>{_fr(solidite['rente_prudente_horizon'], 0)} € par an</b>.</p>"
+        )
     bouton = (
         f"<p><a href='{html.escape(lien_app)}' style='background:#10b981; color:white; padding:10px 16px; "
         "text-decoration:none; border-radius:6px; font-weight:bold;'>Ouvrir Boursy</a></p>"
@@ -238,12 +278,15 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
         <h3>🎯 Valeurs de votre radar sous leur prix cible</h3>
         {sous_cible_html}
         {decisions_html}
+        {solidite_html}
         {bouton}
         <p style="font-size:12px; color:#6b7280;">L'achat proposé est un calcul arithmétique à partir de vos poids cibles :
         l'enveloppe va d'abord aux lignes les plus en retard sur leur cible, en actions entières, sans rien vendre. Le radar
         n'entre pas dans ce calcul : sur environ 7 ans et 120 actions, ses signaux forts n'ont pas fait mieux, de façon
         démontrée, que les autres actions du même mois. Les dividendes du mois sont estimés à partir du calendrier habituel
-        de chaque valeur. Information à but pédagogique, qui ne constitue pas un conseil en investissement.<br>
+        de chaque valeur. Solidité de la rente : étude des dividendes de Boursy (protocole écrit avant les calculs),
+        hypothèses prudentes (pas de croissance réelle du dividende, achats futurs en dividendes solides au rendement médian
+        de la liste, crise : baisses de 2020). Information à but pédagogique, qui ne constitue pas un conseil en investissement.<br>
         Vous recevez cet e-mail car le résumé mensuel est activé dans le Centre d'Alertes de Boursy ; vous pouvez le
         désactiver au même endroit.</p>
     </body></html>
@@ -255,6 +298,38 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
 # ==============================================================================
 # TÂCHE DU SOIR
 # ==============================================================================
+def lire_historique_solidite(symbole):
+    """Historique sur 10 ans (dividendes compris) pour la solidité de la rente ; None si indisponible."""
+    from donnees_marche import historique_dix_ans
+
+    try:
+        return historique_dix_ans(symbole, seances_closes_seulement=True, timeout=20)
+    except Exception:
+        return None
+
+
+def preparer_solidite(aujourd_hui, lire_historique=None):
+    """
+    (categorie_de, rendement des achats) pour le résumé, à partir de l'étude des dividendes appliquée au catalogue ;
+    (None, 0.0) si les historiques sont indisponibles : le résumé part alors sans cette section.
+    """
+    lire_historique = lire_historique or lire_historique_solidite
+    annee = annee_de_reference(aujourd_hui)
+    try:
+        valeurs_catalogue, seuils = analyser_catalogue(lire_historique, annee)
+    except Exception:
+        return None, 0.0
+    statuts = {sym: statut(v, seuils, annee) for sym, v in valeurs_catalogue.items()}
+    hors_catalogue = {}
+
+    def categorie_de(symbole):
+        if symbole not in statuts and symbole not in hors_catalogue:
+            hors_catalogue[symbole] = statut(caracteristiques(lire_historique(symbole) if symbole else None, annee), seuils, annee)
+        return categorie_projection(statuts.get(symbole) or hors_catalogue[symbole])
+
+    return categorie_de, rendement_median_solides((valeurs_catalogue[s], statuts[s]) for s in statuts)
+
+
 def main():
     from alertes_quotidiennes import _env, cours_actuel, envoyer, requete_supabase
 
@@ -270,6 +345,7 @@ def main():
     comptes_pro = {str(a.get("user_id")) for a in abonnements if a.get("niveau") == "pro"}
     aujourd_hui = date.today()
     taux_usd_eur = None
+    solidite = None  # (categorie_de, rendement des achats), calculée au premier résumé à envoyer
     nb_inscrits = nb_emails = nb_reportes = nb_erreurs = 0
 
     for compte in comptes:
@@ -300,7 +376,12 @@ def main():
                 budget = float(compte.get("budget_dca") or 450.0)
             except (TypeError, ValueError):
                 budget = 450.0
-            resume = construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date_achat, fiches)
+            if solidite is None:
+                solidite = preparer_solidite(aujourd_hui)
+                if solidite[0] is None:
+                    print("Historiques indisponibles : résumés envoyés sans la section « Solidité de votre rente ».")
+            resume = construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date_achat, fiches,
+                                       categorie_de=solidite[0], rendement_achats=solidite[1])
             if essai:
                 achats = [f"{l['qte']} {l['nom']}" for l in resume["plan"]["lignes"] if l["qte"] > 0]
                 print(f"[essai] résumé pour un compte, achat du {date_achat.isoformat()} : {achats}")

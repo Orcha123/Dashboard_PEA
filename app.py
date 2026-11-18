@@ -930,13 +930,7 @@ def _solidite_catalogue(annee, jour):
     Étude des dividendes appliquée à tout le catalogue (hors ETF) au 31 décembre de l'année : valeurs de l'étude par
     symbole et seuils des 20 % les plus élevés. Erreur (non mise en cache) si moins de la moitié des historiques est lue.
     """
-    symboles = sorted({sym for sym, _devise, secteur, *_reste in ENRICHISSEMENT_CATALOGUE.values() if "ETF" not in secteur})
-    with ThreadPoolExecutor(max_workers=8) as executeur:
-        historiques = dict(zip(symboles, executeur.map(historique_long, symboles)))
-    if sum(1 for h in historiques.values() if h) < len(symboles) / 2:
-        raise RuntimeError("Historiques de dividendes indisponibles")
-    valeurs = {sym: solidite_dividendes.caracteristiques(h, annee) for sym, h in historiques.items()}
-    return valeurs, solidite_dividendes.seuils(valeurs)
+    return solidite_dividendes.analyser_catalogue(historique_long, annee)
 
 
 @st.cache_resource

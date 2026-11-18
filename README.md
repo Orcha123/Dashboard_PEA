@@ -107,7 +107,7 @@ Variable facultative `APP_URL` (onglet *Variables*) : adresse de l'application, 
 dans le Centre d'Alertes (avec son jour d'achat, du 1 au 28), il envoie un e-mail par mois, le premier soir de bourse
 situé dans les 3 jours qui précèdent l'achat : l'achat proposé selon l'allocation cible (même calcul que
 l'application), la valeur du portefeuille et la rente estimée, les dividendes attendus ce mois-là et les valeurs du
-radar sous leur prix cible, et les décisions du carnet arrivées à 6 mois. Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
+radar sous leur prix cible, les décisions du carnet arrivées à 6 mois, et la solidité de la rente (part solide, part à surveiller, rente l'année d'une crise comme 2020, rente prudente dans 10 ans : voir l'étude des dividendes ; si les historiques sont indisponibles, l'e-mail part sans cette section). Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
 dans le portefeuille (`_resume_envoye`) pour ne jamais l'envoyer deux fois. Un bouton du Centre d'Alertes envoie un
 aperçu immédiat. Test sans envoi : `ALERTES_DRY_RUN=1 python resume_mensuel.py`.
 

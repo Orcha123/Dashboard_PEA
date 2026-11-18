@@ -311,8 +311,11 @@ def test_resume_mensuel_reglages_et_apercu(monkeypatch):
     portefeuille = application.session_state["portefeuille"]
     assert portefeuille["_resume_mensuel"] is True and portefeuille["_jour_dca"] == 20
     assert len(_FauxSMTP.envois) == 1
-    sujet = str(email.header.make_header(email.header.decode_header(email.message_from_string(_FauxSMTP.envois[0][1])["Subject"])))
+    message = email.message_from_string(_FauxSMTP.envois[0][1])
+    sujet = str(email.header.make_header(email.header.decode_header(message["Subject"])))
     assert sujet.startswith("[Aperçu]") and "20 " in sujet
+    corps = message.get_payload()[0].get_payload(decode=True).decode()
+    assert "Solidité de votre rente" in corps and "crise comme 2020" in corps
 
 
 def test_coach_ia_achat_du_mois(monkeypatch):
