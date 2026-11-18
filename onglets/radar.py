@@ -19,6 +19,7 @@ from moteur_signaux import ALGORITHMES_SIGNAUX, ecart_vs_autres_actions_du_mois,
 from resume_mensuel import JOURS_AVANT_ACHAT, construire_resume, date_en_toutes_lettres, fiches_valeurs, jour_dca_valide, prochaine_date_dca
 from solidite_dividendes import (
     TAUX_MESURES, TAUX_MESURES_1_AN, categorie_projection, evaluer_suivi, evolution_dividende, rendement_median_solides,
+    seuils as seuils_solidite,
 )
 
 
@@ -429,31 +430,37 @@ def afficher(
             afficher_verrou_saas(
                 "Tableau 3 : Indicateurs Techniques Avancés (Supports 30J, Bollinger, Stochastique & ATR)",
                 "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
-                "Obtenez le Score de Timing court terme et un niveau de prix technique de référence pour chaque action."
+                "Situez chaque action dans ses fourchettes récentes : canal de 30 jours, bandes de Bollinger, stochastique et volatilité."
             )
         else:
             html_guide_tech = """
             <div class="argon-grid" style="margin-bottom: 14px;">
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
                     <div class="argon-title" style="color:#2ecc71;">📏 1. Canal 30 Jours (Support / Résistance)</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Le <b>Support</b> est le plancher où les acheteurs défendent le titre. Plus la jauge est proche de <b>0% (Bas)</b>, meilleur est le point d'entrée.</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Le <b>support</b> est le plus bas des 30 derniers jours, la <b>résistance</b> le plus haut. La jauge situe le cours entre les deux : <b>0 %</b> au plus bas, <b>100 %</b> au plus haut.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
                     <div class="argon-title" style="color:#3498db;">🌊 2. Bandes de Bollinger (20 Jours)</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Contiennent 95% des variations normales. Un cours sur le <b>Bas de Bollinger</b> indique un titre statistiquement bradé à court terme.</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Moyenne des 20 derniers jours, plus ou moins deux écarts-types. Un cours près de la <b>bande basse</b> est bas par rapport à ses dernières semaines : cela ne dit pas qu'il va remonter.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
                     <div class="argon-title" style="color:#f39c12;">⚡ 3. Oscillateur Stochastique (14J)</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la vitesse d'essoufflement. <b>&lt; 20% (Survente)</b> = zone de survente. <b>&gt; 80% (Surachat)</b> = risque de repli.</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Situe la clôture dans la fourchette des 14 derniers jours. <b>&lt; 20 %</b> : près du bas (« survente »). <b>&gt; 80 %</b> : près du haut (« surachat »). Ni l'un ni l'autre n'annonce la suite.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                    <div class="argon-title" style="color:#9b59b6;">🎯 4. ATR & Niveau Technique de Référence</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée. Il sert à estimer un <b>niveau de prix technique de référence</b>, proche des supports récents.</div>
+                    <div class="argon-title" style="color:#9b59b6;">⚡ 4. ATR (Volatilité)</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">L'<b>ATR</b> mesure l'amplitude moyenne d'une journée, en % du cours : plus il est élevé, plus le titre bouge d'un jour à l'autre.</div>
                 </div>
             </div>
             """
             afficher_html(html_guide_tech)
-            st.caption("🎯 **Classement par Opportunité de Timing :** Trié de la **meilleure fenêtre d'entrée court terme (#1 en haut)** jusqu'aux valeurs **en surchauffe (en bas)**.")
+            st.caption(
+                "📍 **Classement par position :** des cours **les plus bas dans leurs fourchettes récentes (#1 en haut)** "
+                "aux **plus hauts (en bas)**. Ces indicateurs décrivent où en est le cours par rapport à ses dernières "
+                "semaines ; ils ne prévoient pas la suite. Le score du radar, qui utilise notamment la survente du "
+                "stochastique, n'a pas fait mieux, de façon démontrée, que les autres actions du même mois (sur environ "
+                "7 ans et 120 actions, voir « Bilan des signaux »)."
+            )
 
             donnees_t4_enrichies = []
             for d in donnees_t4:
@@ -489,28 +496,27 @@ def afficher(
                 amp_boll = max(0.01, borne_sup_f - borne_inf_f)
                 pos_boll_pct = max(0.0, min(100.0, ((prix_f - borne_inf_f) / amp_boll) * 100.0))
 
-                rebond_res_pct = ((res_f - prix_f) / prix_f * 100.0) if prix_f > 0 else 0.0
+                ecart_haut_pct = ((res_f - prix_f) / prix_f * 100.0) if prix_f > 0 else 0.0
 
-                score_timing = int(round(100.0 - (0.40 * pos_canal_pct + 0.35 * stoch_f + 0.25 * pos_boll_pct)))
-                score_timing = max(5, min(98, score_timing))
-
-                plancher_tech = max(sup_f, min(prix_f, (sup_f + borne_inf_f) / 2.0))
+                # 100 : cours au plus bas de ses fourchettes récentes ; 0 : au plus haut (description, pas une prévision)
+                score_position = int(round(100.0 - (0.40 * pos_canal_pct + 0.35 * stoch_f + 0.25 * pos_boll_pct)))
+                score_position = max(5, min(98, score_position))
 
                 if pos_boll_pct <= 22:
-                    diag_boll = f"<span class='b-green'>🟢 Bas de canal ({borne_inf_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Prix comprimé (Rebond probable)</span>"
+                    diag_boll = f"<span class='b-blue'>🔵 Bande basse ({borne_inf_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Cours près de la bande basse</span>"
                 elif pos_boll_pct >= 82:
-                    diag_boll = f"<span class='b-red'>🔴 Haut de canal ({borne_sup_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Extension haute (Prudence)</span>"
+                    diag_boll = f"<span class='b-yellow'>🟡 Bande haute ({borne_sup_f:.1f} {sym_dev})</span><br><span style='font-size:0.78em; opacity:0.8;'>Cours près de la bande haute</span>"
                 else:
-                    diag_boll = f"<span class='b-neutral'>⚪ Zone neutre [{borne_inf_f:.1f} - {borne_sup_f:.1f}]</span><br><span style='font-size:0.78em; opacity:0.8;'>Position : {pos_boll_pct:.0f}% de l'élastique</span>"
+                    diag_boll = f"<span class='b-neutral'>⚪ Entre les bandes [{borne_inf_f:.1f} - {borne_sup_f:.1f}]</span><br><span style='font-size:0.78em; opacity:0.8;'>Position : {pos_boll_pct:.0f} % de l'écart entre les bandes</span>"
 
                 if stoch_f <= 20:
-                    diag_stoch = f"<span class='b-green'>🟢 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Zone de survente</span>"
+                    diag_stoch = f"<span class='b-blue'>🔵 {stoch_f:.0f}% (Survente)</span><br><span style='font-size:0.78em; opacity:0.8;'>Près du bas des 14 derniers jours</span>"
                 elif stoch_f <= 38:
-                    diag_stoch = f"<span class='b-blue'>🔵 {stoch_f:.0f}% (Zone basse)</span><br><span style='font-size:0.78em; opacity:0.8;'>Point d'entrée favorable</span>"
+                    diag_stoch = f"<span class='b-neutral'>⚪ {stoch_f:.0f}% (Zone basse)</span><br><span style='font-size:0.78em; opacity:0.8;'>Bas de la fourchette des 14 jours</span>"
                 elif stoch_f >= 80:
-                    diag_stoch = f"<span class='b-red'>🔴 {stoch_f:.0f}% (Surachat)</span><br><span style='font-size:0.78em; opacity:0.8;'>Surchauffe court terme</span>"
+                    diag_stoch = f"<span class='b-yellow'>🟡 {stoch_f:.0f}% (Surachat)</span><br><span style='font-size:0.78em; opacity:0.8;'>Près du haut des 14 derniers jours</span>"
                 else:
-                    diag_stoch = f"<span class='b-neutral'>⚪ {stoch_f:.0f}% (Neutre)</span><br><span style='font-size:0.78em; opacity:0.8;'>Tendance en cours</span>"
+                    diag_stoch = f"<span class='b-neutral'>⚪ {stoch_f:.0f}% (Neutre)</span><br><span style='font-size:0.78em; opacity:0.8;'>Milieu de la fourchette des 14 jours</span>"
 
                 if atr_f < 1.3:
                     profil_atr = "🛡️ Calme"
@@ -519,19 +525,18 @@ def afficher(
                 else:
                     profil_atr = "⚡ Nerveuse"
 
-                if score_timing >= 68:
+                if score_position >= 68:
                     ordre_statut = 0
-                    action_tech = f"<span class='b-green'>🟢 TIMING TECHNIQUE FAVORABLE</span><br><span style='font-size:0.80em;'>Cours actuel proche des supports (<b>{prix_f:.2f} {sym_dev}</b>)</span>"
-                elif score_timing >= 50:
+                    action_tech = "<span class='b-blue'>🔵 COURS BAS DANS SES FOURCHETTES</span><br><span style='font-size:0.80em;'>Près des plus bas des dernières semaines</span>"
+                elif score_position >= 50:
                     ordre_statut = 1
-                    action_tech = f"<span class='b-blue'>🔵 TIMING CORRECT</span><br><span style='font-size:0.80em;'>Niveau technique de référence : <b>{plancher_tech:.2f} {sym_dev}</b></span>"
-                elif score_timing >= 33:
+                    action_tech = "<span class='b-neutral'>⚪ PLUTÔT BAS</span><br><span style='font-size:0.80em;'>Sous le milieu de ses fourchettes récentes</span>"
+                elif score_position >= 33:
                     ordre_statut = 2
-                    action_tech = f"<span class='b-yellow'>🟡 TIMING NEUTRE</span><br><span style='font-size:0.80em;'>Niveau technique de référence : <b>{plancher_tech:.2f} {sym_dev}</b></span>"
+                    action_tech = "<span class='b-neutral'>⚪ MILIEU DES FOURCHETTES</span><br><span style='font-size:0.80em;'>Ni près des plus bas, ni près des plus hauts</span>"
                 else:
                     ordre_statut = 3
-                    cible_repli = (sup_f + res_f) / 2.0
-                    action_tech = f"<span class='b-red'>🟠 ZONE HAUTE DU CANAL</span><br><span style='font-size:0.80em;'>Milieu du canal 30J : <b>{cible_repli:.2f} {sym_dev}</b></span>"
+                    action_tech = "<span class='b-yellow'>🟡 COURS HAUT DANS SES FOURCHETTES</span><br><span style='font-size:0.80em;'>Près des plus hauts des dernières semaines</span>"
 
                 donnees_t4_enrichies.append({
                     "Actif": d["Actif"],
@@ -539,16 +544,16 @@ def afficher(
                     "Support": d["Support 30J"],
                     "Resistance": d["Résistance 30J"],
                     "PosCanal": pos_canal_pct,
-                    "RebondPct": rebond_res_pct,
+                    "EcartHautPct": ecart_haut_pct,
                     "DiagBoll": diag_boll,
                     "DiagStoch": diag_stoch,
                     "ATR": f"{atr_f:.2f}% / j ({profil_atr})",
-                    "ScoreTiming": score_timing,
+                    "ScorePosition": score_position,
                     "OrdreStatut": ordre_statut,
                     "ActionTech": action_tech,
                 })
 
-            donnees_t4_enrichies.sort(key=lambda x: (x["OrdreStatut"], -x["ScoreTiming"]))
+            donnees_t4_enrichies.sort(key=lambda x: (x["OrdreStatut"], -x["ScorePosition"]))
 
             html_t4 = """
             <table class='r-table'>
@@ -557,42 +562,39 @@ def afficher(
                     <th style='width:46px;'>Rang</th>
                     <th style='text-align: left;'>Actif</th>
                     <th style='width:180px;'>Position dans le Canal 30J<br><span style='font-size:0.82em; opacity:0.75;'>(Support ➔ Cours ➔ Résistance)</span></th>
-                    <th>Marge avant Résistance</th>
+                    <th>Écart au plus haut 30J</th>
                     <th>Diagnostic Bollinger (20J)</th>
                     <th>Momentum Stochastique</th>
                     <th>Volatilité (ATR)</th>
-                    <th style='width:105px;'>Score Timing</th>
-                    <th>Lecture Technique & Niveau de Référence</th>
+                    <th style='width:105px;'>Score de position<br><span style='font-size:0.82em; opacity:0.75;'>(100 = au plus bas)</span></th>
+                    <th>Lecture (descriptive, pas une prévision)</th>
                 </tr>
             </thead>
             <tbody>
             """
             for idx_r, item_t in enumerate(donnees_t4_enrichies, start=1):
                 pos_c = item_t["PosCanal"]
-                c_jauge_c = "#2ecc71" if pos_c <= 35 else ("#3498db" if pos_c <= 65 else "#e74c3c")
-                sc_t = item_t["ScoreTiming"]
-                c_sc_t = "#2ecc71" if sc_t >= 68 else ("#3498db" if sc_t >= 50 else ("#f39c12" if sc_t >= 33 else "#e74c3c"))
-                b_rang = "b-green" if item_t["OrdreStatut"] == 0 else ("b-blue" if item_t["OrdreStatut"] == 1 else ("b-yellow" if item_t["OrdreStatut"] == 2 else "b-neutral"))
+                sc_t = item_t["ScorePosition"]
 
                 html_t4 += f"""
                 <tr>
-                    <td><span class='{b_rang}'>#{idx_r}</span></td>
+                    <td><span class='b-neutral'>#{idx_r}</span></td>
                     <td class='r-name'>{item_t['Actif']}<br><span style='font-size:0.84em; opacity:0.8;'>Cours : <b>{item_t['Prix']}</b></span></td>
                     <td>
                         <div style='display:flex; justify-content:space-between; font-size:0.78em; font-weight:700;'>
-                            <span style='color:#2ecc71;'>Sup: {item_t['Support']}</span>
+                            <span>Sup: {item_t['Support']}</span>
                             <span>{pos_c:.0f}%</span>
-                            <span style='color:#e74c3c;'>Rés: {item_t['Resistance']}</span>
+                            <span>Rés: {item_t['Resistance']}</span>
                         </div>
-                        <div class='score-bg'><div style='width:{max(4, min(100, pos_c))}%; background:{c_jauge_c}; height:100%;'></div></div>
+                        <div class='score-bg'><div style='width:{max(4, min(100, pos_c))}%; background:#3498db; height:100%;'></div></div>
                     </td>
-                    <td style='color:#2ecc71; font-weight:800;'>+{item_t['RebondPct']:.1f}%<br><span style='font-size:0.76em; opacity:0.75; font-weight:600;'>potentiel 30J</span></td>
+                    <td style='font-weight:800;'>+{item_t['EcartHautPct']:.1f}%<br><span style='font-size:0.76em; opacity:0.75; font-weight:600;'>jusqu'au plus haut 30J</span></td>
                     <td>{item_t['DiagBoll']}</td>
                     <td>{item_t['DiagStoch']}</td>
                     <td><span class='b-purple'>{item_t['ATR']}</span></td>
                     <td>
                         <div style='font-weight:800; font-size:0.9em;'>{sc_t} / 100</div>
-                        <div class='score-bg'><div style='width:{sc_t}%; background:{c_sc_t}; height:100%;'></div></div>
+                        <div class='score-bg'><div style='width:{sc_t}%; background:#3498db; height:100%;'></div></div>
                     </td>
                     <td>{item_t['ActionTech']}</td>
                 </tr>
@@ -608,28 +610,65 @@ def afficher(
                 "Vérifiez la solidité du Payout Ratio, la croissance sur 5 ans et les pièges à rendement sur l'ensemble du catalogue."
             )
         else:
-            html_guide_div = """
+            taux_eleve, taux_autres = (f"{x * 100:.0f} %" for x in TAUX_MESURES["rendement_eleve"])
+            html_guide_div = f"""
             <div class="argon-grid" style="margin-bottom: 14px;">
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
                     <div class="argon-title" style="color:#2ecc71;">💰 1. Rendement & Gain pour 1 000 €</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Indique le revenu annuel généré immédiatement pour <b>1 000 € investis</b>. Un rendement entre <b>3,5% et 7%</b> offre le meilleur équilibre en PEA.</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Revenu annuel pour <b>1 000 € investis</b> au cours actuel. Un rendement très élevé est un <b>signal d'alerte</b> : dans l'étude de Boursy, {taux_eleve} des 20 % de rendements les plus élevés ont baissé leur dividende dans les 3 ans, contre {taux_autres} des autres.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                    <div class="argon-title" style="color:#3498db;">🛡️ 2. Payout Ratio (Marge de Sécurité)</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Part des bénéfices versée en dividende. <b>&le; 55%</b> = Ultra sûr (l'entreprise garde du cash pour investir). <b>&gt; 75%</b> = Dividende sous tension.</div>
+                    <div class="argon-title" style="color:#3498db;">🧮 2. Payout Ratio (Part des bénéfices versée)</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;"><b>&le; 55 %</b> : marge confortable (l'entreprise garde des bénéfices pour investir). <b>&gt; 75 %</b> : dividende sous tension. Repère usuel des analystes, non testé par l'étude de Boursy.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
-                    <div class="argon-title" style="color:#f39c12;">🚀 3. Croissance 5A & Effet YoC</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Mesure la hausse annuelle du coupon. Le <b>YoC 5 Ans</b> projette votre futur rendement annuel sur votre prix d'achat d'aujourd'hui.</div>
+                    <div class="argon-title" style="color:#f39c12;">📈 3. Croissance passée (5 ans) & YoC</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Hausse annuelle moyenne du dividende sur 5 ans. Le <b>YoC 5 ans</b> montre ce que deviendrait le rendement sur le prix d'aujourd'hui <b>si cette hausse continuait</b> : une hypothèse, pas une prévision. Dans l'étude, la croissance passée seule n'a pas rendu le dividende plus fiable.</div>
                 </div>
                 <div class="argon-card" style="text-align:left; padding:12px 15px;">
                     <div class="argon-title" style="color:#9b59b6;">🏆 4. Score Rente (/100) & Profil</div>
-                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Combine <b>Sûreté du Payout (40%)</b>, <b>Rendement (35%)</b> et <b>Croissance (25%)</b> pour distinguer les Pépites Royales des Vaches à lait.</div>
+                    <div style="font-size:0.82em; opacity:0.9; line-height:1.45;">Combine <b>payout (40 %)</b>, <b>rendement (35 %)</b> et <b>croissance passée (25 %)</b>. Indicateur descriptif : au-delà du seuil des 20 % de rendements les plus élevés, le rendement n'ajoute plus de points et la ligne passe en bas du tableau, signalée ⚠️.</div>
                 </div>
             </div>
             """
             afficher_html(html_guide_div)
-            st.caption("🏆 **Classement par Qualité de Rente :** Trié de la **meilleure combinaison Rendement + Sûreté + Croissance (#1 en haut)** jusqu'aux valeurs secondaires.")
+
+            # Seuil des 20 % de rendements les plus élevés : celui de l'étude (catalogue au 31/12) si l'analyse de
+            # solidité du jour existe, sinon le même classement appliqué aux rendements actuels de ce tableau.
+            def _pourcentage(texte, defaut):
+                try:
+                    return float(str(texte).replace("+", "").replace("%", "").replace("/an", "").strip())
+                except Exception:
+                    return defaut
+
+            def _symbole_et_etf(actif):
+                info_a = WATCHLIST.get(actif.rsplit(" (", 1)[0], WATCHLIST_DEFAUT.get(actif.rsplit(" (", 1)[0], {}))
+                return str(info_a.get("symbole", "")).strip(), "ETF" in str(info_a.get("secteur", ""))
+
+            analyse_div = analyse_solidite_dividendes([])  # sans calcul : seulement si l'analyse du jour existe
+            seuil_eleve_pct, source_seuil, verdicts_div = None, "", {}
+            if analyse_div:
+                verdicts_div = {sym: statut_s for sym, (_valeurs, statut_s) in analyse_div["catalogue"].items()}
+                if analyse_div["seuils"].get("H"):
+                    seuil_eleve_pct = analyse_div["seuils"]["H"] * 100.0
+                    source_seuil = f"seuil de l'étude : {seuil_eleve_pct:.2f} % au 31/12/{analyse_div['annee']}".replace(".", ",")
+            if seuil_eleve_pct is None:
+                rendements_actions = {
+                    d["Actif"]: {"retenue": True, "H": _pourcentage(d["Rendement"], 0.0)}
+                    for d in donnees_t3 if not _symbole_et_etf(d["Actif"])[1]
+                }
+                seuil_tableau = seuils_solidite(rendements_actions).get("H")
+                if seuil_tableau is not None:
+                    seuil_eleve_pct = seuil_tableau
+                    source_seuil = f"{seuil_eleve_pct:.2f} % et plus, estimé sur ce tableau".replace(".", ",")
+            st.caption(
+                "🏆 **Classement par profil de rente :** trié par profil, puis par score (#1 en haut). "
+                + (f"Les rendements parmi les 20 % les plus élevés ({source_seuil}) sont signalés ⚠️ et placés en bas. "
+                   if seuil_eleve_pct is not None else "")
+                + "Pour la fiabilité du dividende, la mesure démontrée par l'étude est la **solidité** "
+                + ("(verdict rappelé dans la dernière colonne)." if analyse_div
+                   else "(lancez l'analyse « 🛡️ Solidité des dividendes » plus bas pour voir le verdict de chaque action ici).")
+            )
 
             donnees_t3_enrichies = []
             for d in donnees_t3:
@@ -645,21 +684,11 @@ def afficher(
                 else:
                     freq_str = f"📅 Annuel ({mois_v[0] if mois_v else 'Mai'})"
 
-                try:
-                    rend_pct = float(str(d["Rendement"]).replace("%", "").strip())
-                except Exception:
-                    rend_pct = 3.0
-
-                try:
-                    payout_pct = float(str(d["Payout"]).replace("%", "").strip())
-                except Exception:
-                    payout_pct = 55.0
-
-                try:
-                    croiss_clean = str(d["Croissance 5a"]).replace("+", "").replace("%", "").replace("/an", "").strip()
-                    croiss_pct = float(croiss_clean)
-                except Exception:
-                    croiss_pct = 5.0
+                rend_pct = _pourcentage(d["Rendement"], 3.0)
+                payout_pct = _pourcentage(d["Payout"], 55.0)
+                croiss_pct = _pourcentage(d["Croissance 5a"], 5.0)
+                symbole_d, est_etf_d = _symbole_et_etf(d["Actif"])
+                rendement_tres_eleve = not est_etf_d and seuil_eleve_pct is not None and rend_pct >= seuil_eleve_pct
 
                 rente_1000 = rend_pct * 10.0
                 taux_c_borne = max(0.0, min(20.0, croiss_pct))
@@ -676,39 +705,47 @@ def afficher(
                 else:
                     pts_payout = 8.0
 
-                pts_rend = min(35.0, max(5.0, rend_pct * 5.2))
+                # au-delà du seuil des rendements les plus élevés, plus aucun point : c'est un signal d'alerte (étude)
+                rend_note = min(rend_pct, seuil_eleve_pct) if seuil_eleve_pct is not None and not est_etf_d else rend_pct
+                pts_rend = min(35.0, max(5.0, rend_note * 5.2))
                 pts_croiss = min(25.0, max(3.0, taux_c_borne * 2.5))
                 score_rente = int(round(min(99.0, max(15.0, pts_payout + pts_rend + pts_croiss))))
 
                 if payout_pct <= 55:
                     c_pay = "#2ecc71"
-                    diag_payout = f"<span style='color:#2ecc71; font-weight:800;'>🛡️ Ultra Sûr ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>{100 - payout_pct:.0f}% des profits réinvestis</span>"
+                    diag_payout = f"<span style='color:#2ecc71; font-weight:800;'>Marge confortable ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>{100 - payout_pct:.0f}% des bénéfices conservés</span>"
                 elif payout_pct <= 72:
                     c_pay = "#3498db"
-                    diag_payout = f"<span style='color:#3498db; font-weight:800;'>✅ Solide ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Distribution bien couverte</span>"
+                    diag_payout = f"<span style='color:#3498db; font-weight:800;'>Bien couvert ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Distribution couverte par les bénéfices</span>"
                 else:
                     c_pay = "#f39c12" if payout_pct <= 85 else "#e74c3c"
                     diag_payout = f"<span style='color:{c_pay}; font-weight:800;'>🟡 Élevé ({payout_pct:.0f}%)</span><br><span style='font-size:0.76em; opacity:0.8;'>Marge de manœuvre réduite</span>"
 
                 if croiss_pct >= 8.0:
-                    diag_croiss = f"<span class='b-green'>🚀 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Accélérateur fort</span>"
+                    diag_croiss = f"<span class='b-green'>🚀 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Forte hausse passée</span>"
                 elif croiss_pct >= 4.5:
-                    diag_croiss = f"<span class='b-blue'>📈 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Hausse régulière &gt; inflation</span>"
+                    diag_croiss = f"<span class='b-blue'>📈 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Hausse passée &gt; inflation</span>"
                 else:
-                    diag_croiss = f"<span class='b-neutral'>🐢 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Croissance modérée</span>"
+                    diag_croiss = f"<span class='b-neutral'>🐢 +{croiss_pct:.1f}% / an</span><br><span style='font-size:0.76em; opacity:0.8;'>Hausse passée modérée</span>"
 
-                if score_rente >= 76 and payout_pct <= 65:
+                if rendement_tres_eleve:
+                    ordre_div = 4
+                    decision_div = f"<span class='b-yellow'>⚠️ RENDEMENT TRÈS ÉLEVÉ</span><br><span style='font-size:0.80em;'>Parmi les 20 % les plus élevés : {taux_eleve} ont baissé leur dividende en 3 ans dans l'étude</span>"
+                elif score_rente >= 76 and payout_pct <= 65:
                     ordre_div = 0
-                    decision_div = "<span class='b-green'>👑 PROFIL COMPLET</span><br><span style='font-size:0.80em;'>Rendement, sûreté et croissance réunis</span>"
+                    decision_div = "<span class='b-green'>👑 PROFIL COMPLET</span><br><span style='font-size:0.80em;'>Rendement, payout couvert et hausse passée réunis</span>"
                 elif rend_pct >= 5.0 and payout_pct <= 75:
                     ordre_div = 1
-                    decision_div = "<span class='b-blue'>💵 RENDEMENT ÉLEVÉ</span><br><span style='font-size:0.80em;'>Payout maîtrisé</span>"
+                    decision_div = "<span class='b-blue'>💵 BON RENDEMENT</span><br><span style='font-size:0.80em;'>Payout maîtrisé</span>"
                 elif croiss_pct >= 7.5 and payout_pct <= 60:
                     ordre_div = 2
                     decision_div = "<span class='b-purple'>🚀 CROISSANCE DU DIVIDENDE</span><br><span style='font-size:0.80em;'>Hausse rapide du coupon sur 5 ans</span>"
                 else:
                     ordre_div = 3
-                    decision_div = "<span class='b-yellow'>⚖️ PROFIL MODÉRÉ</span><br><span style='font-size:0.80em;'>Critères partiellement réunis</span>"
+                    decision_div = "<span class='b-neutral'>⚖️ PROFIL MODÉRÉ</span><br><span style='font-size:0.80em;'>Critères partiellement réunis</span>"
+                verdict_div = verdicts_div.get(symbole_d)
+                if verdict_div and not verdict_div["libelle"].startswith("—"):
+                    decision_div += f"<br><span style='font-size:0.76em; opacity:0.85;'>Étude : {verdict_div['libelle']}</span>"
 
                 donnees_t3_enrichies.append({
                     "Actif": d["Actif"],
@@ -735,7 +772,7 @@ def afficher(
                     <th style='width:55px;'>Rang</th>
                     <th style='text-align: left;'>Actif & Calendrier</th>
                     <th>Dividende / Action<br><span style='font-size:0.82em; opacity:0.75;'>(& Gain pour 1 000 €)</span></th>
-                    <th>Rendement Actuel<br><span style='font-size:0.82em; opacity:0.75;'>(➔ Projeté à 5 Ans)</span></th>
+                    <th>Rendement Actuel<br><span style='font-size:0.82em; opacity:0.75;'>(➔ YoC 5A si la hausse passée continuait)</span></th>
                     <th style='width:210px;'>Jauge Payout Ratio<br><span style='font-size:0.82em; opacity:0.75;'>(Part des bénéfices versée)</span></th>
                     <th>Dynamique 5 Ans</th>
                     <th style='width:125px;'>Score Rente</th>
@@ -747,7 +784,7 @@ def afficher(
             for idx_d, item_d in enumerate(donnees_t3_enrichies, start=1):
                 sc_r = item_d["ScoreRente"]
                 c_sc_r = "#2ecc71" if sc_r >= 75 else ("#3498db" if sc_r >= 60 else "#f39c12")
-                b_rang_d = "b-green" if item_d["OrdreDiv"] == 0 else ("b-blue" if item_d["OrdreDiv"] == 1 else ("b-purple" if item_d["OrdreDiv"] == 2 else "b-neutral"))
+                b_rang_d = {0: "b-green", 1: "b-blue", 2: "b-purple", 4: "b-yellow"}.get(item_d["OrdreDiv"], "b-neutral")
                 pay_w = max(5.0, min(100.0, item_d["PayoutPct"]))
 
                 html_t3 += f"""
@@ -757,7 +794,7 @@ def afficher(
                     <td><b>{item_d['DivAct']}</b><br><span style='font-size:0.80em; color:#2ecc71; font-weight:700;'>+{item_d['Rente1000']:.1f} €/an pour 1 000 €</span></td>
                     <td>
                         <span style='color:#2ecc71; font-weight:900; font-size:1.05em;'>{item_d['RendPct']:.2f}%</span><br>
-                        <span style='font-size:0.78em; opacity:0.85;'>➔ YoC 5A : <b>{item_d['YoC5A']:.2f}%</b></span>
+                        <span style='font-size:0.78em; opacity:0.85;'>➔ YoC 5A (hypothèse) : <b>{item_d['YoC5A']:.2f}%</b></span>
                     </td>
                     <td>
                         {item_d['DiagPayout']}
@@ -788,7 +825,7 @@ def afficher(
 
                 if rend_d >= 7.8 and (pay_d >= 75.0 or ecart_3a_d <= -12.0):
                     motif_trap = f"Rendement élevé ({rend_d:.2f}%) avec Payout tendu ({pay_d:.0f}%)" if pay_d >= 75.0 else f"Rendement facial ({rend_d:.2f}%) gonflé par une chute du cours ({ecart_3a_d:+.1f}% vs 3A)"
-                    alertes_yield_trap.append(f"<li><b>{item_d['Actif']}</b> : {motif_trap} — <i>Vérifiez le cash-flow avant d'acheter.</i></li>")
+                    alertes_yield_trap.append(f"<li><b>{item_d['Actif']}</b> : {motif_trap} — <i>dans l'étude, {taux_eleve} des rendements les plus élevés ont baissé leur dividende dans les 3 ans.</i></li>")
 
                 if nom_pur_d in valeurs_nominatif_eligibles:
                     rend_boost = rend_d * 1.10
@@ -801,7 +838,7 @@ def afficher(
             html_trap = (
                 "<ul style='margin:6px 0 0 18px; padding:0; font-size:0.84em; line-height:1.5;'>" + "".join(alertes_yield_trap) + "</ul>"
                 if alertes_yield_trap
-                else "<div style='font-size:0.84em; color:#2ecc71; font-weight:700; margin-top:4px;'>✅ Aucun piège à rendement (Yield Trap) détecté dans votre sélection actuelle.</div>"
+                else "<div style='font-size:0.84em; color:#2ecc71; font-weight:700; margin-top:4px;'>✅ Aucun rendement extrême (7,8 % ou plus) avec payout tendu ou chute du cours dans votre sélection. Les rendements parmi les 20 % les plus élevés restent signalés ⚠️ dans le tableau.</div>"
             )
             html_nom_pills = "".join(pistes_nominatif) if pistes_nominatif else "<span style='font-size:0.84em; opacity:0.7;'>Aucune valeur éligible au bonus +10% dans le radar.</span>"
 
