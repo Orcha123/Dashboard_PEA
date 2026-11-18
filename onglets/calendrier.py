@@ -15,7 +15,7 @@ from donnees_marche import prochain_detachement
 from habillage import afficher_html, nombres_fr
 from solidite_dividendes import (
     CHOC_CRISE, EVOLUTION_REVENU, HORIZONS_PROJECTION, INFLATION_HYPOTHESE, categorie_projection, en_euros_courants,
-    facteur_relatif, projeter_rente,
+    facteur_relatif, projeter_rente, rendement_median_solides,
 )
 
 
@@ -362,8 +362,7 @@ def afficher(
                     categorie_r = categorie_projection(verdict_r)
                     montants_categories[categorie_r] += revenu_r
                     lignes_prudentes.append((revenu_r, categorie_r))
-                rendements_solides = sorted(v["H"] for v, verdict in analyse_rente["catalogue"].values() if verdict["solide"])
-                rendement_achats = rendements_solides[len(rendements_solides) // 2] if rendements_solides else 0.0
+                rendement_achats = rendement_median_solides(analyse_rente["catalogue"].values())
 
                 col_pr1, col_pr2 = st.columns(2)
                 with col_pr1:

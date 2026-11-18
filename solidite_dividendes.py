@@ -10,6 +10,9 @@ année civile complète :
 - alerte « rendement anormal » : rendement divisé par la médiane de ses 5 rendements de fin d'année précédents, parmi
   les 20 % les plus élevés du catalogue.
 """
+from concurrent.futures import ThreadPoolExecutor
+
+from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE
 from etudes import dividendes as D
 
 # Mesuré sur la période de test de l'étude (décisions 2015-2022, 2020 compris) : part des actions qui ont baissé leur
@@ -77,6 +80,26 @@ def seuils(caracteristiques_catalogue):
         if len(valeurs) >= D.MINIMUM_ACTIONS:
             resultat[cle] = min(valeurs[nom] for nom in D.plus_hauts(valeurs))
     return resultat
+
+
+def symboles_catalogue():
+    """Actions du catalogue (hors ETF), comme dans l'étude."""
+    return sorted({sym for sym, _devise, secteur, *_reste in ENRICHISSEMENT_CATALOGUE.values() if "ETF" not in secteur})
+
+
+def analyser_catalogue(lire_historique, annee, symboles=None, paralleles=8):
+    """
+    Valeurs de l'étude pour toutes les actions du catalogue et seuils des 20 % les plus élevés : (valeurs, seuils).
+    lire_historique(symbole) renvoie un historique quotidien sur 10 ans, ou None. Lève RuntimeError si moins de la
+    moitié des historiques est lue (jamais de classement bâti sur un catalogue à moitié vide).
+    """
+    symboles = list(symboles if symboles is not None else symboles_catalogue())
+    with ThreadPoolExecutor(max_workers=paralleles) as executeur:
+        historiques = dict(zip(symboles, executeur.map(lire_historique, symboles)))
+    if sum(1 for h in historiques.values() if h) < len(symboles) / 2:
+        raise RuntimeError("Historiques de dividendes indisponibles")
+    valeurs = {sym: caracteristiques(h, annee) for sym, h in historiques.items()}
+    return valeurs, seuils(valeurs)
 
 
 def statut(valeurs, seuils_catalogue, annee):
@@ -187,3 +210,32 @@ def projeter_rente(lignes, apport_annuel=0.0, rendement_achats=0.0, reinvestir=F
 
 def en_euros_courants(montant, annees, inflation=INFLATION_HYPOTHESE):
     return montant * (1.0 + inflation) ** annees
+
+
+def rendement_median_solides(valeurs_et_statuts):
+    """Rendement médian des dividendes solides du catalogue : celui auquel la projection place les achats futurs."""
+    rendements = sorted(v["H"] for v, verdict in valeurs_et_statuts if v and v.get("retenue") and verdict["solide"])
+    return rendements[len(rendements) // 2] if rendements else 0.0
+
+
+def bilan_rente(lignes, rendement_achats=0.0, apport_annuel=0.0, horizon=10):
+    """
+    Solidité de la rente d'un portefeuille. lignes : [(nom, revenu annuel en euros, catégorie)]. Renvoie la rente, sa
+    répartition par catégorie, les lignes à surveiller (de la plus grosse à la plus petite), la rente l'année d'une
+    crise comme 2020 et la rente prudente dans `horizon` ans (euros d'aujourd'hui, apports et dividendes réinvestis).
+    """
+    parts = {"solide": 0.0, "neutre": 0.0, "alerte": 0.0}
+    for _nom, revenu, categorie in lignes:
+        parts[categorie] += revenu
+    projection = projeter_rente([(revenu, categorie) for _nom, revenu, categorie in lignes], apport_annuel=apport_annuel,
+                                rendement_achats=rendement_achats, reinvestir=True, annees=horizon)
+    return {
+        "rente": sum(parts.values()),
+        "parts": parts,
+        "a_surveiller": [nom for nom, revenu, categorie in sorted(lignes, key=lambda l: -l[1]) if categorie == "alerte" and revenu > 0],
+        "rente_crise": sum(montant * (1.0 + CHOC_CRISE[categorie]) for categorie, montant in parts.items()),
+        "horizon": horizon,
+        "rente_prudente_horizon": projection[-1][1],
+        "apport_annuel": apport_annuel,
+        "rendement_achats": rendement_achats,
+    }

@@ -132,6 +132,40 @@ def test_euros_courants_et_categories():
     assert S.categorie_projection(None) == "neutre"  # non classée
 
 
+# ==============================================================================
+# ANALYSE DU CATALOGUE ET SOLIDITÉ DE LA RENTE
+# ==============================================================================
+def test_analyse_du_catalogue():
+    # 12 actions : dividende stable (solide) ou coupé en 2023 ; cours différents, donc rendements différents
+    historiques = {f"S{k}": _historique({a: (0.5 if (k % 3 == 0 and a == 2023) else 1.0 + 0.02 * (a - 2016)) for a in range(2016, 2027)},
+                                        cours=lambda j, k=k: 20.0 + 5.0 * k) for k in range(12)}
+    valeurs, seuils = S.analyser_catalogue(historiques.get, 2025, symboles=sorted(historiques), paralleles=2)
+    assert set(valeurs) == set(historiques) and set(seuils) == {"H", "Q"}
+    statuts = {sym: S.statut(v, seuils, 2025) for sym, v in valeurs.items()}
+    assert not statuts["S0"]["solide"] and "baisse" in statuts["S0"]["explication"]  # coupé en 2023
+    rendement = S.rendement_median_solides((valeurs[s], statuts[s]) for s in valeurs)
+    solides = sorted(v["H"] for s, v in valeurs.items() if statuts[s]["solide"])
+    assert solides and rendement == solides[len(solides) // 2]
+    # moins de la moitié des historiques lus : pas de classement
+    lus = {s: h for s, h in list(historiques.items())[:5]}
+    try:
+        S.analyser_catalogue(lus.get, 2025, symboles=sorted(historiques))
+        assert False, "RuntimeError attendue"
+    except RuntimeError:
+        pass
+
+
+def test_bilan_de_la_rente():
+    lignes = [("Alpha", 600.0, "solide"), ("Beta", 300.0, "alerte"), ("Gamma", 100.0, "neutre"), ("Delta", 50.0, "alerte")]
+    bilan = S.bilan_rente(lignes, rendement_achats=0.04, apport_annuel=1200.0, horizon=10)
+    assert bilan["rente"] == 1050.0 and bilan["parts"] == {"solide": 600.0, "neutre": 100.0, "alerte": 350.0}
+    assert bilan["a_surveiller"] == ["Beta", "Delta"]  # de la plus grosse à la plus petite
+    assert abs(bilan["rente_crise"] - (600 * 0.867 + 100 * 0.762 + 350 * 0.478)) < 1e-9
+    attendu = S.projeter_rente([(r, c) for _, r, c in lignes], 1200.0, 0.04, reinvestir=True, annees=10)[-1][1]
+    assert bilan["horizon"] == 10 and bilan["rente_prudente_horizon"] == attendu
+    assert S.bilan_rente([])["rente"] == 0.0
+
+
 if __name__ == "__main__":
     import pytest
 
