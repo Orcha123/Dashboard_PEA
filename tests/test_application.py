@@ -270,6 +270,21 @@ def test_projection_prudente_de_la_rente(monkeypatch):
         st.cache_resource.clear()
 
 
+def test_diversification_de_la_rente(monkeypatch):
+    """Onglet 3 : la rente est répartie par secteur et par pays, avec les alertes et les retenues à la source."""
+    application = lancer("pro", monkeypatch)
+    tableaux = [t.value for t in application.dataframe]
+    secteurs = next(t for t in tableaux if "Secteur" in t.columns and "Baisses en 2020 (catalogue)" in t.columns)
+    pays = next(t for t in tableaux if "Pays" in t.columns and "Dans un PEA" in t.columns)
+    assert len(secteurs) >= 1 and len(pays) >= 1
+    assert all(p.endswith("%") for p in secteurs["Part"])
+    contenu = textes(application)
+    assert "Repères usuels de diversification" in contenu
+    assert ("Rente bien répartie" in contenu) or ("au-dessus du repère" in contenu)
+    gratuit = lancer("gratuit", monkeypatch)
+    assert not any("Baisses en 2020 (catalogue)" in t.value.columns for t in gratuit.dataframe)  # réservé Premium et Pro
+
+
 class _FauxSMTP:
     envois = []
 

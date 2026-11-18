@@ -172,6 +172,12 @@ mensuels (et, au choix, les dividendes réinvestis) placés en dividendes solide
 rente l'année d'une crise comme 2020 (pire année mesurée). La croissance passée du catalogue (+7,4 % par an pour les
 solides) n'est pas utilisée : elle est gonflée par le biais du survivant et le rattrapage d'après 2009.
 
+**Diversification de la rente** (onglet Calendrier, Premium et Pro) : répartition des dividendes attendus par grand
+secteur et par pays du siège de la société (`diversification_rente.py`), alertes au-delà de 30 % de la rente pour un
+secteur et de 20 % pour une ligne (repères usuels), avec ce que chaque secteur a vécu en 2009 et en 2020 dans l'étude
+(par exemple 100 % de baisses dans l'automobile et l'aéronautique en 2020, 20 % dans la santé), et les retenues à la
+source étrangères non récupérables dans un PEA.
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -180,6 +186,7 @@ solides) n'est pas utilisée : elle est gonflée par le biais du survivant et le
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
+| `diversification_rente.py` | Diversification de la rente : grands secteurs, pays du siège, retenues à la source, PEA (sans Streamlit) |
 | `solidite_dividendes.py` | Solidité des dividendes, alertes de rendement et projection prudente de la rente, issues de l'étude des dividendes (sans Streamlit) |
 | `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |
 | `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |

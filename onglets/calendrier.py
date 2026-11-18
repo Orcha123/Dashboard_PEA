@@ -1,6 +1,6 @@
 """
 Onglet 3 de Boursy : jauge d'objectif de rente, calendrier des dividendes sur 12 mois, prochains détachements,
-projection prudente de la rente (étude des dividendes) et simulateur « boule de neige ».
+projection prudente de la rente (étude des dividendes), diversification de la rente et simulateur « boule de neige ».
 
 Toutes les informations venues du reste de l'application sont des paramètres nommés d'afficher() :
 leur liste est la liste exacte des dépendances de l'onglet (vérifiée par tests/test_application.py).
@@ -11,6 +11,7 @@ import math
 import pandas as pd
 import streamlit as st
 
+from diversification_rente import BAISSES_CRISES, SEUIL_LIGNE, SEUIL_SECTEUR, repartition_rente
 from donnees_marche import prochain_detachement
 from habillage import afficher_html, nombres_fr
 from solidite_dividendes import (
@@ -165,7 +166,7 @@ def afficher(
         revenus_par_mois = {m: 0.0 for m in mois_ordre}
         details_par_mois = {m: [] for m in mois_ordre}
         total_annuel_div = 0.0
-        lignes_rente = []  # (nom, symbole, dividende annuel en euros) pour la projection prudente
+        lignes_rente = []  # (nom, symbole, secteur, dividende annuel en euros) : projection prudente et diversification
 
         noms_retenus_div = [l["nom_act"] for l in lignes_triees if not l["est_especes"]]
         for nom_act in noms_retenus_div:
@@ -180,7 +181,7 @@ def afficher(
             facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
             div_annuel_eur = qte * float(info_act.get("div_eur", 0.0)) * facteur
             total_annuel_div += div_annuel_eur
-            lignes_rente.append((nom_act, str(info_act.get("symbole", "")).strip(), div_annuel_eur))
+            lignes_rente.append((nom_act, str(info_act.get("symbole", "")).strip(), str(info_act.get("secteur", "")), div_annuel_eur))
 
             mois_versement = info_act.get("mois_div", ["Mai"])
             if mois_versement:
@@ -343,7 +344,7 @@ def afficher(
             def virgule(x, decimales=1):
                 return f"{x:.{decimales}f}".replace(".", ",")
 
-            symboles_rente = sorted({sym for _, sym, _ in lignes_rente if sym})
+            symboles_rente = sorted({sym for _, sym, _, _ in lignes_rente if sym})
             analyse_rente = analyse_solidite_dividendes(symboles_rente)
             if analyse_rente is None:
                 if st.button("🛡️ Calculer la projection prudente", type="primary", key="btn_projection_rente"):
@@ -357,7 +358,7 @@ def afficher(
             if analyse_rente:
                 montants_categories = {"solide": 0.0, "neutre": 0.0, "alerte": 0.0}
                 lignes_prudentes = []
-                for _nom_r, symbole_r, revenu_r in lignes_rente:
+                for _nom_r, symbole_r, _secteur_r, revenu_r in lignes_rente:
                     verdict_r = (analyse_rente["demandes"].get(symbole_r) or (None, None))[1]
                     categorie_r = categorie_projection(verdict_r)
                     montants_categories[categorie_r] += revenu_r
@@ -417,6 +418,94 @@ def afficher(
                     "contient que des entreprises qui existent encore, et la période a suivi la crise de 2009 : ce n'est pas "
                     "une base prudente. Le simulateur ci-dessous vous laisse choisir vos propres hypothèses."
                 )
+
+        # --- DIVERSIFICATION DE LA RENTE (SECTEURS, PAYS, RETENUES À LA SOURCE) ---
+        st.markdown("---")
+        st.markdown("#### 🧩 Diversification de votre Rente")
+        if not est_premium_ou_pro:
+            afficher_verrou_saas(
+                "Diversification de la rente",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Répartition de vos dividendes par secteur et par pays, lignes trop lourdes, et retenues à la source "
+                "étrangères perdues dans un PEA.",
+            )
+        elif total_annuel_div <= 0:
+            st.info("Aucun dividende attendu sur vos lignes : rien à répartir pour l'instant.")
+        else:
+            repartition = repartition_rente(lignes_rente)
+
+            def euros_div(x):
+                return f"{x:,.0f}".replace(",", " ") + " €"
+
+            def part_div(x):
+                return f"{x * 100:.0f} %"
+
+            def crise_secteur(secteur, annee):
+                baisses, versantes = BAISSES_CRISES.get(secteur, {}).get(annee, (0, 0))
+                return f"{baisses} sur {versantes}" if versantes else "—"
+
+            def phrase_crise(secteur):
+                """Ce que ce secteur a vécu en 2020 et en 2009, dans le catalogue de l'étude."""
+                mesures = BAISSES_CRISES.get(secteur)
+                if not mesures:
+                    return ""
+                (b20, v20), (b09, v09) = mesures[2020], mesures[2009]
+                faits = (f" Dans le catalogue, {b20} des {v20} valeurs de ce secteur {'a' if b20 <= 1 else 'ont'} baissé ou "
+                         f"suspendu {'son' if b20 <= 1 else 'leur'} dividende en 2020 ({b09} sur {v09} en 2009)")
+                if b20 / v20 >= 0.5:
+                    return faits + " : une seule mauvaise année peut toucher une grosse part de votre rente."
+                return faits + " : il a plutôt bien tenu, mais votre rente dépend fortement de lui."
+
+            col_div1, col_div2 = st.columns(2)
+            with col_div1:
+                st.markdown("**Par grand secteur**")
+                st.dataframe(pd.DataFrame([
+                    {"Secteur": secteur, "Rente": f"{euros_div(montant)} / an", "Part": part_div(part),
+                     "Baisses en 2020 (catalogue)": crise_secteur(secteur, 2020)}
+                    for secteur, montant, part in repartition["par_secteur"]
+                ]), width="stretch", hide_index=True)
+            with col_div2:
+                st.markdown("**Par pays du siège de la société**")
+                taux_par_pays = {r["pays"]: r["taux"] for r in repartition["retenues"]}
+                hors_pea_pays = {pays for _, pays in repartition["hors_pea"]}
+                st.dataframe(pd.DataFrame([
+                    {"Pays": pays, "Rente": f"{euros_div(montant)} / an", "Part": part_div(part),
+                     "Dans un PEA": ("hors PEA" if pays in hors_pea_pays else
+                                     f"retenue de {taux_par_pays[pays] * 100:.3g} %".replace(".", ",") if pays in taux_par_pays else
+                                     "pas de retenue" if pays == "France" else "—")}
+                    for pays, montant, part in repartition["par_pays"]
+                ]), width="stretch", hide_index=True)
+
+            for secteur, montant, part in repartition["secteurs_trop_lourds"]:
+                st.warning(f"⚠️ **{secteur}** : {part_div(part)} de votre rente ({euros_div(montant)} / an), au-dessus du repère "
+                           f"de {part_div(SEUIL_SECTEUR)} par secteur.{phrase_crise(secteur)}")
+            if repartition["lignes_trop_lourdes"]:
+                st.warning(
+                    f"⚠️ **Lignes qui fournissent plus de {part_div(SEUIL_LIGNE)} de votre rente** : "
+                    + ", ".join(f"{nom_l} ({part_div(part)})" for nom_l, _montant, part in repartition["lignes_trop_lourdes"])
+                    + ". Une baisse de leur dividende se verrait aussitôt sur votre rente : vos prochains achats peuvent "
+                    "la répartir sur d'autres lignes."
+                )
+            if not repartition["secteurs_trop_lourds"] and not repartition["lignes_trop_lourdes"]:
+                st.success(f"✅ Rente bien répartie : aucun secteur au-dessus de {part_div(SEUIL_SECTEUR)}, aucune ligne au-dessus "
+                           f"de {part_div(SEUIL_LIGNE)}.")
+            if repartition["retenues"]:
+                st.info(
+                    f"🧾 Retenues à la source étrangères, non récupérables dans un PEA : environ "
+                    f"{euros_div(repartition['retenue_totale'])} par an sur vos dividendes ("
+                    + ", ".join(f"{r['nom']} : {r['pays']}, {r['taux'] * 100:.3g} %".replace(".", ",") for r in repartition["retenues"])
+                    + "). Taux légaux usuels ; votre courtier peut appliquer un taux réduit par convention fiscale. À rendement "
+                    "égal, un dividende français rapporte donc davantage dans un PEA."
+                )
+            if repartition["hors_pea"]:
+                st.caption("Hors PEA (siège hors Union européenne : compte-titres) : "
+                           + ", ".join(f"{nom_h} ({pays})" for nom_h, pays in repartition["hors_pea"]) + ".")
+            st.caption(
+                f"Repères usuels de diversification ({part_div(SEUIL_SECTEUR)} au plus par secteur, {part_div(SEUIL_LIGNE)} par "
+                "ligne), pas des mesures de l'étude. Les baisses par secteur viennent de l'étude des dividendes de Boursy "
+                "(actions du catalogue, 2009 et 2020). Le pays est celui du siège de la société, qui fixe la retenue à la "
+                "source et l'éligibilité au PEA (Airbus ou Stellantis, cotées à Paris, sont néerlandaises)."
+            )
 
         st.markdown("---")
         st.markdown("#### ❄️ Simulateur Interactif d'Effet Boule de Neige (DCA + Dividendes Réinvestis)")

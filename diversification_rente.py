@@ -9,6 +9,23 @@ Pourquoi : dans l'étude des dividendes de Boursy, les baisses arrivent par vagu
 SEUIL_SECTEUR = 0.30  # repère usuel de diversification (pas une mesure de l'étude)
 SEUIL_LIGNE = 0.20
 
+# Mesuré (exploratoire) dans l'étude des dividendes, section « les crises par grand secteur » de
+# etudes/resultats_dividendes.md : {grand secteur: {année: (baisses, actions qui versaient un dividende)}}.
+BAISSES_CRISES = {
+    "Automobile": {2009: (5, 5), 2020: (4, 4)},
+    "Aéronautique et défense": {2009: (2, 4), 2020: (4, 4)},
+    "Consommation": {2009: (3, 15), 2020: (4, 15)},
+    "Finance et holdings": {2009: (11, 14), 2020: (12, 19)},
+    "Immobilier": {2009: (1, 5), 2020: (1, 5)},
+    "Industrie et construction": {2009: (5, 15), 2020: (11, 18)},
+    "Luxe et spiritueux": {2009: (5, 6), 2020: (5, 7)},
+    "Santé": {2009: (2, 9), 2020: (2, 10)},
+    "Services publics": {2009: (0, 4), 2020: (2, 4)},
+    "Technologie": {2009: (3, 9), 2020: (5, 13)},
+    "Télécoms et médias": {2009: (3, 7), 2020: (5, 7)},
+    "Énergie": {2009: (1, 6), 2020: (1, 6)},
+}
+
 # Libellés de secteur du catalogue -> grand secteur. Règles appliquées dans l'ordre (mots du libellé, en minuscules).
 REGLES_SECTEURS = (
     (("etf",), "ETF (déjà diversifiés)"),
