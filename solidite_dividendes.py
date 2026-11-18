@@ -118,3 +118,72 @@ def evolution_dividende(valeurs, annee):
     if not dividendes:
         return "—"  # historique indisponible : rien n'est affiché plutôt que des zéros trompeurs
     return " → ".join(f"{dividendes.get(a, 0.0):.2f}".replace(".", ",") for a in range(annee - D.ANNEES_HISTORIQUE, annee + 1))
+
+
+# ==============================================================================
+# PROJECTION DE RENTE PRUDENTE
+# ==============================================================================
+# Mesuré (exploratoire) dans l'étude des dividendes, section « Pour la projection de rente » de
+# etudes/resultats_dividendes.md : revenu, k ans plus tard, d'un portefeuille qui garde sans rien changer les actions
+# d'une catégorie (départs de 2010 à 2024), par rapport au revenu de départ : (médiane des départs, pire départ).
+EVOLUTION_REVENU = {
+    "solide": {1: (1.118, 0.867), 3: (1.327, 1.068), 5: (1.567, 1.246), 10: (2.046, 1.901)},
+    "neutre": {1: (1.282, 0.762), 3: (1.453, 0.815), 5: (1.617, 0.791), 10: (2.218, 1.307)},
+    "alerte": {1: (0.992, 0.478), 3: (1.084, 0.754), 5: (1.229, 0.880), 10: (1.448, 1.199)},
+}
+# Ces hausses ne servent PAS de prévision : le catalogue ne contient que des entreprises qui existent encore (et qui
+# ont souvent réussi), et 2010-2025 a été une période de rattrapage après la crise de 2009. La projection prudente
+# n'en garde que ce qui est robuste : l'écart entre catégories et la baisse de la pire année (2020).
+CHOC_CRISE = {categorie: mesures[1][1] - 1.0 for categorie, mesures in EVOLUTION_REVENU.items()}
+INFLATION_HYPOTHESE = 0.02  # pour passer des euros d'aujourd'hui aux euros courants (objectif de la BCE)
+HORIZONS_PROJECTION = (1, 3, 5, 10, 15, 20)
+
+
+def categorie_projection(verdict):
+    """Catégorie d'une ligne pour la projection : « alerte », « solide » ou « neutre » (non classée comprise)."""
+    if verdict and verdict.get("alertes"):
+        return "alerte"
+    return "solide" if verdict and verdict.get("solide") else "neutre"
+
+
+def facteur_relatif(categorie, annees):
+    """
+    Revenu d'une ligne après `annees` ans, en euros d'aujourd'hui, si une ligne solide garde le sien (hypothèse
+    prudente : pas de croissance réelle). Les lignes « alerte » perdent l'écart mesuré avec les solides ; les lignes
+    neutres, qui ont fait aussi bien que les solides dans l'étude, ne sont pas comptées mieux qu'elles. Entre deux
+    horizons mesurés : interpolation ; au-delà de 10 ans : écart des 10 ans.
+    """
+    if categorie == "solide":
+        return 1.0
+    points = [(0, 1.0)] + [(k, EVOLUTION_REVENU[categorie][k][0] / EVOLUTION_REVENU["solide"][k][0])
+                           for k in sorted(EVOLUTION_REVENU[categorie])]
+    if categorie == "neutre":
+        points = [(k, min(1.0, r)) for k, r in points]
+    for (k1, r1), (k2, r2) in zip(points, points[1:]):
+        if annees <= k2:
+            return r1 + (r2 - r1) * (annees - k1) / (k2 - k1)
+    return points[-1][1]
+
+
+def projeter_rente(lignes, apport_annuel=0.0, rendement_achats=0.0, reinvestir=False, annees=20):
+    """
+    Projection prudente, en euros d'aujourd'hui. lignes : [(revenu annuel actuel, catégorie)].
+    Chaque année, l'apport (et, si demandé, la rente de l'année précédente) achète des dividendes solides au rendement
+    donné, eux aussi sans croissance réelle. Renvoie [(année, rente prudente, rente l'année d'une crise comme 2020)].
+    """
+    resultat, achats_cumules_revenu = [], 0.0
+    rente_precedente = sum(revenu for revenu, _ in lignes)
+    for n in range(1, annees + 1):
+        achats_cumules_revenu += rendement_achats * (apport_annuel + (rente_precedente if reinvestir else 0.0))
+        par_categorie = {"solide": achats_cumules_revenu}
+        for revenu, categorie in lignes:
+            par_categorie[categorie] = par_categorie.get(categorie, 0.0) + revenu * facteur_relatif(categorie, n)
+        rente = sum(par_categorie.values())
+        crise = sum(montant * (1.0 + CHOC_CRISE[categorie]) for categorie, montant in par_categorie.items())
+        resultat.append((n, rente, crise))
+        rente_precedente = rente
+    return resultat
+
+
+def en_euros_courants(montant, annees, inflation=INFLATION_HYPOTHESE):
+    return montant * (1.0 + inflation) ** annees

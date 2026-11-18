@@ -319,3 +319,50 @@ def baisses_de_l_annee(series, annee):
         if couverte_depuis(serie, f"{annee - 1}-01") and est_baisse(dividende(serie, annee - 1), dividende(serie, annee)):
             resultat.append((nom, dividende(serie, annee - 1), dividende(serie, annee), dividende(serie, annee + 1)))
     return resultat
+
+
+# ==============================================================================
+# EXPLORATOIRE (ajouté après le verdict) : ÉVOLUTION DU REVENU, POUR LA PROJECTION DE RENTE
+# ==============================================================================
+HORIZONS_REVENU = (1, 3, 5, 10)
+PREMIER_DEPART_REVENU = 2010  # après les erreurs de données de 1999 et 2005 (voir resultats_dividendes.md)
+PLAFOND_RATIO = 3.0  # un dividende exceptionnel ou une erreur de données ne compte pas plus qu'un triplement
+MINIMUM_PAR_GROUPE = 5
+
+
+def categorie_projection(observation):
+    """Catégorie au 31 décembre, comme dans Boursy : « alerte » (rendement élevé ou anormal), « solide » ou « neutre »."""
+    if observation.get("decision_H") == "HAUT" or observation.get("decision_Q") == "HAUT":
+        return "alerte"
+    return "solide" if observation.get("decision_S") == "HAUT" else "neutre"
+
+
+def evolution_revenu_par_categorie(observations, series, horizons=HORIZONS_REVENU, premier_depart=PREMIER_DEPART_REVENU):
+    """
+    Pour chaque année de départ a et chaque horizon k : revenu, k ans plus tard, d'un portefeuille qui détient sans
+    rien changer les actions d'une catégorie au 31/12/a, à parts de revenu égales au départ (moyenne des D(a+k) / D(a),
+    chacun plafonné à 3). Résumé sur les années de départ : médiane et pire départ.
+    Renvoie {catégorie: {k: {"departs": {a: (revenu relatif, actions)}, "mediane", "pire", "annee_pire"}}}.
+    """
+    par_cle = {}
+    for o in observations:
+        annee = o["annee"]
+        if annee < premier_depart or "decision_S" not in o:
+            continue
+        serie = series[o["action"]]
+        base = dividende(serie, annee)
+        for k in horizons:
+            if annee + k <= DERNIERE_ANNEE:
+                ratio = min(PLAFOND_RATIO, dividende(serie, annee + k) / base)
+                par_cle.setdefault((categorie_projection(o), k, annee), []).append(ratio)
+    resultat = {}
+    for (categorie, k, annee), ratios in sorted(par_cle.items()):
+        if len(ratios) >= MINIMUM_PAR_GROUPE:
+            resultat.setdefault(categorie, {}).setdefault(k, {"departs": {}})["departs"][annee] = (sum(ratios) / len(ratios), len(ratios))
+    for par_horizon in resultat.values():
+        for r in par_horizon.values():
+            valeurs = sorted(v for v, _ in r["departs"].values())
+            milieu = len(valeurs) // 2
+            r["mediane"] = valeurs[milieu] if len(valeurs) % 2 else (valeurs[milieu - 1] + valeurs[milieu]) / 2.0
+            r["annee_pire"], (r["pire"], _) = min(r["departs"].items(), key=lambda kv: kv[1][0])
+    return resultat

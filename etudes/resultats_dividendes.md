@@ -135,6 +135,32 @@ Même mesure principale, en ne comptant que les baisses par rapport aux deux ann
 Les conclusions tiennent : S reste démontré plus fiable, H et Q restent des signaux d'alerte, R reste juste au-dessus
 du seuil.
 
+## Pour la projection de rente (exploratoire, ajouté après le verdict)
+
+Revenu d'un portefeuille qui garde sans rien changer les actions d'une catégorie au 31 décembre de l'année de départ (à parts de revenu égales), 1, 3, 5, 10 ans plus tard, par rapport au revenu de départ. Départs de 2010 à 2024 ; chaque dividende compte au plus pour un triplement. Médiane des années de départ, et pire année de départ. Sans réinvestissement ni nouvel achat. (Tâche GitHub « Étude des dividendes » n° 5, commit acb6375.)
+
+| Catégorie au départ | Horizon | Années de départ | Actions par départ | Revenu : médiane des départs | Par an | Pire départ |
+| --- | --- | --- | --- | --- | --- | --- |
+| solide | 1 an | 2010-2024 (15) | 38 | +11,8 % | +11,8 % | -13,3 % (départ 2019) |
+| solide | 3 ans | 2010-2022 (13) | 38 | +32,7 % | +9,9 % | +6,8 % (départ 2017) |
+| solide | 5 ans | 2010-2020 (11) | 39 | +56,7 % | +9,4 % | +24,6 % (départ 2015) |
+| solide | 10 ans | 2010-2015 (6) | 32 | +104,6 % | +7,4 % | +90,1 % (départ 2011) |
+| neutre | 1 an | 2010-2024 (15) | 31 | +28,2 % | +28,2 % | -23,8 % (départ 2019) |
+| neutre | 3 ans | 2010-2022 (13) | 30 | +45,3 % | +13,3 % | -18,5 % (départ 2017) |
+| neutre | 5 ans | 2010-2020 (11) | 27 | +61,7 % | +10,1 % | -20,9 % (départ 2015) |
+| neutre | 10 ans | 2010-2015 (6) | 33 | +121,8 % | +8,3 % | +30,7 % (départ 2010) |
+| alerte | 1 an | 2010-2024 (15) | 32 | -0,8 % | -0,8 % | -52,2 % (départ 2019) |
+| alerte | 3 ans | 2010-2022 (13) | 31 | +8,4 % | +2,7 % | -24,6 % (départ 2017) |
+| alerte | 5 ans | 2010-2020 (11) | 31 | +22,9 % | +4,2 % | -12,0 % (départ 2016) |
+| alerte | 10 ans | 2010-2015 (6) | 31 | +44,8 % | +3,8 % | +19,9 % (départ 2010) |
+
+**Ces hausses ne sont pas une base prudente.** Le catalogue ne contient que des entreprises qui existent encore (et
+souvent qui ont réussi), et 2010-2025 a suivi la crise de 2009 ; les « neutres » profitent en outre des rattrapages
+après une baisse ou une suspension. La projection de Boursy (`solidite_dividendes.py`, onglet Calendrier) n'en garde
+que ce qui est robuste : l'écart entre catégories (les lignes « alerte » finissent 29 % sous les solides après 10 ans ;
+les neutres ne sont jamais comptées mieux que les solides) et la pire année, 2020 (solides −13 %, neutres −24 %,
+alerte −52 %). Elle suppose ensuite, en euros d'aujourd'hui, une croissance réelle nulle du dividende.
+
 ## Verdict selon les critères pré-enregistrés
 
 - **R Régularité (5 ans sans baisse)** : dividende plus fiable : non démontré ; rendement : pas de différence démontrée ; perte maximale : pas de différence démontrée.

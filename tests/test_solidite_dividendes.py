@@ -87,6 +87,51 @@ def test_evolution_du_dividende():
     assert S.evolution_dividende(None, 2025) == "—" and S.evolution_dividende({"retenue": False}, 2025) == "—"
 
 
+# ==============================================================================
+# PROJECTION PRUDENTE
+# ==============================================================================
+def test_constantes_issues_de_l_etude():
+    # pire année mesurée (départ 2019, donc 2020) : c'est le choc de crise
+    assert S.CHOC_CRISE == {"solide": 0.867 - 1.0, "neutre": 0.762 - 1.0, "alerte": 0.478 - 1.0}
+    assert all(set(m) == {1, 3, 5, 10} for m in S.EVOLUTION_REVENU.values())
+
+
+def test_facteur_relatif():
+    assert S.facteur_relatif("solide", 7) == 1.0
+    assert all(S.facteur_relatif("neutre", n) == 1.0 for n in (1, 5, 20))  # jamais compté mieux que les solides
+    assert abs(S.facteur_relatif("alerte", 1) - 0.992 / 1.118) < 1e-12
+    assert abs(S.facteur_relatif("alerte", 10) - 1.448 / 2.046) < 1e-12
+    assert S.facteur_relatif("alerte", 20) == S.facteur_relatif("alerte", 10)  # au-delà de 10 ans : écart des 10 ans
+    entre = S.facteur_relatif("alerte", 2)
+    assert S.facteur_relatif("alerte", 3) < entre < S.facteur_relatif("alerte", 1)
+
+
+def test_projection_sans_apport():
+    projection = S.projeter_rente([(1000.0, "solide"), (1000.0, "alerte")], annees=10)
+    assert [n for n, _, _ in projection] == list(range(1, 11))
+    annee_1 = projection[0]
+    assert abs(annee_1[1] - (1000.0 + 1000.0 * S.facteur_relatif("alerte", 1))) < 1e-9
+    assert abs(annee_1[2] - (1000.0 * 0.867 + 1000.0 * S.facteur_relatif("alerte", 1) * 0.478)) < 1e-9
+    assert projection[-1][1] < annee_1[1]  # sans apport, la part « à surveiller » s'érode
+
+
+def test_projection_avec_apports_et_reinvestissement():
+    sans = S.projeter_rente([(1000.0, "solide")], apport_annuel=1200.0, rendement_achats=0.04, annees=3)
+    assert [round(r, 6) for _, r, _ in sans] == [1048.0, 1096.0, 1144.0]  # +48 € de rente par an d'apports
+    avec = S.projeter_rente([(1000.0, "solide")], apport_annuel=1200.0, rendement_achats=0.04, reinvestir=True, annees=2)
+    assert round(avec[0][1], 6) == 1088.0  # 1000 + 4 % x (1200 + 1000)
+    assert round(avec[1][1], 6) == round(1088.0 + 0.04 * (1200.0 + 1088.0), 6)
+    assert S.projeter_rente([], apport_annuel=1200.0, rendement_achats=0.05, annees=1) == [(1, 60.0, 60.0 * 0.867)]
+
+
+def test_euros_courants_et_categories():
+    assert abs(S.en_euros_courants(100.0, 10) - 100.0 * 1.02 ** 10) < 1e-9
+    assert S.categorie_projection({"alertes": ["x"], "solide": True}) == "alerte"
+    assert S.categorie_projection({"alertes": [], "solide": True}) == "solide"
+    assert S.categorie_projection({"alertes": [], "solide": False}) == "neutre"
+    assert S.categorie_projection(None) == "neutre"  # non classée
+
+
 if __name__ == "__main__":
     import pytest
 

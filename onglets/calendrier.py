@@ -1,6 +1,6 @@
 """
-Onglet 3 de Boursy : jauge d'objectif de rente, calendrier des dividendes sur 12 mois, prochains détachements et
-simulateur « boule de neige ».
+Onglet 3 de Boursy : jauge d'objectif de rente, calendrier des dividendes sur 12 mois, prochains détachements,
+projection prudente de la rente (étude des dividendes) et simulateur « boule de neige ».
 
 Toutes les informations venues du reste de l'application sont des paramètres nommés d'afficher() :
 leur liste est la liste exacte des dépendances de l'onglet (vérifiée par tests/test_application.py).
@@ -13,6 +13,10 @@ import streamlit as st
 
 from donnees_marche import prochain_detachement
 from habillage import afficher_html, nombres_fr
+from solidite_dividendes import (
+    CHOC_CRISE, EVOLUTION_REVENU, HORIZONS_PROJECTION, INFLATION_HYPOTHESE, categorie_projection, en_euros_courants,
+    facteur_relatif, projeter_rente,
+)
 
 
 def afficher(
@@ -23,7 +27,9 @@ def afficher(
     WATCHLIST_DEFAUT,
     actions_actives_pf,
     afficher_verrou_saas,
+    analyse_solidite_dividendes,
     cout_total_achat,
+    est_premium_ou_pro,
     est_pro_max,
     lignes_triees,
     mode_gratuit,
@@ -159,6 +165,7 @@ def afficher(
         revenus_par_mois = {m: 0.0 for m in mois_ordre}
         details_par_mois = {m: [] for m in mois_ordre}
         total_annuel_div = 0.0
+        lignes_rente = []  # (nom, symbole, dividende annuel en euros) pour la projection prudente
 
         noms_retenus_div = [l["nom_act"] for l in lignes_triees if not l["est_especes"]]
         for nom_act in noms_retenus_div:
@@ -173,6 +180,7 @@ def afficher(
             facteur = (1.0 / TAUX_USD_EUR) if devise == "USD" else 1.0
             div_annuel_eur = qte * float(info_act.get("div_eur", 0.0)) * facteur
             total_annuel_div += div_annuel_eur
+            lignes_rente.append((nom_act, str(info_act.get("symbole", "")).strip(), div_annuel_eur))
 
             mois_versement = info_act.get("mois_div", ["Mai"])
             if mois_versement:
@@ -317,6 +325,99 @@ def afficher(
             },
         }
         st.vega_lite_chart(df_bar_div, spec_bar_div, width="stretch")
+
+        # --- PROJECTION PRUDENTE DE LA RENTE (ÉTUDE DES DIVIDENDES) ---
+        st.markdown("---")
+        st.markdown("#### 🛡️ Projection Prudente de votre Rente")
+        if not est_premium_ou_pro:
+            afficher_verrou_saas(
+                "Projection prudente de la rente",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Ce que votre rente pourrait devenir avec des hypothèses prudentes tirées de l'étude des dividendes de Boursy, "
+                "et ce qu'une crise comme celle de 2020 lui ferait.",
+            )
+        else:
+            def euros(x):
+                return f"{x:,.0f}".replace(",", " ") + " €"
+
+            def virgule(x, decimales=1):
+                return f"{x:.{decimales}f}".replace(".", ",")
+
+            symboles_rente = sorted({sym for _, sym, _ in lignes_rente if sym})
+            analyse_rente = analyse_solidite_dividendes(symboles_rente)
+            if analyse_rente is None:
+                if st.button("🛡️ Calculer la projection prudente", type="primary", key="btn_projection_rente"):
+                    with st.spinner("📥 Classement des dividendes du catalogue (solides, neutres, à surveiller)..."):
+                        analyse_rente = analyse_solidite_dividendes(symboles_rente, calculer=True)
+                    if analyse_rente is None:
+                        st.warning("Historiques indisponibles pour le moment (Yahoo Finance). Réessayez dans quelques minutes.")
+                else:
+                    st.caption("La projection classe d'abord vos lignes (solides, neutres, à surveiller). Le premier calcul du "
+                               "jour lit l'historique de tout le catalogue (une vingtaine de secondes) ; il sert ensuite à tous.")
+            if analyse_rente:
+                montants_categories = {"solide": 0.0, "neutre": 0.0, "alerte": 0.0}
+                lignes_prudentes = []
+                for _nom_r, symbole_r, revenu_r in lignes_rente:
+                    verdict_r = (analyse_rente["demandes"].get(symbole_r) or (None, None))[1]
+                    categorie_r = categorie_projection(verdict_r)
+                    montants_categories[categorie_r] += revenu_r
+                    lignes_prudentes.append((revenu_r, categorie_r))
+                rendements_solides = sorted(v["H"] for v, verdict in analyse_rente["catalogue"].values() if verdict["solide"])
+                rendement_achats = rendements_solides[len(rendements_solides) // 2] if rendements_solides else 0.0
+
+                col_pr1, col_pr2 = st.columns(2)
+                with col_pr1:
+                    apport_prudent = st.number_input(
+                        "💶 Apport mensuel investi en dividendes solides (€)", min_value=0, max_value=100000,
+                        value=int(max(0, BUDGET_MENSUEL)), step=50, key="nb_apport_rente_prudente",
+                    )
+                with col_pr2:
+                    reinvestir_prudent = st.toggle("🔁 Réinvestir les dividendes", value=True, key="tg_reinvestir_rente_prudente")
+                projection_prudente = projeter_rente(
+                    lignes_prudentes, apport_annuel=12.0 * apport_prudent, rendement_achats=rendement_achats,
+                    reinvestir=reinvestir_prudent, annees=max(HORIZONS_PROJECTION),
+                )
+                annee_actuelle = datetime.now().year
+                lignes_tableau_prudent = [
+                    {
+                        "Horizon": f"Dans {n} an{'s' if n > 1 else ''} ({annee_actuelle + n})",
+                        "Rente prudente (euros d'aujourd'hui)": f"{euros(rente)} / an",
+                        "Par mois": f"{euros(rente / 12.0)} / mois",
+                        f"En euros de l'époque (inflation {INFLATION_HYPOTHESE * 100:.0f} %/an)": f"{euros(en_euros_courants(rente, n))} / an",
+                        "L'année d'une crise comme 2020": f"{euros(crise)} / an",
+                    }
+                    for n, rente, crise in projection_prudente if n in HORIZONS_PROJECTION
+                ]
+                st.caption(
+                    f"Point de départ : {euros(total_annuel_div)} / an de dividendes attendus sur vos lignes (montants du "
+                    f"catalogue), dont {euros(montants_categories['solide'])} solides, {euros(montants_categories['neutre'])} "
+                    f"neutres ou non classés et {euros(montants_categories['alerte'])} à surveiller."
+                )
+                st.dataframe(pd.DataFrame(lignes_tableau_prudent), width="stretch", hide_index=True)
+                st.bar_chart(
+                    pd.DataFrame({"Rente prudente (€/an, euros d'aujourd'hui)": [round(r) for _, r, _ in projection_prudente]},
+                                 index=[str(annee_actuelle + n) for n, _, _ in projection_prudente]),
+                    height=260,
+                )
+                ecart_1 = (1.0 - facteur_relatif("alerte", 1)) * 100
+                ecart_10 = (1.0 - facteur_relatif("alerte", 10)) * 100
+                croissance_passee = (EVOLUTION_REVENU["solide"][10][0] ** 0.1 - 1.0) * 100
+                st.caption(
+                    "Hypothèses prudentes, en euros d'aujourd'hui : le dividende des lignes solides et neutres suit seulement "
+                    f"l'inflation ; celui des lignes à surveiller perd l'écart mesuré dans l'étude par rapport aux solides "
+                    f"(−{ecart_1:.0f} % au bout d'un an, −{ecart_10:.0f} % au bout de 10 ans) ; vos apports"
+                    + (", et vos dividendes réinvestis," if reinvestir_prudent else "")
+                    + f" achètent des dividendes solides au rendement médian actuel de la liste ({virgule(rendement_achats * 100)} %). "
+                    "Dernière colonne : l'année d'une crise comme 2020, la pire année mesurée (solides "
+                    f"{virgule(CHOC_CRISE['solide'] * 100, 0)} %, neutres {virgule(CHOC_CRISE['neutre'] * 100, 0)} %, à surveiller "
+                    f"{virgule(CHOC_CRISE['alerte'] * 100, 0)} %) : gardez une réserve pour une telle année.".replace("-", "−")
+                )
+                st.caption(
+                    f"Pourquoi pas la croissance passée ? Les dividendes solides du catalogue ont progressé de "
+                    f"{virgule(croissance_passee)} % par an sur 10 ans (médiane des départs 2010-2015), mais le catalogue ne "
+                    "contient que des entreprises qui existent encore, et la période a suivi la crise de 2009 : ce n'est pas "
+                    "une base prudente. Le simulateur ci-dessous vous laisse choisir vos propres hypothèses."
+                )
 
         st.markdown("---")
         st.markdown("#### ❄️ Simulateur Interactif d'Effet Boule de Neige (DCA + Dividendes Réinvestis)")
