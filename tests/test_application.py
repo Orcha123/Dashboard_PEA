@@ -48,6 +48,17 @@ def test_chaque_profil_affiche_tout_sans_erreur(profil, monkeypatch):
     contenu = textes(application)
     assert "Tableau 1" in contenu and "Ce que valent ces signaux" in contenu
     assert ("Enregistrer une nouvelle vente" in " ".join(libelles_volets)) == (profil == "pro")  # onglet 5 réservé au Pro
+    # Radar, tableaux 3 et 4 : descriptifs et alignés sur les études (ni niveau d'achat, ni « timing », ni « ultra sûr »)
+    for absent in ("Niveau technique de référence", "niveau de prix technique", "TIMING", "Rebond probable", "Ultra Sûr",
+                   "meilleur équilibre"):
+        assert absent not in contenu, absent
+    assert ("ils ne prévoient pas la suite" in contenu) == (profil == "pro")
+    if profil == "pro":
+        assert "estimé sur ce tableau" in contenu and "YoC 5A (hypothèse)" in contenu
+        tableau_4 = next(m.value for m in application.markdown if "RENDEMENT TRÈS ÉLEVÉ" in str(m.value))
+        fin = tableau_4[tableau_4.index("RENDEMENT TRÈS ÉLEVÉ"):]
+        for profil_rente in ("PROFIL COMPLET", "BON RENDEMENT", "CROISSANCE DU DIVIDENDE", "PROFIL MODÉRÉ"):
+            assert profil_rente not in fin, profil_rente  # les rendements les plus élevés sont en bas, signalés
 
 
 def test_noter_une_decision_dans_le_carnet(monkeypatch):
@@ -236,6 +247,8 @@ def test_solidite_des_dividendes(monkeypatch):
         # l'analyse du jour s'affiche ensuite d'emblée, sans nouveau calcul demandé
         suivante = lancer("pro", monkeypatch)
         assert "Les dividendes solides du catalogue" in textes(suivante)
+        # le tableau 4 du radar reprend alors le seuil de l'étude et le verdict de chaque action
+        assert "seuil de l'étude" in textes(suivante) and "Étude : 🛡️ Solide" in textes(suivante)
     finally:
         st.cache_data.clear()
         st.cache_resource.clear()

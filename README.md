@@ -165,6 +165,14 @@ celles de l'étude (`solidite_dividendes.py` réutilise `etudes/dividendes.py`),
 comme dans l'étude. Le premier calcul du jour lit l'historique de tout le catalogue (une vingtaine de secondes, sur
 demande) ; il s'affiche ensuite d'emblée pour tous les utilisateurs.
 
+Le Tableau 4 du radar (dividendes) suit les mêmes résultats : un rendement parmi les 20 % les plus élevés (seuil de
+l'étude si l'analyse du jour existe, sinon le même classement appliqué au tableau) n'ajoute plus de points au score
+rente, passe en bas du classement et est signalé ⚠️ ; le verdict de solidité de l'étude est rappelé pour chaque action
+dès que l'analyse du jour existe. Le payout est présenté comme un repère usuel (non testé par l'étude) et le YoC à
+5 ans comme une hypothèse (si la hausse passée continuait), pas une projection. Le Tableau 3 (indicateurs techniques)
+décrit la position du cours dans ses fourchettes récentes (canal de 30 jours, Bollinger, stochastique), sans niveau
+de prix de référence ni étiquette de « timing » : ces indicateurs ne prévoient pas la suite.
+
 **Suivi en conditions réelles** (protocole : `etudes/protocole_suivi_dividendes.md`) : chaque mois de janvier (nouvel
 essai chaque soir jusqu'à fin mars), la tâche du soir (`journal_solidite.py`) enregistre le classement de tout le
 catalogue au 31 décembre, avant de connaître la suite, dans la table protégée `suivi_solidite` ; les actions suivies
