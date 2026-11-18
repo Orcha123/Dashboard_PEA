@@ -19,6 +19,8 @@ import courriels
 import donnees_marche
 import habillage
 import pages_legales
+import etudes.dividendes
+import solidite_dividendes
 import onglets.calendrier
 import onglets.ventes
 import onglets.radar
@@ -39,6 +41,8 @@ importlib.reload(courriels)
 importlib.reload(donnees_marche)
 importlib.reload(habillage)
 importlib.reload(pages_legales)
+importlib.reload(etudes.dividendes)
+importlib.reload(solidite_dividendes)  # après etudes.dividendes, dont il dépend
 importlib.reload(onglets.calendrier)
 importlib.reload(onglets.ventes)
 importlib.reload(onglets.radar)
@@ -920,6 +924,56 @@ def _historique_long_yahoo(symbole):
     return historique_dix_ans(symbole)
 
 
+@st.cache_data(ttl=86400, max_entries=4)
+def _solidite_catalogue(annee, jour):
+    """
+    Étude des dividendes appliquée à tout le catalogue (hors ETF) au 31 décembre de l'année : valeurs de l'étude par
+    symbole et seuils des 20 % les plus élevés. Erreur (non mise en cache) si moins de la moitié des historiques est lue.
+    """
+    symboles = sorted({sym for sym, _devise, secteur, *_reste in ENRICHISSEMENT_CATALOGUE.values() if "ETF" not in secteur})
+    with ThreadPoolExecutor(max_workers=8) as executeur:
+        historiques = dict(zip(symboles, executeur.map(historique_long, symboles)))
+    if sum(1 for h in historiques.values() if h) < len(symboles) / 2:
+        raise RuntimeError("Historiques de dividendes indisponibles")
+    valeurs = {sym: solidite_dividendes.caracteristiques(h, annee) for sym, h in historiques.items()}
+    return valeurs, solidite_dividendes.seuils(valeurs)
+
+
+@st.cache_resource
+def _analyses_solidite_faites():
+    """Jours où l'analyse du catalogue a déjà été calculée (partagé entre utilisateurs) : elle s'affiche alors d'emblée."""
+    return set()
+
+
+def analyse_solidite_dividendes(symboles, calculer=False):
+    """
+    Solidité des dividendes (étude pré-enregistrée) : {"annee", "seuils", "catalogue": {symbole: (valeurs, statut)},
+    "demandes": {symbole: (valeurs, statut)}, "noms": {symbole: (nom, secteur, devise)}}.
+    None si l'analyse du jour n'a pas encore été lancée (et calculer=False) ou si Yahoo est indisponible.
+    """
+    aujourd_hui = heure_paris().date()
+    annee = solidite_dividendes.annee_de_reference(aujourd_hui)
+    cle = (annee, aujourd_hui.isoformat())
+    if not calculer and cle not in _analyses_solidite_faites():
+        return None
+    try:
+        valeurs_catalogue, seuils_catalogue = _solidite_catalogue(*cle)
+    except Exception:
+        return None
+    _analyses_solidite_faites().add(cle)
+
+    def avec_statut(valeurs):
+        return valeurs, solidite_dividendes.statut(valeurs, seuils_catalogue, annee)
+
+    catalogue = {sym: avec_statut(v) for sym, v in valeurs_catalogue.items()}
+    demandes = {}
+    for symbole in symboles:
+        symbole = str(symbole).strip()
+        demandes[symbole] = catalogue.get(symbole) or avec_statut(solidite_dividendes.caracteristiques(historique_long(symbole), annee))
+    noms = {sym: (nom, secteur, devise) for nom, (sym, devise, secteur, *_reste) in ENRICHISSEMENT_CATALOGUE.items()}
+    return {"annee": annee, "seuils": seuils_catalogue, "catalogue": catalogue, "demandes": demandes, "noms": noms}
+
+
 def bilan_signaux_symbole(symbole, payout_r):
     """Observations mensuelles du radar rejoué sur le passé pour une action ; None si l'historique est indisponible."""
     try:
@@ -1616,6 +1670,7 @@ with onglet_radar:
         afficher_verrou_saas=afficher_verrou_saas,
         alertes_detectees=alertes_detectees,
         allocation_personnalisee=allocation_personnalisee,
+        analyse_solidite_dividendes=analyse_solidite_dividendes,
         bilan_signaux_symbole=bilan_signaux_symbole,
         budget_courant=budget_courant,
         candidats_tries=candidats_tries,

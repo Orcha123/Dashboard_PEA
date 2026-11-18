@@ -58,15 +58,17 @@ def creneau_cours(maintenant=None, instant=None):
 # ==============================================================================
 # LECTURE DE YAHOO FINANCE
 # ==============================================================================
-def lire_chart(serveur, symbole, plage, evenements_dividendes=False, timeout=6):
+def lire_chart(serveur, symbole, plage, evenements_dividendes=False, timeout=6, intervalle="1d", periode=None):
     """
     Réponse « chart » de Yahoo (premier élément de result) depuis un serveur donné ; lève une exception en cas
     d'échec. Les fonctions ci-dessous essaient chaque serveur de SERVEURS_YAHOO tour à tour.
+    periode : (début, fin) en secondes Unix, à la place de la plage (avec range=max, Yahoo peut espacer les points).
     """
     suffixe = "&events=div" if evenements_dividendes else ""
+    fenetre = f"period1={int(periode[0])}&period2={int(periode[1])}" if periode else f"range={plage}"
     requete = urllib.request.Request(
         f"https://{serveur}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(str(symbole).strip())}"
-        f"?range={plage}&interval=1d{suffixe}",
+        f"?{fenetre}&interval={intervalle}{suffixe}",
         headers=ENTETES_YAHOO,
     )
     with urllib.request.urlopen(requete, timeout=timeout) as reponse:
