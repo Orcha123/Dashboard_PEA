@@ -136,7 +136,7 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 
 | Fichier | Rôle |
 | --- | --- |
-| `app.py` | Application Streamlit |
+| `app.py` | Point d'entrée Streamlit : configuration, barre latérale (compte, abonnement, gestion du radar), calculs communs du radar, appel des onglets |
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
@@ -146,6 +146,8 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `courriels.py` | Composition et envoi des e-mails (SMTP), partagé par l'application et les tâches du soir |
 | `habillage.css`, `habillage.py` | Feuille de style ; nombres au format français et affichage du HTML |
 | `pages_legales.py` | Avertissement AMF, CGV, rétractation, mentions légales (LCEN), confidentialité (RGPD) |
+| `onglets/portefeuille.py` | Onglet 2 : lignes, journal des achats, carnet de décisions, valorisation, trajectoire, performance vs ETF |
+| `onglets/super_pack.py` | Super-Pack Pro : sections ajoutées dans les onglets 1 à 3 (PEA/CTO, plafond PEA, rendement sur PRU, duel ETF, station 360°) |
 | `onglets/radar.py` | Onglet 1 : radar, achat du mois, centre d'alertes, résumé mensuel, bilan des signaux |
 | `onglets/coach_ia.py` | Onglet 4 : coach et audits IA (Gemini ou moteur local) |
 | `onglets/calendrier.py` | Onglet 3 : objectif de rente, calendrier des dividendes, détachements, boule de neige |
@@ -187,8 +189,11 @@ avec « Require status checks to pass » et la vérification `tests`.
 3. ✅ Données de marché (`donnees_marche.py`) : un seul lecteur Yahoo pour l'application et les tâches du soir.
 4. ✅ Habillage (`habillage.css`, `habillage.py`) et pages légales (`pages_legales.py`).
 5. Les onglets, un par un, dans `onglets/` : chaque onglet devient une fonction `afficher(...)` dont les paramètres
-   nommés sont la liste exacte de ses dépendances. ✅ Onglets 1 (radar), 3 (calendrier), 4 (coach IA) et 5 (ventes) ;
-   restent l'onglet 2 (portefeuille) et le Super-Pack Pro.
+   nommés sont la liste exacte de ses dépendances. ✅ Les 5 onglets et le Super-Pack Pro. L'onglet Portefeuille
+   renvoie les valeurs qu'il calcule pour les suivants (valeur, lignes, dividendes, versements nets PEA...).
+
+Résultat : `app.py` est passé de 7 963 à 1 798 lignes, sans aucune lecture dynamique de variables (`globals()`) :
+chaque dépendance est un paramètre visible.
 
 ## Apparence
 
