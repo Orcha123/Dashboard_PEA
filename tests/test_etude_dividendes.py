@@ -158,6 +158,25 @@ def test_baisse_durable_et_journal():
     assert D.baisses_de_l_annee({"A": serie}, 2020) == [("A", 2.0, 1.0, 1.0)]
 
 
+def test_evolution_du_revenu_par_categorie():
+    # dividende stable à 1 jusqu'en 2015 ; en 2016, la moitié des actions le divise par deux, l'autre le double
+    series = {f"A{k}": _serie({a: (1.0 if a <= 2015 else (0.5 if k % 2 else 2.0)) for a in range(1995, 2026)}) for k in range(20)}
+    obs = D.observations_dividendes(series, None, {}, range(2010, 2025))
+    for o in obs:  # catégories imposées pour le test : actions paires « solides », impaires « neutres »
+        o["decision_H"] = o["decision_Q"] = "AUTRE"
+        o["decision_S"] = "HAUT" if int(o["action"][1:]) % 2 == 0 else "AUTRE"
+    evolution = D.evolution_revenu_par_categorie(obs, series)
+    solide, neutre = evolution["solide"], evolution["neutre"]
+    assert solide[1]["departs"][2015] == (2.0, 10) and neutre[1]["departs"][2015] == (0.5, 10)
+    assert solide[1]["departs"][2016] == (1.0, 10) and solide[1]["mediane"] == 1.0
+    assert neutre[3]["pire"] == 0.5 and neutre[3]["annee_pire"] in (2013, 2014, 2015)
+    assert max(solide[10]["departs"]) == 2015 and min(solide[10]["departs"]) == 2010  # 2025 au plus tard
+    assert "alerte" not in evolution and D.categorie_projection({"decision_Q": "HAUT", "decision_S": "HAUT"}) == "alerte"
+    serie = _serie({**{a: 1.0 for a in range(1995, 2026)}, 2021: 9.0})  # dividende exceptionnel : plafonné à 3
+    obs = [{"annee": 2020, "action": "X", "decision_S": "HAUT", "decision_H": "AUTRE", "decision_Q": "AUTRE"}] * 5
+    assert D.evolution_revenu_par_categorie(obs, {"X": serie}, horizons=(1,))["solide"][1]["departs"][2020] == (3.0, 5)
+
+
 def test_taux_de_baisse_par_annee():
     series = {f"A{k}": _serie({a: (0.5 if (a == 2020 and k < 4) else 1.0) for a in range(1995, 2026)}) for k in range(10)}
     taux = D.taux_de_baisse_par_annee(series, 2000)
@@ -212,7 +231,7 @@ def test_rapport_complet_sur_donnees_simulees(monkeypatch, tmp_path):
                   "## Mesures complémentaires", "## Verdict selon les critères pré-enregistrés",
                   "**Ce que le protocole prévoit pour Boursy**"):
         assert titre in rapport, titre
-    assert "| 2020 |" in rapport and "| S Solide" in rapport and "## Contrôle exploratoire" in rapport
+    assert "| 2020 |" in rapport and "| S Solide" in rapport and "## Contrôle exploratoire" in rapport and "## Pour la projection de rente" in rapport
 
 
 if __name__ == "__main__":

@@ -217,6 +217,25 @@ def main():
                  f"{cellule(resultats.get((candidat, 'baisse_durable_3_ans', 'conception')))} |")
     l.append("")
 
+    l.append("## Pour la projection de rente (exploratoire, ajouté après le verdict)")
+    l.append("")
+    l.append(f"Revenu d'un portefeuille qui garde sans rien changer les actions d'une catégorie au 31 décembre de l'année de "
+             f"départ (à parts de revenu égales), {', '.join(str(k) for k in D.HORIZONS_REVENU)} ans plus tard, par rapport au "
+             f"revenu de départ. Départs de {D.PREMIER_DEPART_REVENU} à {D.DERNIERE_ANNEE - 1} ; chaque dividende compte au plus "
+             "pour un triplement. Médiane des années de départ, et pire année de départ. Sans réinvestissement ni nouvel achat.")
+    l.append("")
+    l.append("| Catégorie au départ | Horizon | Années de départ | Actions par départ | Revenu : médiane des départs | Par an | Pire départ |")
+    l.append("| --- | --- | --- | --- | --- | --- | --- |")
+    evolution = D.evolution_revenu_par_categorie(observations, series)
+    for categorie in ("solide", "neutre", "alerte"):
+        for k, r in sorted(evolution.get(categorie, {}).items()):
+            departs = r["departs"]
+            moyenne_actions = sum(n for _, n in departs.values()) / len(departs)
+            l.append(f"| {categorie} | {k} an{'s' if k > 1 else ''} | {min(departs)}-{max(departs)} ({len(departs)}) | "
+                     f"{moyenne_actions:.0f} | {pct(r['mediane'] - 1.0)} | {pct(r['mediane'] ** (1.0 / k) - 1.0)} | "
+                     f"{pct(r['pire'] - 1.0)} (départ {r['annee_pire']}) |")
+    l.append("")
+
     l.append("## Verdict selon les critères pré-enregistrés")
     l.append("")
     for candidat, libelle in D.CANDIDATS.items():
