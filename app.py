@@ -22,6 +22,7 @@ import resume_mensuel
 import paiements_stripe
 import comptes
 import courriels
+import donnees_marche
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
 # Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
@@ -33,11 +34,29 @@ importlib.reload(resume_mensuel)
 importlib.reload(paiements_stripe)
 importlib.reload(comptes)
 importlib.reload(courriels)
+importlib.reload(donnees_marche)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
 from allocation_dca import calculer_achat_du_mois, normaliser_poids, preparer_lignes_dca, statut_achat  # DCA guidé par l'allocation cible
 from paiements_stripe import creer_session_portail, ids_prix, verifier_abonnement  # abonnements Stripe (testés)
 from comptes import decider_niveau  # comptes et abonnement protégé (testés)
 from courriels import ADRESSE_APPLICATION, composer_email_alertes_radar, envoyer_smtp  # envoi des e-mails
+from donnees_marche import (  # Yahoo Finance, heures de marché, calculs sur les historiques (testés)
+    RAFRAICHISSEMENT_SEANCE_SECONDES,
+    clotures_trois_mois,
+    cours_a_la_date,
+    cours_et_historique,
+    creneau_cours,
+    heure_paris,
+    historique_dix_ans,
+    inspecter_dividende,
+    marches_ouverts,
+    niveau_et_variation,
+    prochain_detachement,
+    rechercher_yahoo,
+    taux_eur_usd,
+    taux_rendement_interne,
+    tendance_ema_2_12,
+)
 from carnet_decisions import (  # carnet de décisions : pourquoi j'achète, pourquoi je vends
     HORIZON_RELECTURE_MOIS,
     HORIZONS_MOIS,
@@ -385,41 +404,8 @@ def envoyer_apercu_resume_mensuel(destinataire, resume):
 # ==============================================================================
 # TAUX DE CHANGE & MÉTÉO DES MARCHÉS (CAC 40, S&P 500, VIX)
 # ==============================================================================
-HEADERS_YAHOO_PRO = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json,text/plain,*/*",
-}
-
-# ------------------------------------------------------------------------------
-# FRAÎCHEUR DES COURS : toutes les 5 minutes en séance, toutes les heures marchés fermés
-# ------------------------------------------------------------------------------
-RAFRAICHISSEMENT_SEANCE_SECONDES = 300
-
-
-def heure_paris():
-    try:
-        from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo("Europe/Paris"))
-    except Exception:
-        return datetime.now()
-
-
-def marches_ouverts():
-    """Vrai du lundi au vendredi entre l'ouverture de Paris (9h00) et la clôture de New York (22h05), heure de Paris."""
-    maintenant = heure_paris()
-    minutes = maintenant.hour * 60 + maintenant.minute
-    return maintenant.weekday() < 5 and 9 * 60 <= minutes < 22 * 60 + 5
-
-
-def creneau_cours():
-    """
-    Étiquette du créneau de cours en vigueur. Les lectures Yahoo sont mises en cache PAR créneau :
-    un nouveau créneau toutes les 5 minutes en séance (cours rafraîchis), toutes les heures sinon.
-    """
-    instant = int(time.time())
-    if marches_ouverts():
-        return f"S{instant // RAFRAICHISSEMENT_SEANCE_SECONDES}"
-    return f"F{instant // 3600}"
+# Lectures Yahoo et heures de marché : donnees_marche.py. Ici, seulement la mise en cache par créneau de cours
+# (toutes les 5 minutes en séance, toutes les heures sinon) et les replis propres à la session.
 
 
 @st.cache_data(ttl=7200, max_entries=64)
@@ -431,18 +417,7 @@ def heure_maj_cours(creneau):
 @st.cache_data(ttl=1800, max_entries=32)
 def _taux_change_yahoo(creneau):
     """Taux EUR/USD lu sur Yahoo. Lève une erreur en cas d'échec : un échec n'est ainsi jamais mis en cache."""
-    for srv in ("query1", "query2"):
-        try:
-            url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/EURUSD=X?range=1d&interval=1d"
-            req = urllib.request.Request(url, headers=HEADERS_YAHOO_PRO)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                taux = float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
-                if taux > 0:
-                    return taux
-        except Exception:
-            continue
-    raise RuntimeError("Taux EUR/USD indisponible")
+    return taux_eur_usd()
 
 
 def facteur_cout_usd(position):
@@ -490,21 +465,7 @@ def recuperer_indice_meteo(symbole):
 
 @st.cache_data(ttl=1800, max_entries=64)
 def _indice_meteo_yahoo(symbole, creneau):
-    for srv in ("query1", "query2"):
-        try:
-            url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=5d&interval=1d"
-            req = urllib.request.Request(url, headers=HEADERS_YAHOO_PRO)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                res = data["chart"]["result"][0]
-                prix = float(res["meta"]["regularMarketPrice"])
-                closes = [float(c) for c in res["indicators"]["quote"][0]["close"] if c is not None]
-                veille = closes[-2] if len(closes) >= 2 else float(res["meta"].get("chartPreviousClose", prix))
-                var_pct = ((prix - veille) / veille * 100.0) if veille > 0 else 0.0
-                return prix, var_pct
-        except Exception:
-            continue
-    raise RuntimeError(f"Indice indisponible : {symbole}")
+    return niveau_et_variation(symbole)
 
 # ==============================================================================
 # VALEURS PAR DÉFAUT & CATALOGUE INTERNATIONAL (PEA & US)
@@ -1091,35 +1052,7 @@ def recuperer_donnees(symbole):
 
 @st.cache_data(ttl=3600, max_entries=1500)
 def _recuperer_donnees_yahoo(symbole, creneau):
-    sym_enc = urllib.parse.quote(str(symbole).strip())
-    for srv in ("query1", "query2"):
-        url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?range=3y&interval=1d"
-        req = urllib.request.Request(url, headers=HEADERS_YAHOO_PRO)
-        try:
-            with urllib.request.urlopen(req, timeout=6) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                result = data["chart"]["result"][0]
-                quote = result.get("indicators", {}).get("quote", [{}])[0]
-                # Les 3 séries restent alignées séance par séance : une séance sans clôture est écartée des trois,
-                # et un plus haut / plus bas manquant est remplacé par la clôture du jour.
-                bruts_c = quote.get("close") or []
-                bruts_h = quote.get("high") or []
-                bruts_b = quote.get("low") or []
-                closes, hauts, bas = [], [], []
-                for i_s, c_s in enumerate(bruts_c):
-                    if c_s is None:
-                        continue
-                    h_s = bruts_h[i_s] if i_s < len(bruts_h) and bruts_h[i_s] is not None else c_s
-                    b_s = bruts_b[i_s] if i_s < len(bruts_b) and bruts_b[i_s] is not None else c_s
-                    closes.append(float(c_s))
-                    hauts.append(float(h_s))
-                    bas.append(float(b_s))
-                prix_actuel = float(result.get("meta", {}).get("regularMarketPrice") or (closes[-1] if closes else 0.0))
-                if prix_actuel > 0 and closes:
-                    return prix_actuel, closes, hauts, bas
-        except Exception:
-            continue
-    raise RuntimeError(f"Cours indisponible pour {symbole}")
+    return cours_et_historique(symbole, "3y")
 
 def historique_long(symbole):
     """(dates ISO, clôtures, dividendes [(date ISO, montant)], plus hauts, plus bas) sur 10 ans ; None si indisponible."""
@@ -1131,39 +1064,7 @@ def historique_long(symbole):
 
 @st.cache_data(ttl=21600, max_entries=300)
 def _historique_long_yahoo(symbole):
-    sym_enc = urllib.parse.quote(symbole)
-    for srv in ("query1", "query2"):
-        try:
-            req = urllib.request.Request(
-                f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?range=10y&interval=1d&events=div",
-                headers=HEADERS_YAHOO_PRO,
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                resultat = json.loads(response.read().decode("utf-8"))["chart"]["result"][0]
-            horodatages = resultat.get("timestamp") or []
-            clotures = (resultat.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
-            series_quote = (resultat.get("indicators", {}).get("quote") or [{}])[0]
-            plus_hauts_bruts = series_quote.get("high") or []
-            plus_bas_bruts = series_quote.get("low") or []
-            dates, valeurs, plus_hauts, plus_bas = [], [], [], []
-            for rang, (horodatage, cloture) in enumerate(zip(horodatages, clotures)):
-                if cloture is not None and float(cloture) > 0:
-                    dates.append(datetime.fromtimestamp(int(horodatage)).date().isoformat())
-                    valeurs.append(float(cloture))
-                    haut_r = plus_hauts_bruts[rang] if rang < len(plus_hauts_bruts) and plus_hauts_bruts[rang] is not None else cloture
-                    bas_r = plus_bas_bruts[rang] if rang < len(plus_bas_bruts) and plus_bas_bruts[rang] is not None else cloture
-                    plus_hauts.append(float(haut_r))
-                    plus_bas.append(float(bas_r))
-            dividendes = sorted(
-                (datetime.fromtimestamp(int(d["date"])).date().isoformat(), float(d["amount"]))
-                for d in ((resultat.get("events") or {}).get("dividends") or {}).values()
-                if d.get("date") and float(d.get("amount") or 0) > 0
-            )
-            if dates:
-                return dates, valeurs, dividendes, plus_hauts, plus_bas
-        except Exception:
-            continue
-    raise RuntimeError(f"Historique indisponible : {symbole}")
+    return historique_dix_ans(symbole)
 
 
 def bilan_signaux_symbole(symbole, payout_r):
@@ -1201,82 +1102,10 @@ def lire_signaux_mensuels():
         debut += 1000
 
 
-def cours_a_la_date(historique, date_iso):
-    """Dernière clôture connue à la date donnée (ou juste avant) ; None si la date précède l'historique."""
-    if not historique:
-        return None
-    dates, valeurs = historique[0], historique[1]
-    indice = bisect.bisect_right(dates, str(date_iso)[:10]) - 1
-    return valeurs[indice] if indice >= 0 else None
-
-
-def taux_rendement_interne(flux):
-    """
-    Rendement annualisé (TRI, équivalent du XIRR d'Excel) d'une suite de flux [(date ISO, montant)] :
-    versements négatifs, retraits et valeur finale positifs. None s'il n'est pas calculable.
-    """
-    flux = [(datetime.fromisoformat(str(d)[:10]), float(m)) for d, m in flux if m]
-    if not flux or all(m >= 0 for _, m in flux) or all(m <= 0 for _, m in flux):
-        return None
-    origine = min(d for d, _ in flux)
-
-    def valeur_actuelle_nette(taux):
-        return sum(m / (1.0 + taux) ** ((d - origine).days / 365.25) for d, m in flux)
-
-    bas, haut = -0.9999, 10.0
-    valeur_bas, valeur_haut = valeur_actuelle_nette(bas), valeur_actuelle_nette(haut)
-    if valeur_bas * valeur_haut > 0:
-        return None
-    for _ in range(200):
-        milieu = (bas + haut) / 2.0
-        valeur_milieu = valeur_actuelle_nette(milieu)
-        if valeur_bas * valeur_milieu <= 0:
-            haut = milieu
-        else:
-            bas, valeur_bas = milieu, valeur_milieu
-        if haut - bas < 1e-7:
-            break
-    return (bas + haut) / 2.0
-
-
 @st.cache_data(ttl=1800)
 def inspecter_dividende_yahoo_live(symbole):
-    """Extrait automatiquement le cours, la devise, le dividende annuel et les mois de versement depuis Yahoo."""
-    sym_enc = urllib.parse.quote(str(symbole).strip())
-    map_num_vers_nom = {
-        1: "Jan", 2: "Fév", 3: "Mar", 4: "Avr", 5: "Mai", 6: "Juin",
-        7: "Juil", 8: "Août", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Déc",
-    }
-    for srv in ("query1", "query2"):
-        url_c = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{sym_enc}?interval=1d&range=1y&events=div"
-        req_c = urllib.request.Request(url_c, headers=HEADERS_YAHOO_PRO)
-        try:
-            with urllib.request.urlopen(req_c, timeout=6) as rep:
-                data_c = json.loads(rep.read().decode("utf-8"))
-                res0 = data_c["chart"]["result"][0]
-                meta = res0.get("meta", {})
-                closes = [float(x) for x in res0.get("indicators", {}).get("quote", [{}])[0].get("close", []) if x is not None]
-                cours_live = float(meta.get("regularMarketPrice") or (closes[-1] if closes else 50.0))
-                # Devise RÉELLE de cotation (EUR, USD, mais aussi GBP, CHF, DKK...) : l'appelant refuse celles non gérées
-                devise = str(meta.get("currency") or "EUR").upper()
-
-                divs_dict = res0.get("events", {}).get("dividends", {})
-                div_annuel = 0.0
-                mois_nums = set()
-                if isinstance(divs_dict, dict) and divs_dict:
-                    seuil_ts = datetime.now().timestamp() - (375 * 86400)
-                    for _, d_obj in divs_dict.items():
-                        ts_d = float(d_obj.get("date", 0))
-                        mt_d = float(d_obj.get("amount", 0.0))
-                        if ts_d >= seuil_ts and mt_d > 0:
-                            div_annuel += mt_d
-                            mois_nums.add(datetime.fromtimestamp(ts_d).month)
-
-                mois_noms = [map_num_vers_nom[m] for m in sorted(list(mois_nums))] if mois_nums else (["Mar", "Juin", "Sep", "Déc"] if devise == "USD" else ["Mai"])
-                return round(cours_live, 2), devise, round(div_annuel, 2), mois_noms
-        except Exception:
-            continue
-    return None, "EUR", 0.0, ["Mai"]
+    """Cours, devise réelle, dividende annuel et mois de versement lus sur Yahoo (voir donnees_marche.inspecter_dividende)."""
+    return inspecter_dividende(symbole)
 
 @st.cache_data(ttl=1800)
 def rechercher_actions_yahoo_live(requete):
@@ -1300,37 +1129,7 @@ def rechercher_actions_yahoo_live(requete):
             })
             symboles_vus.add(sym_c.upper())
 
-    q_enc = urllib.parse.quote(q_clean)
-    for host_y in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
-        url = f"https://{host_y}/v1/finance/search?q={q_enc}&quotesCount=10&newsCount=0"
-        req = urllib.request.Request(url, headers=HEADERS_YAHOO_PRO)
-        try:
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("quotes", []):
-                    q_type = item.get("quoteType", "")
-                    sym = str(item.get("symbol", "")).strip().upper()
-                    if q_type in ("EQUITY", "ETF") and sym and sym not in symboles_vus:
-                        nom_long = item.get("shortname") or item.get("longname") or sym
-                        bourse = item.get("exchDisp") or item.get("exchange") or ""
-                        secteur_y = item.get("sectorDisp") or item.get("industryDisp") or ("ETF" if q_type == "ETF" else "Action Internationale")
-                        est_eur = any(sym.endswith(suf) for suf in (".PA", ".AS", ".DE", ".MI", ".MC", ".BR", ".HE", ".LS", ".VI"))
-                        dev_y = "EUR" if est_eur else "USD"
-                        # Suffixe de place inconnu (.L, .SW, .CO...) : la devise réelle est vérifiée sur Yahoo à la sélection
-                        dev_lbl = dev_y if (est_eur or "." not in sym) else "devise à vérifier"
-                        resultats.append({
-                            "label": f"{nom_long} ({sym} — {bourse} | {dev_lbl})",
-                            "nom": nom_long,
-                            "symbole": sym,
-                            "devise": dev_y,
-                            "secteur": secteur_y,
-                        })
-                        symboles_vus.add(sym)
-            if resultats:
-                break
-        except Exception:
-            continue
-
+    resultats.extend(rechercher_yahoo(q_clean, symboles_vus))
     return resultats
 
 mode_ajout = st.sidebar.radio(
@@ -1673,37 +1472,11 @@ vix_pts, vix_var = recuperer_indice_meteo("^VIX")
 # --- CALCUL DU SIGNAL EMA 2/12 POUR LES INDICES MÉTÉO ---
 @st.cache_data(ttl=1800)
 def calculer_ema_meteo_indice(symbole):
-    for srv in ("query1", "query2"):
-        try:
-            url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=3mo&interval=1d"
-            req = urllib.request.Request(url, headers=HEADERS_YAHOO_PRO)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode("utf-8"))
-                closes = [float(c) for c in data["chart"]["result"][0]["indicators"]["quote"][0]["close"] if c is not None]
-            if len(closes) < 15:
-                return "⚪ Neutre", "#95a5a6"
-
-            def calc_ema(vals, periode):
-                k = 2.0 / (periode + 1.0)
-                ema = [vals[0]]
-                for p in vals[1:]:
-                    ema.append(p * k + ema[-1] * (1.0 - k))
-                return ema
-
-            ema2 = calc_ema(closes, 2)
-            ema12 = calc_ema(closes, 12)
-
-            if ema2[-2] <= ema12[-2] and ema2[-1] > ema12[-1]:
-                return "🚀 Croisement haussier", "#2ecc71"
-            elif ema2[-1] > ema12[-1] and closes[-1] >= ema2[-1]:
-                return "🟢 Tendance haussière", "#2ecc71"
-            elif ema2[-1] > ema12[-1]:
-                return "🟡 Neutre (Pause)", "#f39c12"
-            else:
-                return "🔴 Tendance baissière", "#e74c3c"
-        except Exception:
-            continue
-    return "⚪ Neutre", "#95a5a6"
+    """Tendance EMA 2/12 d'un indice sur 3 mois ; « Neutre » si Yahoo ne répond pas."""
+    try:
+        return tendance_ema_2_12(clotures_trois_mois(symbole))
+    except Exception:
+        return "⚪ Neutre", "#95a5a6"
 
 statut_ema_cac, col_ema_cac = calculer_ema_meteo_indice("^FCHI")
 statut_ema_sp, col_ema_sp = calculer_ema_meteo_indice("^GSPC")
@@ -5008,37 +4781,7 @@ with onglet_dividendes:
         # --- TABLEAU DES PROCHAINS DÉTACHEMENTS (90J - EXCLUSIF PRO 8,90 €) ---
         @st.cache_data(ttl=3600)
         def recuperer_prochain_detachement_90j(symbole):
-            for srv in ("query1", "query2"):
-                try:
-                    url = f"https://{srv}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=2y&interval=1d&events=div"
-                    req = urllib.request.Request(url, headers=HEADERS_YAHOO_PRO)
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-                    divs = data["chart"]["result"][0].get("events", {}).get("dividends", {})
-                    if not divs:
-                        return None, None, None
-
-                    ajd = datetime.now().date()
-                    prochaines_dates = []
-                    for ts_key, d_info in divs.items():
-                        dt_hist = datetime.fromtimestamp(int(d_info.get("date", ts_key))).date()
-                        montant_u = float(d_info.get("amount", 0.0))
-                        for annee_cible in [ajd.year, ajd.year + 1]:
-                            try:
-                                dt_proj = dt_hist.replace(year=annee_cible)
-                            except ValueError:
-                                dt_proj = dt_hist.replace(year=annee_cible, day=28)
-                            ecart_jours = (dt_proj - ajd).days
-                            if 0 <= ecart_jours <= 90:
-                                prochaines_dates.append((ecart_jours, dt_proj, montant_u))
-
-                    if not prochaines_dates:
-                        return None, None, None
-                    prochaines_dates.sort(key=lambda x: x[0])
-                    return prochaines_dates[0]
-                except Exception:
-                    continue
-            return None, None, None
+            return prochain_detachement(symbole)
 
         if est_pro_max:
             lignes_detachement_90j = []

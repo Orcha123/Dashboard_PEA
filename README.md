@@ -83,7 +83,7 @@ Les cours viennent de Yahoo Finance et sont relus toutes les 5 minutes pendant l
 vendredi, de 9h00 à 22h05, heure de Paris), toutes les heures le reste du temps. La page se rafraîchit seule en
 séance ; chaque visiteur peut couper ce rafraîchissement dans la barre latérale. Les cours d'Euronext restent
 différés d'environ 15 minutes par Yahoo : ce n'est pas du temps réel. Le rythme se règle avec la constante
-`RAFRAICHISSEMENT_SEANCE_SECONDES` de `app.py`.
+`RAFRAICHISSEMENT_SEANCE_SECONDES` de `donnees_marche.py`.
 
 ## Alertes automatiques par e-mail
 
@@ -144,6 +144,7 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |
 | `comptes.py` | Compte administrateur, table protégée `abonnements`, niveau retenu, suppression du compte (sans Streamlit) |
 | `courriels.py` | Composition et envoi des e-mails (SMTP), partagé par l'application et les tâches du soir |
+| `donnees_marche.py` | Lecture de Yahoo Finance (cours, historiques, change, indices, dividendes, recherche), heures de marché, rendement annualisé (sans Streamlit) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
@@ -165,7 +166,7 @@ python -m pytest tests
   Il vérifie aussi qu'un compte ne peut pas être supprimé tant qu'un abonnement est actif, et l'envoi du rapport
   d'alertes par e-mail.
 - Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe, comptes,
-  e-mails).
+  e-mails, données de marché).
 
 À chaque pull request, GitHub lance ces vérifications (`.github/workflows/tests.yml`) et affiche un voyant vert ou
 rouge avant la fusion. Pour rendre ce voyant obligatoire : *Settings > Branches > Add branch ruleset* sur `main`,
@@ -177,7 +178,7 @@ avec « Require status checks to pass » et la vérification `tests`.
 
 1. ✅ Paiements Stripe (`paiements_stripe.py`), avec le filet de tests.
 2. ✅ Comptes et abonnement protégé (`comptes.py`), e-mails (`courriels.py`).
-3. Données de marché (Yahoo Finance : cours, historiques, change).
+3. ✅ Données de marché (`donnees_marche.py`) : un seul lecteur Yahoo pour l'application et les tâches du soir.
 4. Habillage (styles) et pages légales.
 5. Les onglets, un par un.
 

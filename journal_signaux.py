@@ -7,14 +7,12 @@ enregistrées pour le mois en cours. Les signaux sont figés avant de connaître
 
 Variables d'environnement : SUPABASE_URL, SUPABASE_SERVICE_KEY. ALERTES_DRY_RUN=1 : calcule sans rien écrire.
 """
-import json
 import sys
 import time
-import urllib.parse
-import urllib.request
-from datetime import date, datetime
+from datetime import date
 
-from alertes_quotidiennes import ENTETES_YAHOO, _env, requete_supabase
+from alertes_quotidiennes import _env, requete_supabase
+from donnees_marche import historique_dix_ans
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE
 from moteur_signaux import evaluer_signaux_a_la_date
 
@@ -23,36 +21,10 @@ FENETRE = 756
 
 def historique_yahoo(symbole):
     """(dates, clôtures, dividendes, plus hauts, plus bas) sur 10 ans, séances closes uniquement ; None si indisponible."""
-    aujourd_hui = date.today().isoformat()
-    for serveur in ("query1", "query2"):
-        try:
-            requete = urllib.request.Request(
-                f"https://{serveur}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbole)}?range=10y&interval=1d&events=div",
-                headers=ENTETES_YAHOO,
-            )
-            with urllib.request.urlopen(requete, timeout=15) as reponse:
-                resultat = json.loads(reponse.read().decode("utf-8"))["chart"]["result"][0]
-            series = (resultat.get("indicators", {}).get("quote") or [{}])[0]
-            hauts_bruts, bas_bruts = series.get("high") or [], series.get("low") or []
-            dates, clotures, hauts, bas = [], [], [], []
-            for rang, (horodatage, cloture) in enumerate(zip(resultat.get("timestamp") or [], series.get("close") or [])):
-                jour = datetime.fromtimestamp(int(horodatage)).date().isoformat()
-                if cloture is None or float(cloture) <= 0 or jour >= aujourd_hui:   # la séance du jour n'est pas close
-                    continue
-                dates.append(jour)
-                clotures.append(float(cloture))
-                hauts.append(float(hauts_bruts[rang]) if rang < len(hauts_bruts) and hauts_bruts[rang] is not None else float(cloture))
-                bas.append(float(bas_bruts[rang]) if rang < len(bas_bruts) and bas_bruts[rang] is not None else float(cloture))
-            dividendes = sorted(
-                (datetime.fromtimestamp(int(d["date"])).date().isoformat(), float(d["amount"]))
-                for d in ((resultat.get("events") or {}).get("dividends") or {}).values()
-                if d.get("date") and float(d.get("amount") or 0) > 0
-            )
-            if dates:
-                return dates, clotures, dividendes, hauts, bas
-        except Exception:
-            continue
-    return None
+    try:
+        return historique_dix_ans(symbole, seances_closes_seulement=True, timeout=15)
+    except Exception:
+        return None
 
 
 def main():
