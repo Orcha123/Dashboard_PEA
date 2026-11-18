@@ -28,6 +28,7 @@ from email.mime.text import MIMEText
 
 from catalogue_valeurs import symbole_a_jour  # symboles Yahoo changés (ex. FDJ.PA -> FDJU.PA)
 from courriels import envoyer_smtp
+from donnees_marche import dernier_cours
 
 DELAI_RELANCE_JOURS = 7
 CLES_TECHNIQUES = (
@@ -35,10 +36,6 @@ CLES_TECHNIQUES = (
     "_stripe_customer_id", "_alertes_auto", "_alertes_envoyees", "_journal_achats", "_allocation_cible",
     "_resume_mensuel", "_jour_dca", "_resume_envoye", "_carnet_decisions",
 )
-ENTETES_YAHOO = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json,text/plain,*/*",
-}
 
 
 def _env(nom, defaut=""):
@@ -66,26 +63,9 @@ _cache_cours = {}
 
 def cours_actuel(symbole):
     """Dernier cours Yahoo d'un symbole, ou None s'il est indisponible (jamais de valeur inventée)."""
-    if symbole in _cache_cours:
-        return _cache_cours[symbole]
-    prix = None
-    sym_enc = urllib.parse.quote(str(symbole).strip())
-    for serveur in ("query1", "query2"):
-        try:
-            req = urllib.request.Request(
-                f"https://{serveur}.finance.yahoo.com/v8/finance/chart/{sym_enc}?range=5d&interval=1d",
-                headers=ENTETES_YAHOO,
-            )
-            with urllib.request.urlopen(req, timeout=8) as rep:
-                meta = json.loads(rep.read().decode("utf-8"))["chart"]["result"][0]["meta"]
-            valeur = float(meta.get("regularMarketPrice") or 0.0)
-            if valeur > 0:
-                prix = valeur
-                break
-        except Exception:
-            continue
-    _cache_cours[symbole] = prix
-    return prix
+    if symbole not in _cache_cours:
+        _cache_cours[symbole] = dernier_cours(symbole)
+    return _cache_cours[symbole]
 
 
 def lire_suivi(liste_brute):
