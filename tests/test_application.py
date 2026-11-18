@@ -433,6 +433,8 @@ def test_coach_synthese_strategique_et_audit_0(monkeypatch, tmp_path):
         application.run()
         verifier_sans_erreur(application)
         assert "issus de dividendes solides" in _synthese_affichee(application)
+        assert "Votre rente : solidité, crise et projection" in _synthese_affichee(application)
+        assert not any(b.label.startswith("🛡️ Ajouter la solidité") for b in application.button)  # bouton inutile désormais
         _bouton(application, "🧭 0. Synthèse").click()
         application.run()
         verifier_sans_erreur(application)
@@ -450,7 +452,7 @@ def test_coach_synthese_strategique_et_audit_0(monkeypatch, tmp_path):
         assert avec_gemini.session_state["reponse_ia_coach"] == "Réponse Gemini simulée"
         envoye = texte_envoye.read_text(encoding="utf-8")
         for partie in ("PORTEFEUILLE", "APPORTS ET ALLOCATION", "PERFORMANCE RÉELLE", "DIAGNOSTIC DE BOURSY",
-                       "PRINCIPES ISSUS DES ÉTUDES", "## 5. Plan d'action", "n'invente aucun chiffre"):
+                       "PRINCIPES ISSUS DES ÉTUDES", "## 2. Votre rente : solidité", "## 6. Plan d'action", "n'invente aucun chiffre"):
             assert partie in envoye, partie
     finally:
         st.cache_data.clear()

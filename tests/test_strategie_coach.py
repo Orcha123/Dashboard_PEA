@@ -122,11 +122,21 @@ def test_rapport_et_dossier_pour_gemini():
     for partie in ("**En bref.**", "Ce qui va bien", "Critiques et points de vigilance", "Stratégie : ce que disent les études",
                    "Plan d'action", "**Ce mois-ci**", "n'est pas conseiller en investissements financiers"):
         assert partie in rapport, partie
+    assert "Votre rente : solidité, crise et projection" in rapport and "Projection prudente" in rapport
+    assert "L'année d'une crise comme 2020" in rapport
+    assert "Réservées aux offres Premium et Pro" in S.rapport_markdown(_dossier(acces_rente=False), constats)
+    sans_solidite = _dossier(rente=_rente([("Sanofi", "SAN.PA", "Santé", 100.0)], solidite=False))
+    assert "Ajouter la solidité de ma rente" in S.rapport_markdown(sans_solidite, S.diagnostiquer(sans_solidite))
     texte = S.dossier_texte(d, constats)
+    assert "Allocation cible NON définie" in texte and "écart à cette répartition par défaut n'a pas de sens" in texte
+    avec_cible = _dossier(allocation_personnalisee=True, portefeuille={"_allocation_cible": [{"nom": "Sanofi", "poids": 50}]})
+    assert "Allocation cible définie par l'utilisateur (1 lignes)" in S.dossier_texte(avec_cible, S.diagnostiquer(avec_cible))
     for partie in ("PORTEFEUILLE", "RENTE", "APPORTS ET ALLOCATION", "PERFORMANCE RÉELLE", "DIAGNOSTIC DE BOURSY",
                    "PRINCIPES ISSUS DES ÉTUDES", "TotalEnergies (Énergie, PEA)", "[critique] Une grosse part de votre rente est à risque"):
         assert partie in texte, partie
     assert "Aucune recommandation d'achat ou de vente d'un titre précis" in S.CONSIGNES_SYNTHESE
+    assert "## 2. Votre rente : solidité, crise et projection" in S.CONSIGNES_SYNTHESE
+    assert "L'achat du mois n'est jamais une recommandation" in S.CONSIGNES_SYNTHESE
 
 
 if __name__ == "__main__":
