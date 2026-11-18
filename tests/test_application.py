@@ -14,7 +14,7 @@ from streamlit.testing.v1 import AppTest
 BANC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banc_application.py")
 ONGLETS = ["1. Radar", "2. Portefeuille", "3. Calendrier", "4. Coach", "5. Arbitrages"]
 VOLETS_COMMUNS = ["Achat du mois selon votre allocation cible", "Définir mon allocation cible", "Bilan des signaux",
-                  "Journal des achats", "Carnet de décisions", "Mentions Légales"]
+                  "Journal des achats", "Carnet de décisions", "Échéances fiscales du PEA", "Mentions Légales"]
 
 
 def lancer(profil, monkeypatch):
@@ -84,6 +84,23 @@ def test_enregistrer_une_allocation_cible(monkeypatch):
     cibles = application.session_state["portefeuille"]["_allocation_cible"]
     assert cibles and abs(sum(c["poids"] for c in cibles) - 100.0) < 0.1
     assert "Allocation cible : la vôtre" in textes(application)
+
+
+def test_echeances_fiscales_du_pea(monkeypatch):
+    """Onglet 2 : la date du premier versement donne la date des 5 ans et l'impôt estimé d'un retrait."""
+    from datetime import date
+
+    application = lancer("gratuit", monkeypatch)  # information fiscale de base : pour tous
+    assert "date du premier versement à renseigner" in textes(application)
+    application.date_input(key="date_premier_versement_pea").set_value(date(2023, 1, 10))
+    application.run()
+    application.button(key="btn_premier_versement_pea").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert application.session_state["portefeuille"]["_pea"] == {"premier_versement": "2023-01-10"}
+    contenu = textes(application)
+    assert "5 ans le 10 janvier 2028" in contenu and "Ancienneté fiscale du PEA" in contenu
+    assert "Avant 5 ans" in contenu and "18,6 % de prélèvements sociaux seulement" in contenu and "Plafond" in contenu
 
 
 def test_enregistrer_un_achat_avec_sa_raison(monkeypatch):

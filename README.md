@@ -107,7 +107,8 @@ Variable facultative `APP_URL` (onglet *Variables*) : adresse de l'application, 
 dans le Centre d'Alertes (avec son jour d'achat, du 1 au 28), il envoie un e-mail par mois, le premier soir de bourse
 situé dans les 3 jours qui précèdent l'achat : l'achat proposé selon l'allocation cible (même calcul que
 l'application), la valeur du portefeuille et la rente estimée, les dividendes attendus ce mois-là et les valeurs du
-radar sous leur prix cible, les décisions du carnet arrivées à 6 mois, et la solidité de la rente (part solide, part à surveiller, rente l'année d'une crise comme 2020, rente prudente dans 10 ans : voir l'étude des dividendes ; si les historiques sont indisponibles, l'e-mail part sans cette section). Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
+radar sous leur prix cible, les décisions du carnet arrivées à 6 mois, les échéances du PEA (5 ans dans les 3 mois ou
+atteints ce mois-ci, plafond utilisé à 80 % ou plus), et la solidité de la rente (part solide, part à surveiller, rente l'année d'une crise comme 2020, rente prudente dans 10 ans : voir l'étude des dividendes ; si les historiques sont indisponibles, l'e-mail part sans cette section). Si trop de cours manquent, l'envoi est reporté au soir suivant. Le mois envoyé est noté
 dans le portefeuille (`_resume_envoye`) pour ne jamais l'envoyer deux fois. Un bouton du Centre d'Alertes envoie un
 aperçu immédiat. Test sans envoi : `ALERTES_DRY_RUN=1 python resume_mensuel.py`.
 
@@ -211,6 +212,18 @@ secteur et de 20 % pour une ligne (repères usuels), avec ce que chaque secteur 
 (par exemple 100 % de baisses dans l'automobile et l'aéronautique en 2020, 20 % dans la santé), et les retenues à la
 source étrangères non récupérables dans un PEA.
 
+## Échéances fiscales du PEA
+
+Onglet Portefeuille, sous la jauge du plafond (toutes les offres) : chacun renseigne la **date de son premier
+versement** sur le PEA. C'est elle qui fait courir les 5 ans, pas la date de signature du contrat (article D. 221-113-3
+du Code monétaire et financier) ; Boursy propose le plus ancien achat en euros du journal, à vérifier sur un relevé.
+La carte affiche l'ancienneté, la date des 5 ans, et l'ordre de grandeur de l'impôt d'une clôture aujourd'hui : avant
+5 ans, clôture du plan et 31,4 % du gain (12,8 % d'impôt sur le revenu et 18,6 % de prélèvements sociaux, taux 2026) ;
+après, 18,6 % seulement, retraits partiels sans clôture. Gain estimé = valeur des lignes en euros (espèces comprises)
+moins les versements nets estimés de la jauge. Le résumé mensuel prévient environ 3 mois avant les 5 ans, puis le mois
+où ils sont atteints, et quand 80 % du plafond est utilisé ; le coach en tient compte (`fiscalite_pea.py`, réglage
+`_pea` du portefeuille). Règles à revoir si la loi change (taux des prélèvements sociaux en particulier).
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -219,6 +232,7 @@ source étrangères non récupérables dans un PEA.
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
+| `fiscalite_pea.py` | Échéances fiscales du PEA : date des 5 ans, plafond, impôt estimé d'un retrait (sans Streamlit) |
 | `diversification_rente.py` | Diversification de la rente : grands secteurs, pays du siège, retenues à la source, PEA (sans Streamlit) |
 | `solidite_dividendes.py` | Solidité des dividendes, alertes de rendement et projection prudente de la rente, issues de l'étude des dividendes (sans Streamlit) |
 | `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |

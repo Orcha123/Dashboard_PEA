@@ -34,6 +34,9 @@ from allocation_dca import (
 )
 from carnet_decisions import HORIZON_RELECTURE_MOIS, TYPES_DECISION, decisions_arrivees_a_echeance, lire_carnet
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour
+from fiscalite_pea import (
+    PLAFOND_PEA, TAUX_IMPOT_REVENU, TAUX_PRELEVEMENTS_SOCIAUX, date_fr, etat_pea, rappel_du_mois, versements_nets_estimes,
+)
 from solidite_dividendes import (
     TAUX_MESURES, analyser_catalogue, annee_de_reference, bilan_rente, caracteristiques, categorie_projection,
     rendement_median_solides, statut,
@@ -145,6 +148,15 @@ def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date
         lignes_rente = [(l["nom"], l["qte_detenue"] * l["div_eur"], categorie_de(str(fiches[l["nom"]].get("symbole", "")).strip()))
                         for l in detenues if l["div_eur"] > 0]
         solidite_rente = bilan_rente(lignes_rente, rendement_achats=rendement_achats, apport_annuel=12.0 * float(budget))
+    # Échéances du PEA : 5 ans à partir du premier versement, plafond (versements nets estimés comme dans l'onglet
+    # Portefeuille : coût des lignes en euros et espèces, moins plus-values actées dans le PEA et dividendes encaissés)
+    cout_pea = especes + sum(
+        float(position.get("qte") or 0) * float(position.get("pru") or 0)
+        for nom, position in portefeuille.items()
+        if not est_cle_technique(nom) and isinstance(position, dict) and nom in fiches and fiches[nom].get("devise") != "USD"
+    )
+    etat = etat_pea(portefeuille, aujourd_hui or date.today(),
+                    versements_nets_estimes(cout_pea, portefeuille.get("_historique_ventes"), portefeuille.get("_div_encaisses_cumul")))
     return {
         "date_achat": date_achat,
         "budget": float(budget),
@@ -159,6 +171,9 @@ def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date
         # Décisions du carnet dont les 6 mois sont tombés depuis environ un mois, sans leçon écrite
         "decisions_a_relire": decisions_arrivees_a_echeance(lire_carnet(portefeuille), aujourd_hui or date.today()),
         "solidite_rente": solidite_rente,
+        "echeance_pea": rappel_du_mois(etat, aujourd_hui or date.today()),
+        "plafond_pea": ({"versements": etat["versements"], "part": etat["part_plafond"], "reste": etat["reste_versable"]}
+                        if etat["plafond_proche"] else None),
     }
 
 
@@ -257,6 +272,25 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
             f"mensuel de {_fr(solidite['apport_annuel'] / 12.0, 0)} € et les dividendes réinvestis : environ "
             f"<b>{_fr(solidite['rente_prudente_horizon'], 0)} € par an</b>.</p>"
         )
+    pea_html = ""
+    echeance, plafond = resume.get("echeance_pea"), resume.get("plafond_pea")
+    taux_avant = _fr((TAUX_IMPOT_REVENU + TAUX_PRELEVEMENTS_SOCIAUX) * 100, 1)
+    taux_apres = _fr(TAUX_PRELEVEMENTS_SOCIAUX * 100, 1)
+    if echeance and echeance["type"] == "bientot":
+        pea_html += (f"<p>Votre PEA aura <b>5 ans le {date_fr(echeance['date_5_ans'])}</b> (dans {echeance['jours']} jours). "
+                     f"Jusque-là, un retrait clôturerait le plan et le gain serait imposé à {taux_avant} % ; ensuite, les "
+                     f"retraits partiels ne clôtureront plus le plan et seuls {taux_apres} % de prélèvements sociaux "
+                     "resteront dus sur le gain retiré.</p>")
+    elif echeance:
+        pea_html += (f"<p>🎉 Votre PEA a <b>5 ans depuis le {date_fr(echeance['date_5_ans'])}</b> : les retraits partiels ne "
+                     "clôturent plus le plan, les versements restent possibles, et le gain retiré est exonéré d'impôt sur "
+                     f"le revenu ({taux_apres} % de prélèvements sociaux seulement).</p>")
+    if plafond:
+        pea_html += (f"<p>Plafond : environ <b>{_fr(plafond['versements'], 0)} €</b> versés sur {_fr(PLAFOND_PEA, 0)} € "
+                     f"({_fr(plafond['part'] * 100, 0)} %), soit {_fr(plafond['reste'], 0)} € encore possibles. Prévoyez où "
+                     "iront les apports suivants.</p>")
+    if pea_html:
+        pea_html = "<h3>📅 Votre PEA</h3>" + pea_html
     bouton = (
         f"<p><a href='{html.escape(lien_app)}' style='background:#10b981; color:white; padding:10px 16px; "
         "text-decoration:none; border-radius:6px; font-weight:bold;'>Ouvrir Boursy</a></p>"
@@ -279,6 +313,7 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
         {sous_cible_html}
         {decisions_html}
         {solidite_html}
+        {pea_html}
         {bouton}
         <p style="font-size:12px; color:#6b7280;">L'achat proposé est un calcul arithmétique à partir de vos poids cibles :
         l'enveloppe va d'abord aux lignes les plus en retard sur leur cible, en actions entières, sans rien vendre. Le radar
@@ -286,7 +321,8 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
         démontrée, que les autres actions du même mois. Les dividendes du mois sont estimés à partir du calendrier habituel
         de chaque valeur. Solidité de la rente : étude des dividendes de Boursy (protocole écrit avant les calculs),
         hypothèses prudentes (pas de croissance réelle du dividende, achats futurs en dividendes solides au rendement médian
-        de la liste, crise : baisses de 2020). Information à but pédagogique, qui ne constitue pas un conseil en investissement.<br>
+        de la liste, crise : baisses de 2020). PEA : règles fiscales en vigueur en 2026, versements estimés à partir de
+        vos lignes. Information à but pédagogique, qui ne constitue pas un conseil en investissement.<br>
         Vous recevez cet e-mail car le résumé mensuel est activé dans le Centre d'Alertes de Boursy ; vous pouvez le
         désactiver au même endroit.</p>
     </body></html>
