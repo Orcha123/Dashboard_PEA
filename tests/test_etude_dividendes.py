@@ -177,6 +177,13 @@ def test_evolution_du_revenu_par_categorie():
     assert D.evolution_revenu_par_categorie(obs, {"X": serie}, horizons=(1,))["solide"][1]["departs"][2020] == (3.0, 5)
 
 
+def test_baisses_par_groupe():
+    series = {f"A{k}": _serie({a: (0.5 if (a == 2020 and k < 3) else 1.0) for a in range(1995, 2026)}) for k in range(6)}
+    groupes = {f"A{k}": ("banques" if k < 4 else "santé") for k in range(6)}
+    crises = D.baisses_par_groupe(series, groupes, (2019, 2020))
+    assert crises[2020] == {"banques": (4, 3), "santé": (2, 0)} and crises[2019] == {"banques": (4, 0), "santé": (2, 0)}
+
+
 def test_taux_de_baisse_par_annee():
     series = {f"A{k}": _serie({a: (0.5 if (a == 2020 and k < 4) else 1.0) for a in range(1995, 2026)}) for k in range(10)}
     taux = D.taux_de_baisse_par_annee(series, 2000)
@@ -231,7 +238,7 @@ def test_rapport_complet_sur_donnees_simulees(monkeypatch, tmp_path):
                   "## Mesures complémentaires", "## Verdict selon les critères pré-enregistrés",
                   "**Ce que le protocole prévoit pour Boursy**"):
         assert titre in rapport, titre
-    assert "| 2020 |" in rapport and "| S Solide" in rapport and "## Contrôle exploratoire" in rapport and "## Pour la projection de rente" in rapport
+    assert "| 2020 |" in rapport and "| S Solide" in rapport and "## Contrôle exploratoire" in rapport and "## Pour la projection de rente" in rapport and "les crises par grand secteur" in rapport
 
 
 if __name__ == "__main__":
