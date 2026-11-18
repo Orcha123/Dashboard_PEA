@@ -187,6 +187,10 @@ ce qui va bien, critiques chiffrées, principes issus des études de Boursy et p
 trimestre, cette année, en continu), chaque action reliée à l'outil de Boursy qui la réalise. L'audit « 🧭 0 » confie
 le même dossier et ce diagnostic à Gemini, avec une structure imposée et l'interdiction d'inventer un chiffre ou de
 recommander l'achat ou la vente d'un titre précis (Boursy n'est pas conseiller en investissements financiers).
+Sous la synthèse, quatre « repères pour votre rente » cohérents avec les études (dividende solide au meilleur
+rendement du catalogue, rendements élevés à surveiller dans le radar, secteur absent de la rente le plus résistant en
+2020, achat du mois) ; les notes de convergence et le classement technique sont rangés dans un volet replié
+« Indicateurs techniques (non prédictifs) », sans simulation de PRU ni niveau technique de référence.
 
 **Coach IA** (onglet 4) : l'audit « 💵 5. Ma rente » reprend la solidité, la diversification, la rente en cas de crise
 et la projection prudente (mêmes calculs que les onglets Radar et Calendrier), le stress-test (audit 4) utilise les
