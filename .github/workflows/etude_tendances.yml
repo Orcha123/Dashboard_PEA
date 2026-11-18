@@ -5,7 +5,8 @@ name: Étude des grandes tendances
 on:
   pull_request:
     paths:
-      - "etudes/**"
+      - "etudes/tendances.py"
+      - "etudes/lancer_etude_tendances.py"
       - ".github/workflows/etude_tendances.yml"
   workflow_dispatch:
 

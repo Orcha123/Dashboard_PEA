@@ -1,0 +1,27 @@
+name: Étude des dividendes
+
+# Calcule l'étude pré-enregistrée (etudes/protocole_dividendes.md) sur les vraies données de Yahoo Finance.
+# Le rapport s'affiche dans le résumé de la tâche et dans son journal. Aucun secret n'est utilisé.
+on:
+  pull_request:
+    paths:
+      - "etudes/dividendes.py"
+      - "etudes/lancer_etude_dividendes.py"
+      - "etudes/lancer_etude_tendances.py"
+      - ".github/workflows/etude_dividendes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  etude:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Calculer l'étude et écrire le rapport
+        run: python -m etudes.lancer_etude_dividendes
