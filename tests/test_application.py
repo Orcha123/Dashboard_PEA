@@ -268,3 +268,14 @@ def test_coach_ia_achat_du_mois(monkeypatch):
     verifier_sans_erreur(application)
     assert "Achat DCA du Mois" in application.session_state["reponse_ia_coach"]
     assert application.session_state["quota_ia_utilise"] == 1
+
+
+def test_plafond_pea_identique_dans_le_portefeuille_et_le_super_pack(monkeypatch):
+    """Le Super-Pack reprend les versements nets PEA calculés par l'onglet Portefeuille (même marge restante)."""
+    import re
+    application = lancer("pro", monkeypatch)
+    contenu = textes(application)
+    marge_portefeuille = re.search(r"Marge de versement restante : <b>([^<]+) €</b>", contenu)
+    marge_super_pack = re.search(r"Reste à verser sur PEA : <b>([^<]+) €</b>", contenu)
+    assert marge_portefeuille and marge_super_pack
+    assert marge_portefeuille.group(1) == marge_super_pack.group(1)
