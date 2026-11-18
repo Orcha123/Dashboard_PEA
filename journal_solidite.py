@@ -21,11 +21,11 @@ MOIS_ENREGISTREMENT = (1, 2, 3)
 
 
 def lire_historique(symbole):
-    """Historique sur 10 ans (dividendes compris), séances closes uniquement ; None si indisponible."""
-    from donnees_marche import historique_dix_ans
+    """Clôtures mensuelles et dividendes sur 11 ans (mois en cours exclu) ; None si indisponible."""
+    from donnees_marche import historique_mensuel_dividendes
 
     try:
-        return historique_dix_ans(symbole, seances_closes_seulement=True, timeout=20)
+        return historique_mensuel_dividendes(symbole, timeout=20)
     except Exception:
         return None
 

@@ -10,11 +10,12 @@ Règles communes, couvertes par tests/test_donnees_marche.py :
   un plus haut ou un plus bas manquant est remplacé par la clôture du jour.
 """
 import bisect
+import calendar
 import json
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 ENTETES_YAHOO = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -140,6 +141,48 @@ def historique_dix_ans(symbole, seances_closes_seulement=False, aujourd_hui=None
         except Exception:
             continue
     raise RuntimeError(f"Historique indisponible : {symbole}")
+
+
+def clotures_par_mois(resultat, mois_en_cours):
+    """
+    {« AAAA-MM » : dernière clôture du mois} d'une réponse Yahoo (points mensuels ou quotidiens), mois en cours exclu.
+    Horodatages ramenés à l'heure de la place (+6 heures de marge : un point mensuel daté du 1er à minuit, heure
+    d'hiver ou d'été, reste dans son mois ; un point quotidien reste dans sa journée).
+    """
+    decalage = int((resultat.get("meta") or {}).get("gmtoffset") or 0) + 6 * 3600
+    clotures = ((resultat.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+    par_mois = {}
+    for horodatage, cloture in sorted(zip(resultat.get("timestamp") or [], clotures)):
+        if cloture is None or float(cloture) <= 0:
+            continue
+        mois = datetime.fromtimestamp(int(horodatage) + decalage, tz=timezone.utc).strftime("%Y-%m")
+        if mois < mois_en_cours:
+            par_mois[mois] = float(cloture)
+    return par_mois
+
+
+def historique_mensuel_dividendes(symbole, annees=11, aujourd_hui=None, timeout=10):
+    """
+    (dates, clôtures, dividendes [(date ISO, montant)], clôtures, clôtures) au format de historique_dix_ans, mais avec
+    une seule clôture par mois (la dernière, mois en cours exclu) sur `annees` ans : environ 20 fois plus léger que
+    l'historique quotidien, et tout ce qu'il faut pour la solidité des dividendes. Lève RuntimeError si indisponible.
+    """
+    maintenant = int(time.time())
+    periode = (maintenant - int(annees * 365.25 * 86400), maintenant)
+    mois_en_cours = (aujourd_hui or datetime.now().date()).strftime("%Y-%m")
+    for serveur in SERVEURS_YAHOO:
+        try:
+            resultat = lire_chart(serveur, symbole, None, evenements_dividendes=True, timeout=timeout, intervalle="1mo",
+                                  periode=periode)
+            par_mois = clotures_par_mois(resultat, mois_en_cours)
+            if par_mois:
+                mois = sorted(par_mois)
+                dates = [f"{m}-{calendar.monthrange(int(m[:4]), int(m[5:7]))[1]:02d}" for m in mois]
+                clotures = [par_mois[m] for m in mois]
+                return dates, clotures, dividendes_du_resultat(resultat), clotures, clotures
+        except Exception:
+            continue
+    raise RuntimeError(f"Historique mensuel indisponible : {symbole}")
 
 
 def dernier_cours(symbole, timeout=8):

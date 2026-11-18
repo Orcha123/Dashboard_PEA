@@ -299,11 +299,11 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
 # TÂCHE DU SOIR
 # ==============================================================================
 def lire_historique_solidite(symbole):
-    """Historique sur 10 ans (dividendes compris) pour la solidité de la rente ; None si indisponible."""
-    from donnees_marche import historique_dix_ans
+    """Clôtures mensuelles et dividendes sur 11 ans pour la solidité de la rente ; None si indisponible."""
+    from donnees_marche import historique_mensuel_dividendes
 
     try:
-        return historique_dix_ans(symbole, seances_closes_seulement=True, timeout=20)
+        return historique_mensuel_dividendes(symbole, timeout=20)
     except Exception:
         return None
 

@@ -155,3 +155,38 @@ def test_cours_a_la_date_et_rendement_annualise():
     assert abs(deux_versements) < 1e-6  # rien gagné, rien perdu
     assert D.taux_rendement_interne([("2025-01-01", -1000.0)]) is None
     assert D.taux_rendement_interne([]) is None
+
+
+def test_historique_mensuel_des_dividendes(monkeypatch):
+    import calendar as cal
+    from datetime import date
+
+    import donnees_marche as M
+
+    def point(annee, mois):  # point mensuel daté du 1er à minuit, heure de Paris (la veille en UTC)
+        return cal.timegm((annee, mois, 1, 0, 0, 0)) - 3600
+
+    reponse = {
+        "meta": {"gmtoffset": 3600},
+        "timestamp": [point(2025, 11), point(2025, 12), point(2026, 1)],
+        "indicators": {"quote": [{"close": [10.0, 11.0, 12.0]}]},
+        "events": {"dividends": {"1": {"date": cal.timegm((2025, 12, 10, 8, 0, 0)), "amount": 0.5}}},
+    }
+    demandes = []
+
+    def lire(serveur, symbole, plage, evenements_dividendes=False, timeout=6, intervalle="1d", periode=None):
+        demandes.append((intervalle, evenements_dividendes, plage, periode[1] - periode[0]))
+        return reponse
+
+    monkeypatch.setattr(M, "lire_chart", lire)
+    dates, clotures, dividendes, _hauts, _bas = M.historique_mensuel_dividendes("X.PA", aujourd_hui=date(2026, 1, 20))
+    assert dates == ["2025-11-30", "2025-12-31"] and clotures == [10.0, 11.0]  # janvier 2026 : mois en cours, exclu
+    assert dividendes == [("2025-12-10", 0.5)]
+    assert demandes[0][:3] == ("1mo", True, None) and demandes[0][3] > 10 * 365 * 86400  # dates explicites, 11 ans
+
+    monkeypatch.setattr(M, "lire_chart", lambda *a, **k: {"timestamp": [], "indicators": {"quote": [{"close": []}]}})
+    try:
+        M.historique_mensuel_dividendes("X.PA")
+        assert False, "RuntimeError attendue"
+    except RuntimeError:
+        pass
