@@ -93,13 +93,14 @@ def couverte_depuis(serie, mois):
 # ==============================================================================
 # CANDIDATS (au 31 décembre de l'année de décision)
 # ==============================================================================
-def caracteristiques(serie, annee):
+def caracteristiques(serie, annee, derniere_annee=DERNIERE_ANNEE):
     """
     Valeurs des candidats R, G, H, Q pour une action retenue l'année de décision, None si elle n'est pas retenue
     (historique insuffisant, pas de dividende cette année-là, ou année non terminée).
     S dépend du classement de H parmi les actions de l'année : il est calculé dans observations_dividendes.
+    derniere_annee : dernière année civile complète (2025 pour l'étude ; Boursy passe l'année écoulée).
     """
-    if annee > DERNIERE_ANNEE or not couverte_depuis(serie, f"{annee - ANNEES_HISTORIQUE}-01"):
+    if annee > derniere_annee or not couverte_depuis(serie, f"{annee - ANNEES_HISTORIQUE}-01"):
         return None
     cloture = cloture_fin_annee(serie, annee)
     d = {a: dividende(serie, a) for a in range(annee - ANNEES_HISTORIQUE, annee + 1)}

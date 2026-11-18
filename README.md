@@ -165,6 +165,13 @@ celles de l'étude (`solidite_dividendes.py` réutilise `etudes/dividendes.py`),
 comme dans l'étude. Le premier calcul du jour lit l'historique de tout le catalogue (une vingtaine de secondes, sur
 demande) ; il s'affiche ensuite d'emblée pour tous les utilisateurs.
 
+**Suivi en conditions réelles** (protocole : `etudes/protocole_suivi_dividendes.md`) : chaque mois de janvier (nouvel
+essai chaque soir jusqu'à fin mars), la tâche du soir (`journal_solidite.py`) enregistre le classement de tout le
+catalogue au 31 décembre, avant de connaître la suite, dans la table protégée `suivi_solidite` ; les actions suivies
+le restent même si elles quittent le catalogue, ce qui supprime le biais du survivant de l'étude. Le volet
+« Solidité des dividendes » affiche les baisses mesurées à 1 et 3 ans par catégorie. Premier classement : janvier 2027.
+À créer une fois dans *SQL Editor* avec `supabase/suivi_solidite.sql` (seule la clé `service_role` peut lire et écrire).
+
 **Projection prudente de la rente** (onglet Calendrier, Premium et Pro) : ce que la rente du portefeuille pourrait
 devenir dans 1 à 20 ans, en euros d'aujourd'hui, avec des hypothèses prudentes tirées de l'étude : pas de croissance
 réelle du dividende pour les lignes solides et neutres, l'écart mesuré pour les lignes à surveiller, les apports
@@ -203,6 +210,7 @@ source étrangères non récupérables dans un PEA.
 | `donnees_marche.py` | Lecture de Yahoo Finance (cours, historiques, change, indices, dividendes, recherche), heures de marché, rendement annualisé (sans Streamlit) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
+| `journal_solidite.py` | Tâche du soir : classement annuel des dividendes (suivi en conditions réelles, janvier) |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
 | `etudes/` | Études pré-enregistrées (grandes tendances, dividendes) : protocoles, calculs, lanceurs sur données réelles, résultats |
 | `tests/` | Tests automatiques (voir ci-dessous) |

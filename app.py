@@ -1003,6 +1003,22 @@ def lire_signaux_mensuels():
         debut += 1000
 
 
+@st.cache_data(ttl=3600)
+def lire_suivi_solidite():
+    """Toutes les lignes du suivi de la solidité des dividendes (table suivi_solidite) ; erreur si illisible."""
+    client_serveur = init_supabase_serveur()
+    if client_serveur is None:
+        raise RuntimeError("Clé de service absente")
+    lignes, debut = [], 0
+    while True:
+        lot = (client_serveur.table("suivi_solidite").select("*").order("annee").order("symbole")
+               .range(debut, debut + 999).execute().data or [])
+        lignes.extend(lot)
+        if len(lot) < 1000:
+            return lignes
+        debut += 1000
+
+
 @st.cache_data(ttl=1800)
 def inspecter_dividende_yahoo_live(symbole):
     """Cours, devise réelle, dividende annuel et mois de versement lus sur Yahoo (voir donnees_marche.inspecter_dividende)."""
@@ -1681,6 +1697,7 @@ with onglet_radar:
         historique_long=historique_long,
         libelle_allocation_dca=libelle_allocation_dca,
         lire_signaux_mensuels=lire_signaux_mensuels,
+        lire_suivi_solidite=lire_suivi_solidite,
         mode_gratuit=mode_gratuit,
         montant_investi_dca=montant_investi_dca,
         montant_tot_div_dca=montant_tot_div_dca,
