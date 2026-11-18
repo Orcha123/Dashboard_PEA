@@ -23,6 +23,8 @@ import paiements_stripe
 import comptes
 import courriels
 import donnees_marche
+import habillage
+import pages_legales
 # Après une mise à jour du dépôt, Streamlit Cloud relance app.py sans toujours recharger les modules locaux déjà
 # chargés : un app.py récent avec un ancien moteur_signaux provoquait une ImportError jusqu'au redémarrage.
 # Les recharger à chaque exécution (quelques millisecondes) garantit qu'ils sont de la même version que app.py.
@@ -35,11 +37,15 @@ importlib.reload(paiements_stripe)
 importlib.reload(comptes)
 importlib.reload(courriels)
 importlib.reload(donnees_marche)
+importlib.reload(habillage)
+importlib.reload(pages_legales)
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour  # catalogue partagé avec la tâche planifiée
 from allocation_dca import calculer_achat_du_mois, normaliser_poids, preparer_lignes_dca, statut_achat  # DCA guidé par l'allocation cible
 from paiements_stripe import creer_session_portail, ids_prix, verifier_abonnement  # abonnements Stripe (testés)
 from comptes import decider_niveau  # comptes et abonnement protégé (testés)
 from courriels import ADRESSE_APPLICATION, composer_email_alertes_radar, envoyer_smtp  # envoi des e-mails
+from habillage import afficher_html, appliquer_habillage, markdown_fr, nombres_fr  # styles et format français
+from pages_legales import afficher_pages_legales  # AMF, CGV, rétractation, mentions légales, confidentialité
 from donnees_marche import (  # Yahoo Finance, heures de marché, calculs sur les historiques (testés)
     RAFRAICHISSEMENT_SEANCE_SECONDES,
     clotures_trois_mois,
@@ -134,136 +140,10 @@ def est_compte_admin(user):
     - Sinon, repli sur l'adresse e-mail du compte connecté (secret ADMIN_EMAIL). Règle dans comptes.py.
     """
     return comptes.est_compte_admin(user, _lire_secret("ADMIN_USER_ID"), ADMIN_EMAIL)
-_MOTIF_NOMBRE_FR = re.compile(r"(?<![\w.,/])(?<!IA )(?<!Boursy )(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+)(?!\w|[.,/]\d)")
 
 
-def nombres_fr(texte):
-    """
-    Met les nombres d'un texte au format français : 11,709.45 -> 11 709,45 (espace insécable et virgule décimale).
-    Seul le texte affiché est touché : les balises HTML, leurs attributs et les blocs <style>/<script> restent intacts.
-    """
-    if not isinstance(texte, str) or not texte:
-        return texte
-    morceaux = re.split(r"(<[^>]+>)", texte)
-    hors_texte = False
-    for i_m, morceau in enumerate(morceaux):
-        if morceau.startswith("<"):
-            debut_balise = morceau[1:8].lower()
-            if debut_balise.startswith(("style", "script")):
-                hors_texte = True
-            elif debut_balise.startswith(("/style", "/script")):
-                hors_texte = False
-        elif not hors_texte:
-            morceaux[i_m] = _MOTIF_NOMBRE_FR.sub(lambda m: m.group(1).replace(",", "\u00a0").replace(".", ","), morceau)
-    return "".join(morceaux)
-
-
-def markdown_fr(texte, **options):
-    """st.markdown avec les nombres au format français."""
-    st.markdown(nombres_fr(texte), **options)
-
-
-def afficher_html(html_brut):
-    """Supprime les indentations pour empêcher Streamlit d'afficher le HTML en bloc de code."""
-    html_propre = "\n".join(ligne.strip() for ligne in html_brut.splitlines() if ligne.strip())
-    # Chaque tableau est placé dans un cadre défilant : lisible sur mobile sans élargir toute la page
-    html_propre = re.sub(r"<table\s+class=(['\"])r-table\1", r'<div class="r-wrap"><table class="r-table"', html_propre)
-    html_propre = html_propre.replace("</table>", "</table></div>")
-    st.markdown(nombres_fr(html_propre), unsafe_allow_html=True)
-
-STYLE_ARGON = """
-<style>
-[data-testid="stToolbarActions"], .stAppDeployButton { display: none !important; }
-.argon-grid { display: flex; gap: 15px; margin: 10px 0 22px 0; flex-wrap: wrap; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; }
-.argon-card { flex: 1; min-width: 200px; background: linear-gradient(145deg, rgba(128,128,128,0.06) 0%, rgba(128,128,128,0.02) 100%); border: 1px solid rgba(128,128,128,0.22); border-radius: 14px; padding: 16px 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.04); text-align: center; }
-.argon-title { font-size: 0.76em; text-transform: uppercase; letter-spacing: 0.8px; opacity: 0.75; margin-bottom: 6px; font-weight: 800; }
-.argon-val { font-size: 1.55em; font-weight: 900; margin-bottom: 5px; }
-.argon-sub { font-size: 0.83em; font-weight: 600; opacity: 0.88; }
-.meteo-bar { display: flex; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; font-family: 'Segoe UI', sans-serif; }
-.meteo-item { flex: 1; min-width: 180px; background: rgba(128,128,128,0.04); border-left: 4px solid #3498db; border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(128,128,128,0.12); border-right: 1px solid rgba(128,128,128,0.12); border-bottom: 1px solid rgba(128,128,128,0.12); }
-.r-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin-bottom: 22px; font-size: 0.92em; }
-.r-table th { border-bottom: 2px solid rgba(128,128,128,0.3); padding: 12px 8px; text-align: center; font-weight: 800; text-transform: uppercase; font-size: 0.79em; letter-spacing: 0.5px; background-color: rgba(128,128,128,0.06); }
-.r-table td { border-bottom: 1px solid rgba(128,128,128,0.14); padding: 11px 8px; text-align: center; vertical-align: middle; }
-.r-name { font-weight: 800; font-size: 1.01em; text-align: left !important; }
-.b-green { background: rgba(46,204,113,0.18); color: #2ecc71; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.b-blue { background: rgba(52,152,219,0.18); color: #3498db; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.b-yellow { background: rgba(241,196,15,0.18); color: #f39c12; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.b-orange { background: rgba(230,126,34,0.18); color: #e67e22; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.b-red { background: rgba(231,76,60,0.18); color: #e74c3c; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.b-purple { background: rgba(155,89,182,0.18); color: #9b59b6; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.b-neutral { background: rgba(128,128,128,0.15); opacity: 0.9; padding: 4px 9px; border-radius: 6px; font-weight: 700; display: inline-block; font-size: 0.88em; }
-.score-bg { width: 100%; background: rgba(128,128,128,0.2); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 5px; }
-.cal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 15px 0 25px 0; font-family: 'Segoe UI', sans-serif; }
-.cal-card { background: rgba(128,128,128,0.04); border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; min-height: 125px; }
-.cal-card-active { background: linear-gradient(145deg, rgba(46,204,113,0.10) 0%, rgba(52,152,219,0.05) 100%); border: 1px solid rgba(46,204,113,0.38); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; min-height: 125px; }
-.cal-month { font-size: 0.92em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; opacity: 0.85; border-bottom: 1px solid rgba(128,128,128,0.15); padding-bottom: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-.cal-total { font-size: 1.25em; font-weight: 900; color: #2ecc71; }
-.cal-pill { display: inline-block; background: rgba(128,128,128,0.13); border-radius: 5px; padding: 3px 7px; font-size: 0.80em; font-weight: 600; margin: 2px 3px 2px 0; }
-.ia-box { background: linear-gradient(145deg, rgba(155,89,182,0.08) 0%, rgba(52,152,219,0.06) 100%); border: 1px solid rgba(155,89,182,0.32); border-radius: 14px; padding: 20px 24px; margin-top: 15px; font-family: 'Segoe UI', sans-serif; }
-.ia-flash { background: linear-gradient(135deg, rgba(46,204,113,0.10) 0%, rgba(52,152,219,0.10) 100%); border-left: 4px solid #2ecc71; border-radius: 10px; padding: 14px 18px; margin: 6px 0 20px 0; font-family: 'Segoe UI', sans-serif; font-size: 0.95em; line-height: 1.5; border-top: 1px solid rgba(128,128,128,0.15); border-right: 1px solid rgba(128,128,128,0.15); border-bottom: 1px solid rgba(128,128,128,0.15); }
-.goal-box { background: linear-gradient(145deg, rgba(46,204,113,0.07) 0%, rgba(52,152,219,0.07) 100%); border: 1px solid rgba(46,204,113,0.32); border-radius: 14px; padding: 18px 22px; margin: 8px 0 24px 0; font-family: 'Segoe UI', sans-serif; }
-.goal-bar-bg { width: 100%; background: rgba(128,128,128,0.22); height: 16px; border-radius: 10px; overflow: hidden; margin: 10px 0 14px 0; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2); }
-.goal-steps { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; margin-top: 8px; }
-.goal-step { flex: 1; min-width: 120px; border-radius: 9px; padding: 8px 10px; text-align: center; font-size: 0.84em; font-weight: 700; border: 1px solid rgba(128,128,128,0.2); background: rgba(128,128,128,0.04); }
-
-/* ===== HABILLAGE BOURSY 3.0 : fond, en-tête, cartes, tableaux défilants, onglets, mobile ===== */
-:root { --bz-vert: #10b981; --bz-bleu: #3b82f6; --bz-carte: rgba(148,163,184,0.07); --bz-bord: rgba(148,163,184,0.20); --bz-police: Inter, "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif; }
-.stApp { background-image: radial-gradient(1100px 520px at 8% -8%, rgba(16,185,129,0.11), transparent 60%), radial-gradient(900px 480px at 100% 0%, rgba(59,130,246,0.10), transparent 55%); background-attachment: fixed; }
-[data-testid="stMainBlockContainer"], .block-container { padding-top: 4.2rem; max-width: 1500px; }
-[data-testid="stSidebar"] { border-right: 1px solid var(--bz-bord); }
-.argon-grid, .meteo-bar, .r-table, .cal-grid, .ia-box, .ia-flash, .goal-box { font-family: var(--bz-police); }
-.argon-val, .cal-total, .r-table td, .meteo-item { font-variant-numeric: tabular-nums; }
-
-.bz-hero { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 18px 22px; margin: 0 0 16px 0; border-radius: 18px; border: 1px solid var(--bz-bord); background: linear-gradient(120deg, rgba(16,185,129,0.16) 0%, rgba(59,130,246,0.12) 55%, rgba(148,163,184,0.04) 100%); font-family: var(--bz-police); }
-.bz-logo { width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%); box-shadow: 0 8px 22px rgba(16,185,129,0.30); flex: 0 0 auto; }
-.bz-nom { font-size: 1.75em; font-weight: 900; letter-spacing: -0.03em; line-height: 1.1; }
-.bz-slogan { font-size: 0.92em; opacity: 0.78; font-weight: 600; margin-top: 3px; }
-.bz-hero-droite { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.bz-puce { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; font-size: 0.80em; font-weight: 700; border: 1px solid var(--bz-bord); background: rgba(148,163,184,0.08); white-space: nowrap; }
-.bz-point { width: 8px; height: 8px; border-radius: 50%; background: var(--bz-vert); box-shadow: 0 0 0 4px rgba(16,185,129,0.18); }
-
-.argon-card { border-radius: 16px; border-color: var(--bz-bord); background: linear-gradient(160deg, rgba(148,163,184,0.10) 0%, rgba(148,163,184,0.03) 100%); box-shadow: 0 6px 20px rgba(0,0,0,0.10); transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease; }
-.argon-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0,0,0,0.18); border-color: rgba(16,185,129,0.45); }
-.argon-val { letter-spacing: -0.02em; }
-.meteo-item { border-radius: 12px; background: var(--bz-carte); }
-.cal-card, .cal-card-active { border-radius: 14px; }
-
-.r-wrap { overflow-x: auto; border: 1px solid var(--bz-bord); border-radius: 14px; margin-bottom: 22px; background: rgba(148,163,184,0.04); -webkit-overflow-scrolling: touch; }
-.r-wrap .r-table { margin-bottom: 0; }
-.r-table th { white-space: normal; line-height: 1.3; }
-.r-table th { padding: 11px 6px; letter-spacing: 0.3px; }
-.r-table td { padding: 10px 6px; }
-@media (max-width: 1400px) { .r-table { font-size: 0.86em; } .r-table td { padding: 9px 5px; } .r-table th { padding: 10px 5px; } }
-.r-table tbody tr { transition: background 0.12s ease; }
-.r-table tbody tr:hover { background: rgba(148,163,184,0.09); }
-.r-table tbody tr:last-child td { border-bottom: none; }
-
-[data-testid="stTabs"] [role="tablist"] { gap: 8px; flex-wrap: wrap; row-gap: 8px; }
-[data-testid="stTabs"] [role="tab"] { border-radius: 999px; padding: 7px 15px; height: auto; border: 1px solid var(--bz-bord); background: var(--bz-carte); transition: background 0.12s ease, border-color 0.12s ease; }
-[data-testid="stTabs"] [role="tab"]:hover { border-color: rgba(16,185,129,0.50); }
-[data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: rgba(16,185,129,0.16); border-color: rgba(16,185,129,0.60); }
-[data-testid="stTabs"] [data-baseweb="tab-highlight"], [data-testid="stTabs"] [data-baseweb="tab-border"], [data-testid="stTabs"] .react-aria-SelectionIndicator, [data-testid="stTabs"] [role="tablist"]::after { display: none !important; }
-[data-testid="stTabs"] [role="tablist"] { margin-bottom: 14px; }
-.bz-5 .argon-card { min-width: 165px; }
-
-[data-testid="stExpander"] details { border-radius: 14px; border-color: var(--bz-bord); background: rgba(148,163,184,0.04); }
-.stButton > button, .stDownloadButton > button, .stLinkButton > a, .stFormSubmitButton > button { border-radius: 10px; font-weight: 600; }
-
-@media (max-width: 760px) {
-    [data-testid="stMainBlockContainer"], .block-container { padding-left: 0.9rem; padding-right: 0.9rem; padding-top: 3.8rem; }
-    .bz-hero { padding: 14px 16px; }
-    .bz-nom { font-size: 1.4em; }
-    .bz-hero-droite { margin-left: 0; }
-    .argon-grid { gap: 10px; }
-    .argon-card { min-width: 44%; padding: 13px 12px; }
-    .argon-val { font-size: 1.22em; }
-    .meteo-item { min-width: 44%; }
-    .r-wrap .r-table { min-width: 680px; font-size: 0.86em; }
-    .cal-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-}
-</style>
-"""
-afficher_html(STYLE_ARGON)
+# Habillage (habillage.css) et nombres au format français : habillage.py
+appliquer_habillage()
 
 # ==============================================================================
 # CONNEXION SUPABASE, STRIPE & EMAILS D'ALERTE
@@ -7368,117 +7248,7 @@ except Exception as e_pack:
 
 
 # ==============================================================================
-# FOOTER, MENTIONS LÉGALES, CGV, DROIT DE RÉTRACTATION & CONFORMITÉ AMF (NON-CIF)
+# PIED DE PAGE : MENTIONS LÉGALES, CGV, DROIT DE RÉTRACTATION & CONFORMITÉ AMF (NON-CIF) — textes dans pages_legales.py
 # ==============================================================================
-NOM_APP_LEGAL = "Boursy"  # Changez ici en "Nano" dès que votre nom final est choisi
 # Identité de l'éditeur (obligatoire, loi LCEN) : à renseigner dans les secrets Streamlit
-NOM_EDITEUR = _lire_secret("EDITEUR_NOM") or "Éditeur à renseigner (secret EDITEUR_NOM)"
-NUMERO_SIRET = _lire_secret("EDITEUR_SIRET") or "en cours d'immatriculation"
-ADRESSE_EDITEUR = _lire_secret("EDITEUR_ADRESSE") or "adresse à renseigner (secret EDITEUR_ADRESSE)"
-CONTACT_AFFICHE = CONTACT_EMAIL or "adresse de contact à renseigner (secret CONTACT_EMAIL)"
-
-st.markdown("---")
-with st.expander(f"⚖️ Mentions Légales, CGV, Droit de Rétractation & Avertissement AMF ({NOM_APP_LEGAL} SaaS)", expanded=False):
-    tab_leg_amf, tab_leg_cgv, tab_leg_retract, tab_leg_rgpd, tab_leg_confid = st.tabs([
-        "🛡️ 1. Avertissement AMF (Non-CIF)",
-        "💳 2. CGV & Abonnements (4,90 € / 8,90 €)",
-        "⏳ 3. Droit de Rétractation (L221-28)",
-        "🏛️ 4. Mentions Légales",
-        "🔒 5. Politique de Confidentialité",
-    ])
-
-    with tab_leg_amf:
-        afficher_html(f"""
-        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
-            <b>1. Absence de Conseil en Investissement Financier (Statut Non-CIF)</b><br>
-            La plateforme <b>{NOM_APP_LEGAL}</b> est un outil logiciel d'analyse statistique, quantitative et de suivi patrimonial à vocation strictement <b>pédagogique et informative</b>. L'éditeur n'agit en aucun cas en qualité de Conseiller en Investissements Financiers (CIF) au sens des articles L.541-1 et suivants du Code monétaire et financier, ni en tant que prestataire de services d'investissement (PSI) agréé par l'Autorité des Marchés Financiers (AMF).<br><br>
-            <b>2. Nature des indicateurs algorithmiques et de l'Intelligence Artificielle</b><br>
-            Les scores (/100), signaux techniques (RSI, Stochastique, Bandes de Bollinger, MACD, croisements EMA 2/12, ATR, canaux de régression linéaire à 3 ans), simulations d'allocation DCA et synthèses générées par le module <b>Coach IA (Google Gemini)</b> constituent des traitements mathématiques automatisés. Ils ne sauraient être interprétés comme une recommandation personnalisée d'achat, de vente ou de conservation d'instruments financiers.<br><br>
-            <b>3. Responsabilité de l'utilisateur et exactitude des flux de marché</b><br>
-            Les cotations, historiques de cours, taux de change (EUR/USD) et calendriers de dividendes proviennent de flux tiers publics (notamment Yahoo Finance) fournis « en l'état », pouvant comporter des délais ou des imprécisions. L'investissement en bourse (PEA / CTO) comporte un <b>risque de perte en capital</b>. L'utilisateur demeure seul maître et responsable de ses décisions d'investissement auprès de son établissement bancaire ou courtier. Les performances passées ne préjugent pas des performances futures.
-        </div>
-        """)
-
-    with tab_leg_cgv:
-        afficher_html(f"""
-        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
-            <b>Article 1 — Objet et Architecture des Offres</b><br>
-            Les présentes Conditions Générales de Vente (CGV) régissent la souscription aux services numériques de la plateforme <b>{NOM_APP_LEGAL}</b>, déclinés en trois formules :<br>
-            • <b>🌱 Forfait Gratuit (0,00 € / mois) :</b> Accès découverte limité à 2 valeurs dans le radar/portefeuille et 1 crédit d'audit IA par jour.<br>
-            • <b>⚡ Forfait Premium (4,90 € TTC / mois) :</b> Accès au catalogue complet (+100 valeurs PEA/US & recherche Yahoo Live), Tableaux 1 à 4 débloqués, gestion de portefeuille illimitée, export CSV, simulateur PRU, guichet d'encaissement espèces et 3 crédits d'audit IA par jour.<br>
-            • <b>👑 Forfait Pro Max (8,90 € TTC / mois) :</b> Accès intégral incluant les fonctionnalités Premium ainsi que le Journal des Arbitrages & Calendrier 12 mois des Plus-Values Actées, la Station Graphique Interactive 360° (Quant & TradingView), l'Import Magique IA par capture d'écran, le Duel de performance vs ETF, le Radar de détachements à 90 jours, les alertes par email et 15 crédits d'audit IA par jour.<br><br>
-            <b>Article 2 — Paiement Sécurisé et Facturation</b><br>
-            Les règlements sont opérés par carte bancaire via notre prestataire certifié PCI-DSS <b>Stripe</b>. Aucune coordonnée bancaire n'est stockée sur les serveurs de {NOM_APP_LEGAL}. Le prix est exigible comptant à la souscription, puis renouvelé par tacite reconduction mensuelle à la date anniversaire.<br><br>
-            <b>Article 3 — Absence d'Engagement et Résiliation en 1 Clic</b><br>
-            Les abonnements <b>Premium</b> et <b>Pro Max</b> sont <b>sans aucun engagement de durée</b>. L'abonné peut résilier ou modifier sa formule à tout moment en un clic depuis le menu latéral gauche via le bouton <b>« ⚙️ Gérer mon abonnement / Factures »</b> (Portail Client officiel Stripe). Toute résiliation prend effet à l'issue de la période mensuelle en cours : l'utilisateur conserve l'intégralité de ses accès payants jusqu'au dernier jour de la période facturée, puis son compte repasse automatiquement en Forfait Gratuit sans perte de ses données enregistrées.
-        </div>
-        """)
-
-    with tab_leg_retract:
-        afficher_html("""
-        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
-            <b>Renoncement exprès au droit de rétractation (Article L221-28 13° du Code de la consommation)</b><br>
-            Conformément aux dispositions de l'article L221-28 13° du Code de la consommation français, le droit de rétractation de quatorze (14) jours ne peut être exercé pour les contrats de fourniture d'un contenu numérique non fourni sur un support matériel dont l'exécution a commencé après accord préalable exprès du consommateur et renoncement exprès à son droit de rétractation.<br><br>
-            En validant son paiement sur l'interface Stripe et en accédant instantanément aux fonctionnalités débloquées des offres <b>Premium (4,90 €/mois)</b> ou <b>Pro Max (8,90 €/mois)</b>, le Client :
-            <ul style="margin:6px 0 8px 18px;">
-                <li>Demande expressément l'activation immédiate de son abonnement numérique avant l'expiration du délai légal de rétractation ;</li>
-                <li>Reconnaît qu'il renonce expressément à son droit de rétractation pour la période mensuelle entamée.</li>
-            </ul>
-            En conséquence, aucun remboursement prorata temporis ne sera effectué pour le mois en cours en cas d'annulation, l'accès aux outils Pro/Premium demeurant pleinement actif jusqu'à l'échéance mensuelle.
-        </div>
-        """)
-
-    with tab_leg_rgpd:
-        afficher_html(f"""
-        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
-            <b>1. Éditeur et Hébergement (Loi LCEN)</b><br>
-            • <b>Éditeur du service :</b> {NOM_EDITEUR} — SIRET : {NUMERO_SIRET} — {ADRESSE_EDITEUR}<br>
-            • <b>Contact & Support Client :</b> <a href="mailto:{CONTACT_AFFICHE}">{CONTACT_AFFICHE}</a><br>
-            • <b>Hébergement de l'application :</b> Streamlit Cloud / Snowflake Inc. (San Mateo, Californie, USA)<br>
-            • <b>Hébergement de la base de données chiffrée :</b> Supabase Inc. (Infrastructure Cloud sécurisée avec protocole Row Level Security)<br><br>
-            <b>2. Données personnelles</b><br>
-            Le traitement de vos données personnelles est décrit dans l'onglet <b>🔒 5. Politique de Confidentialité</b>.
-        </div>
-        """)
-
-    with tab_leg_confid:
-        afficher_html(f"""
-        <div style="font-size:0.86em; line-height:1.6; opacity:0.92;">
-            <b>1. Responsable du traitement</b><br>
-            {NOM_EDITEUR} — {ADRESSE_EDITEUR} — contact : <a href="mailto:{CONTACT_AFFICHE}">{CONTACT_AFFICHE}</a>.<br><br>
-            <b>2. Données collectées</b><br>
-            • Votre adresse e-mail et votre mot de passe (conservé sous forme chiffrée par Supabase, jamais lisible par l'éditeur).<br>
-            • Les données que vous saisissez : actions suivies, quantités, prix de revient, prix cibles, budget, ventes, dividendes encaissés, préférences d'alertes.<br>
-            • Votre niveau d'abonnement et votre identifiant client Stripe. Vos coordonnées bancaires sont traitées par Stripe uniquement et ne nous sont jamais transmises.<br>
-            • Les questions posées au coach IA, transmises avec un résumé de votre portefeuille au moment de l'analyse, ainsi que les captures d'écran et textes que vous soumettez aux imports par IA.<br>
-            • Des données techniques de connexion (adresse IP, navigateur), traitées par nos hébergeurs pour faire fonctionner le service.<br><br>
-            <b>3. Finalités et base légale</b><br>
-            Ces données servent uniquement à fournir le service que vous avez demandé (suivi de portefeuille, alertes, analyses, gestion de l'abonnement) : la base légale est l'exécution du contrat. Elles ne sont ni vendues, ni louées, ni utilisées à des fins publicitaires.<br><br>
-            <b>4. Durée de conservation</b><br>
-            Tant que votre compte existe. À sa suppression, vos données de portefeuille, votre historique et votre compte sont effacés immédiatement. Les justificatifs de paiement sont conservés par Stripe et par l'éditeur pendant la durée exigée par les obligations comptables.<br><br>
-            <b>5. Destinataires (sous-traitants)</b><br>
-            • <b>Supabase</b> : comptes utilisateurs et base de données.<br>
-            • <b>Streamlit Cloud (Snowflake Inc., États-Unis)</b> : hébergement de l'application.<br>
-            • <b>Stripe</b> : paiement et gestion des abonnements.<br>
-            • <b>Google</b> : API Gemini (analyses du coach IA, à votre demande) et Gmail (envoi des e-mails).<br>
-            • <b>GitHub (Microsoft)</b> : exécution de la tâche quotidienne d'envoi des alertes.<br>
-            Les cours de bourse sont obtenus auprès de Yahoo Finance : seuls les symboles des actions lui sont transmis, jamais vos données personnelles.<br><br>
-            <b>6. Transferts hors de l'Union européenne</b><br>
-            Certains de ces prestataires sont situés aux États-Unis. Ces transferts s'appuient sur les garanties prévues par le RGPD (décision d'adéquation du Data Privacy Framework ou clauses contractuelles types de la Commission européenne, selon le prestataire).<br><br>
-            <b>7. Vos droits</b><br>
-            Vous disposez d'un droit d'accès, de rectification, d'effacement, de limitation, d'opposition et de portabilité. Vous pouvez :<br>
-            • exporter vos données avec le bouton <b>📥 Export CSV</b> ;<br>
-            • supprimer vous-même votre compte et toutes vos données dans <b>⚙️ Mon compte</b> (menu de gauche, une fois connecté) ;<br>
-            • pour toute autre demande, écrire à <a href="mailto:{CONTACT_AFFICHE}">{CONTACT_AFFICHE}</a>.<br>
-            Si vous estimez que vos droits ne sont pas respectés, vous pouvez adresser une réclamation à la <b>CNIL</b> (www.cnil.fr).<br><br>
-            <b>8. Cookies</b><br>
-            Boursy n'utilise aucun cookie publicitaire ni de mesure d'audience. Seuls les cookies techniques nécessaires au fonctionnement de l'application et de la connexion sont utilisés.
-        </div>
-        """)
-
-afficher_html(
-    f"<div style='text-align: center; font-size: 0.80em; opacity: 0.72; padding: 6px 0 14px 0;'>"
-    f"⚖️ <b>{NOM_APP_LEGAL} SaaS</b> — Suite Boursière PEA, US & Dividendes | "
-    f"Outil d'analyse statistique et pédagogique (Non-CIF) • Paiements sécurisés par Stripe • Contact : {CONTACT_AFFICHE}"
-    f"</div>"
-)
+afficher_pages_legales(_lire_secret("EDITEUR_NOM"), _lire_secret("EDITEUR_SIRET"), _lire_secret("EDITEUR_ADRESSE"), CONTACT_EMAIL)

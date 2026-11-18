@@ -144,6 +144,8 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |
 | `comptes.py` | Compte administrateur, table protégée `abonnements`, niveau retenu, suppression du compte (sans Streamlit) |
 | `courriels.py` | Composition et envoi des e-mails (SMTP), partagé par l'application et les tâches du soir |
+| `habillage.css`, `habillage.py` | Feuille de style ; nombres au format français et affichage du HTML |
+| `pages_legales.py` | Avertissement AMF, CGV, rétractation, mentions légales (LCEN), confidentialité (RGPD) |
 | `donnees_marche.py` | Lecture de Yahoo Finance (cours, historiques, change, indices, dividendes, recherche), heures de marché, rendement annualisé (sans Streamlit) |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
@@ -166,7 +168,7 @@ python -m pytest tests
   Il vérifie aussi qu'un compte ne peut pas être supprimé tant qu'un abonnement est actif, et l'envoi du rapport
   d'alertes par e-mail.
 - Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe, comptes,
-  e-mails, données de marché).
+  e-mails, données de marché, habillage, pages légales).
 
 À chaque pull request, GitHub lance ces vérifications (`.github/workflows/tests.yml`) et affiche un voyant vert ou
 rouge avant la fusion. Pour rendre ce voyant obligatoire : *Settings > Branches > Add branch ruleset* sur `main`,
@@ -179,13 +181,15 @@ avec « Require status checks to pass » et la vérification `tests`.
 1. ✅ Paiements Stripe (`paiements_stripe.py`), avec le filet de tests.
 2. ✅ Comptes et abonnement protégé (`comptes.py`), e-mails (`courriels.py`).
 3. ✅ Données de marché (`donnees_marche.py`) : un seul lecteur Yahoo pour l'application et les tâches du soir.
-4. Habillage (styles) et pages légales.
+4. ✅ Habillage (`habillage.css`, `habillage.py`) et pages légales (`pages_legales.py`).
 5. Les onglets, un par un.
 
 ## Apparence
 
-Le thème (sombre par défaut) est défini dans `.streamlit/config.toml` ; le reste de l'habillage est dans le bloc
-`STYLE_ARGON` en tête de `app.py`.
+Le thème (sombre par défaut) est défini dans `.streamlit/config.toml` ; le reste de l'habillage est dans la feuille
+de style `habillage.css` (CSS pur, modifiable sans toucher au code), injectée au début de chaque page par
+`habillage.py`. Ce module met aussi les nombres au format français (`nombres_fr`). Les textes légaux (AMF, CGV,
+rétractation, mentions légales, confidentialité) sont dans `pages_legales.py`.
 
 ## Avertissement
 
