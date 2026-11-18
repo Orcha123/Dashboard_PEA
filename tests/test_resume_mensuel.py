@@ -161,6 +161,21 @@ def test_tache_du_soir_avec_faux_services():
         A._cache_cours.clear()
 
 
+def test_decisions_a_relire_dans_le_resume():
+    carnet = [
+        {"id": "1", "date": "2026-06-01", "action": "Alpha", "type": "achat", "raison": "Sous mon prix cible", "note": "Cible <atteinte>"},
+        {"id": "2", "date": "2026-06-02", "action": "Beta", "type": "vente", "raison": "Prise de bénéfices", "lecon": "déjà relue"},
+        {"id": "3", "date": "2026-01-10", "action": "Alpha", "type": "attendre", "raison": "Trop cher"},
+    ]
+    pf = dict(PORTEFEUILLE, _carnet_decisions=carnet)
+    resume = R.construire_resume(pf, WATCHLIST, 450.0, COURS, 1.10, date(2026, 12, 5), aujourd_hui=date(2026, 12, 3))
+    assert [d["id"] for d in resume["decisions_a_relire"]] == ["1"]  # leçon déjà écrite, ou échéance trop ancienne : exclues
+    corps = R.composer_email_resume(resume, "a@b.c", "d@e.f").get_payload()[0].get_payload(decode=True).decode()
+    assert "Décisions à relire" in corps and "Cible &lt;atteinte&gt;" in corps and "01/06/2026" in corps
+    sans = R.construire_resume(PORTEFEUILLE, WATCHLIST, 450.0, COURS, 1.10, date(2026, 12, 5), aujourd_hui=date(2026, 12, 3))
+    assert "Décisions à relire" not in R.composer_email_resume(sans, "a@b.c", "d@e.f").get_payload()[0].get_payload(decode=True).decode()
+
+
 if __name__ == "__main__":
     for nom_test, fonction in list(globals().items()):
         if nom_test.startswith("test_") and callable(fonction):

@@ -7,7 +7,8 @@ les JOURS_AVANT_ACHAT jours qui précèdent le jour d'achat choisi. Il contient 
 - l'achat du mois selon l'allocation cible (même calcul que l'application : allocation_dca.py) ;
 - la valeur du portefeuille et la rente annuelle estimée ;
 - les dividendes attendus le mois de l'achat ;
-- les valeurs du radar passées sous leur prix cible.
+- les valeurs du radar passées sous leur prix cible ;
+- les décisions du carnet arrivées à leur échéance de relecture (6 mois).
 L'application utilise les mêmes fonctions pour l'aperçu immédiat.
 
 Variables d'environnement : celles de alertes_quotidiennes.py (SUPABASE_URL, SUPABASE_SERVICE_KEY, SMTP_EMAIL,
@@ -29,6 +30,7 @@ from allocation_dca import (
     preparer_lignes_dca,
     statut_achat,
 )
+from carnet_decisions import HORIZON_RELECTURE_MOIS, TYPES_DECISION, decisions_arrivees_a_echeance, lire_carnet
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE, NOMS_RENOMMES, symbole_a_jour
 
 JOURS_AVANT_ACHAT = 3
@@ -100,7 +102,7 @@ def noms_a_coter(portefeuille, watchlist, fiches):
     return sorted(n for n in noms if n in fiches)
 
 
-def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date_achat, fiches=None):
+def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date_achat, fiches=None, aujourd_hui=None):
     """
     Données du résumé. cours : {nom: dernier cours dans la devise de la valeur} ; taux_usd_eur : dollars pour 1 euro.
     """
@@ -140,6 +142,8 @@ def construire_resume(portefeuille, watchlist, budget, cours, taux_usd_eur, date
         "rente_annuelle": sum(l["qte_detenue"] * l["div_eur"] for l in detenues),
         "dividendes_mois": dividendes_mois,
         "sous_cible": sorted(sous_cible, key=lambda v: v["ecart_pct"]),
+        # Décisions du carnet dont les 6 mois sont tombés depuis environ un mois, sans leçon écrite
+        "decisions_a_relire": decisions_arrivees_a_echeance(lire_carnet(portefeuille), aujourd_hui or date.today()),
     }
 
 
@@ -203,6 +207,16 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
         if resume["sous_cible"] else "<p>Aucune valeur de votre radar n'est sous son prix cible.</p>"
     )
     dont_especes = f" (dont {_fr(resume['especes'])} € de liquidités)" if resume["especes"] > 0 else ""
+    decisions = resume.get("decisions_a_relire") or []
+    decisions_html = (
+        f"<h3>📓 Décisions à relire ({HORIZON_RELECTURE_MOIS} mois plus tard)</h3><ul>" + "".join(
+            f"<li>{d['date'][8:10]}/{d['date'][5:7]}/{d['date'][0:4]} · {html.escape(TYPES_DECISION.get(d.get('type'), ''))} — "
+            f"<b>{html.escape(d['action'])}</b> ({html.escape(d.get('raison', ''))})"
+            + (f" : « {html.escape(d['note'])} »" if d.get("note") else "") + "</li>"
+            for d in decisions)
+        + "</ul><p>Voyez ce qu'elles sont devenues dans Boursy (onglet Portefeuille, Carnet de décisions) et notez ce que "
+          "vous en retenez.</p>"
+    ) if decisions else ""
     bouton = (
         f"<p><a href='{html.escape(lien_app)}' style='background:#10b981; color:white; padding:10px 16px; "
         "text-decoration:none; border-radius:6px; font-weight:bold;'>Ouvrir Boursy</a></p>"
@@ -223,6 +237,7 @@ def composer_email_resume(resume, expediteur, destinataire, lien_app="", apercu=
         {dividendes_html}
         <h3>🎯 Valeurs de votre radar sous leur prix cible</h3>
         {sous_cible_html}
+        {decisions_html}
         {bouton}
         <p style="font-size:12px; color:#6b7280;">L'achat proposé est un calcul arithmétique à partir de vos poids cibles :
         l'enveloppe va d'abord aux lignes les plus en retard sur leur cible, en actions entières, sans rien vendre. Le radar
