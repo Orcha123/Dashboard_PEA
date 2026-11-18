@@ -285,6 +285,15 @@ def test_diversification_de_la_rente(monkeypatch):
     assert not any("Baisses en 2020 (catalogue)" in t.value.columns for t in gratuit.dataframe)  # réservé Premium et Pro
 
 
+def test_suivi_de_la_solidite_en_conditions_reelles(monkeypatch):
+    """Onglet 1 : le suivi en conditions réelles s'affiche ; sans clé de service, il le dit au lieu de planter."""
+    application = lancer("pro", monkeypatch)
+    application.toggle(key="tog_suivi_solidite").set_value(True)
+    application.run()
+    verifier_sans_erreur(application)
+    assert any("Le suivi n'est pas lisible" in i.value for i in application.info)
+
+
 class _FauxSMTP:
     envois = []
 

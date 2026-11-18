@@ -17,7 +17,9 @@ from allocation_dca import lignes_detenues, normaliser_poids, statut_achat
 from habillage import afficher_html, markdown_fr, nombres_fr
 from moteur_signaux import ALGORITHMES_SIGNAUX, ecart_vs_autres_actions_du_mois, performance_apres
 from resume_mensuel import JOURS_AVANT_ACHAT, construire_resume, date_en_toutes_lettres, fiches_valeurs, jour_dca_valide, prochaine_date_dca
-from solidite_dividendes import TAUX_MESURES, categorie_projection, evolution_dividende, rendement_median_solides
+from solidite_dividendes import (
+    TAUX_MESURES, TAUX_MESURES_1_AN, categorie_projection, evaluer_suivi, evolution_dividende, rendement_median_solides,
+)
 
 
 def afficher(
@@ -49,6 +51,7 @@ def afficher(
     historique_long,
     libelle_allocation_dca,
     lire_signaux_mensuels,
+    lire_suivi_solidite,
     mode_gratuit,
     montant_investi_dca,
     montant_tot_div_dca,
@@ -918,6 +921,57 @@ def afficher(
                     "son dividende dans les 3 ans pendant l'étude. Diversifiez (secteurs, pays) et, pour un PEA, vérifiez "
                     "l'éligibilité de la valeur : les dividendes étrangers y subissent une retenue à la source non récupérable."
                 )
+
+            # --- SUIVI EN CONDITIONS RÉELLES (etudes/protocole_suivi_dividendes.md) ---
+            st.markdown("##### 📒 Suivi en conditions réelles : le test qui compte")
+            st.caption(
+                "L'étude ne porte que sur des entreprises qui existent encore. Pour lever ce biais, la tâche planifiée enregistre "
+                "chaque mois de janvier le classement de tout le catalogue, avant de connaître la suite, et continue de suivre "
+                "chaque action même si elle quitte le catalogue. Personne ne peut modifier un classement après coup."
+            )
+            if st.toggle("Afficher le suivi en conditions réelles", key="tog_suivi_solidite"):
+                try:
+                    lignes_suivi = lire_suivi_solidite()
+                except Exception:
+                    lignes_suivi = None
+                if lignes_suivi is None:
+                    st.info("Le suivi n'est pas lisible : vérifiez le secret SUPABASE_SERVICE_KEY et la table suivi_solidite "
+                            "(voir README).")
+                elif not lignes_suivi:
+                    st.info("Aucun classement enregistré pour l'instant. Le premier (au 31/12/2026) sera enregistré en janvier "
+                            "2027 ; premiers résultats à 1 an en janvier 2028, à 3 ans en janvier 2030.")
+                else:
+                    resultats_suivi = evaluer_suivi(lignes_suivi)
+                    annees_suivi = sorted(resultats_suivi["cohortes"])
+
+                    def taux_suivi(comptes, categorie):
+                        baisses, mesurees = comptes.get(categorie, (0, 0))
+                        return f"{baisses / mesurees * 100:.0f} % ({baisses} sur {mesurees})" if mesurees else "—"
+
+                    lignes_tableau_suivi = []
+                    for annee_s in annees_suivi:
+                        for horizon_s, mesure_s in sorted(resultats_suivi["cohortes"][annee_s].items()):
+                            lignes_tableau_suivi.append({
+                                "Classement au": f"31/12/{annee_s}",
+                                "Horizon": f"{horizon_s} an{'s' if horizon_s > 1 else ''}",
+                                "Solides : baisse": taux_suivi(mesure_s["comptes"], "solide"),
+                                "Neutres : baisse": taux_suivi(mesure_s["comptes"], "neutre"),
+                                "À surveiller : baisse": taux_suivi(mesure_s["comptes"], "alerte"),
+                                "Illisibles": mesure_s["illisibles"],
+                            })
+                    if lignes_tableau_suivi:
+                        st.dataframe(pd.DataFrame(lignes_tableau_suivi), width="stretch", hide_index=True)
+                    else:
+                        st.info("Classement enregistré ; il faut attendre l'enregistrement de janvier suivant pour mesurer les "
+                                "premières baisses à 1 an.")
+                    solide_1, autres_1 = (f"{x * 100:.0f} %" for x in TAUX_MESURES_1_AN["solide"])
+                    st.caption(
+                        f"{len(annees_suivi)} classement(s) enregistré(s) depuis le 31/12/{annees_suivi[0]}. Dans l'étude (période "
+                        f"de test), baisses à 1 an : solides {solide_1}, autres {autres_1} ; à 3 ans : solides "
+                        f"{TAUX_MESURES['solide'][0] * 100:.0f} %, autres {TAUX_MESURES['solide'][1] * 100:.0f} %, rendements les "
+                        f"plus élevés {TAUX_MESURES['rendement_eleve'][0] * 100:.0f} %. Résultats provisoires tant que trois "
+                        "classements n'ont pas été mesurés à 3 ans (janvier 2032)."
+                    )
 
     # ==========================================================================
     # BILAN DES SIGNAUX : L'ALGORITHME REJOUÉ SUR LE PASSÉ

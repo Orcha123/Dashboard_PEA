@@ -47,6 +47,13 @@ def test_mois_manquants_ecartes():
     assert S.serie_mensuelle(sans_mars_2019)["mois"][0] == "2019-04"
 
 
+def test_classement_des_annees_apres_l_etude():
+    # en janvier 2027, l'année écoulée (2026) doit être classée, même si l'étude s'arrêtait en 2025
+    historique = _historique({a: 1.0 + 0.05 * (a - 2016) for a in range(2016, 2027)}, fin="2027-01-08")
+    valeurs = S.caracteristiques(historique, S.annee_de_reference(date(2027, 1, 8)))
+    assert valeurs["retenue"] and valeurs["R"] and abs(valeurs["dividendes"][2026] - 1.5) < 1e-9
+
+
 def test_actions_non_classees():
     assert S.caracteristiques(None, 2025) == {"retenue": False, "raison": "historique indisponible"}
     court = S.caracteristiques(_historique({a: 1.0 for a in range(2021, 2027)}, debut="2021-03-01"), 2025)

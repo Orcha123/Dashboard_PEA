@@ -22,6 +22,8 @@ TAUX_MESURES = {
     "rendement_eleve": (0.58, 0.26),
     "rendement_anormal": (0.53, 0.27),
 }
+# Même mesure l'année suivante seulement (mesures complémentaires de l'étude) : groupe, autres.
+TAUX_MESURES_1_AN = {"solide": (0.07, 0.15), "rendement_eleve": (0.26, 0.08), "rendement_anormal": (0.27, 0.07)}
 
 
 def annee_de_reference(aujourd_hui):
@@ -57,7 +59,7 @@ def caracteristiques(historique, annee):
         return {"retenue": False, "raison": "historique indisponible"}
     serie = serie_mensuelle(historique)
     dividendes = {a: D.dividende(serie, a) for a in range(annee - D.ANNEES_HISTORIQUE, annee + 1)}
-    valeurs = D.caracteristiques(serie, annee)
+    valeurs = D.caracteristiques(serie, annee, derniere_annee=annee)  # l'année demandée est l'année écoulée, terminée
     if valeurs is None:
         if not D.couverte_depuis(serie, f"{annee - D.ANNEES_HISTORIQUE}-01"):
             raison = f"historique trop court (depuis {annee - D.ANNEES_HISTORIQUE} nécessaire)"
@@ -239,3 +241,43 @@ def bilan_rente(lignes, rendement_achats=0.0, apport_annuel=0.0, horizon=10):
         "apport_annuel": apport_annuel,
         "rendement_achats": rendement_achats,
     }
+
+
+# ==============================================================================
+# SUIVI EN CONDITIONS RÉELLES (etudes/protocole_suivi_dividendes.md)
+# ==============================================================================
+CATEGORIES_SUIVI = ("solide", "neutre", "alerte")
+
+
+def evaluer_suivi(lignes):
+    """
+    Résultats du suivi : pour chaque année de classement et chaque horizon atteint (1 et 3 ans), {catégorie: (baisses,
+    actions mesurées)} et le nombre d'actions illisibles (dividende non relu une année suivante : jamais compté comme
+    une baisse ni comme une absence de baisse). Renvoie {"cohortes": {année: {horizon: {...}}}, "total": {horizon: {...}}}.
+    """
+    par_annee = {}
+    for ligne in lignes:
+        par_annee.setdefault(int(ligne["annee"]), {})[ligne["symbole"]] = ligne
+    resultat = {"cohortes": {}, "total": {1: {}, 3: {}}}
+    for annee, classement in sorted(par_annee.items()):
+        cohorte = {}
+        for horizon in (1, 3):
+            if any(annee + k not in par_annee for k in range(1, horizon + 1)):
+                continue  # horizon pas encore atteint
+            comptes, illisibles = {}, 0
+            for symbole, ligne in classement.items():
+                categorie = ligne.get("categorie")
+                if categorie not in CATEGORIES_SUIVI:
+                    continue
+                serie = [ligne.get("dividende")] + [(par_annee[annee + k].get(symbole) or {}).get("dividende")
+                                                    for k in range(1, horizon + 1)]
+                if any(d is None for d in serie):
+                    illisibles += 1
+                    continue
+                baisse = any(D.est_baisse(float(serie[k - 1]), float(serie[k])) for k in range(1, horizon + 1))
+                for cible in (comptes, resultat["total"][horizon]):
+                    b, n = cible.get(categorie, (0, 0))
+                    cible[categorie] = (b + int(baisse), n + 1)
+            cohorte[horizon] = {"comptes": comptes, "illisibles": illisibles}
+        resultat["cohortes"][annee] = cohorte
+    return resultat
