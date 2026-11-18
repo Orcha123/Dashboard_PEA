@@ -133,3 +133,35 @@ def repartition_rente(lignes):
         "retenue_totale": sum(r["montant"] for r in retenues),
         "hors_pea": hors_pea,
     }
+
+
+def lignes_de_rente(portefeuille, fiches, taux_usd_eur, noms=None):
+    """
+    [(nom, symbole, secteur, dividende annuel brut en euros)] des lignes détenues (quantité > 0 et fiche connue), avec
+    le même calcul que l'onglet Calendrier : quantité x dividende de la fiche, converti en euros pour le dollar.
+    """
+    lignes = []
+    for nom in (noms if noms is not None else list(portefeuille or {})):
+        position, fiche = (portefeuille or {}).get(nom), (fiches or {}).get(nom)
+        if not isinstance(position, dict) or not isinstance(fiche, dict):
+            continue
+        quantite = float(position.get("qte", 0) or 0)
+        if quantite <= 0:
+            continue
+        facteur = (1.0 / taux_usd_eur) if fiche.get("devise") == "USD" and taux_usd_eur else 1.0
+        lignes.append((nom, str(fiche.get("symbole", "")).strip(), str(fiche.get("secteur", "")),
+                       quantite * float(fiche.get("div_eur", 0) or 0) * facteur))
+    return lignes
+
+
+def phrase_crise(secteur):
+    """Ce que ce secteur a vécu en 2020 et en 2009 dans le catalogue de l'étude, en une phrase (vide si inconnu)."""
+    mesures = BAISSES_CRISES.get(secteur)
+    if not mesures:
+        return ""
+    (b20, v20), (b09, v09) = mesures[2020], mesures[2009]
+    faits = (f" Dans le catalogue, {b20} des {v20} valeurs de ce secteur {'a' if b20 <= 1 else 'ont'} baissé ou "
+             f"suspendu {'son' if b20 <= 1 else 'leur'} dividende en 2020 ({b09} sur {v09} en 2009)")
+    if b20 / v20 >= 0.5:
+        return faits + " : une seule mauvaise année peut toucher une grosse part de votre rente."
+    return faits + " : il a plutôt bien tenu, mais votre rente dépend fortement de lui."

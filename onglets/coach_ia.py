@@ -1,6 +1,7 @@
 """
 Onglet 4 de Boursy : coach et audits IA (Google Gemini, ou moteur local si Gemini n'est pas disponible), synthèse
-flash du portefeuille et matrice des opportunités.
+flash du portefeuille et matrice des opportunités. Les audits de la rente reprennent la solidité des dividendes, la
+diversification et la projection prudente (mêmes calculs que les onglets Radar et Calendrier, étude des dividendes).
 
 Toutes les informations venues du reste de l'application sont des paramètres nommés d'afficher() :
 leur liste est la liste exacte des dépendances de l'onglet (vérifiée par tests/test_application.py).
@@ -12,7 +13,11 @@ import urllib.parse
 
 import streamlit as st
 
+from diversification_rente import SEUIL_LIGNE, SEUIL_SECTEUR, lignes_de_rente, phrase_crise, repartition_rente
 from habillage import afficher_html, markdown_fr
+from solidite_dividendes import (
+    EVOLUTION_REVENU, TAUX_MESURES, bilan_rente, categorie_projection, projeter_rente, rendement_median_solides,
+)
 
 
 def afficher(
@@ -25,6 +30,7 @@ def afficher(
     achats_dca,
     afficher_verrou_saas,
     allocation_personnalisee,
+    analyse_solidite_dividendes,
     budget_courant,
     cac_str,
     candidats_tries,
@@ -385,6 +391,154 @@ def afficher(
             pass
         return modeles
 
+    # ==========================================================================
+    # RENTE : SOLIDITÉ, DIVERSIFICATION ET PROJECTION PRUDENTE (étude des dividendes)
+    # ==========================================================================
+    acces_rente = niveau_acces in ("premium", "pro")
+    MOTS_RENTE = ("rente", "dividende", "solid", "diversif", "projection", "crise", "secteur", "retenue")
+
+    def audit_sur_la_rente(question_utilisateur, code_audit):
+        return code_audit in ("AUDIT_1", "AUDIT_4", "AUDIT_5") or any(m in (question_utilisateur or "").lower() for m in MOTS_RENTE)
+
+    def contexte_rente(calculer=False):
+        """
+        Mêmes calculs que les onglets Radar et Calendrier : lignes de rente, diversification et, si l'analyse du
+        catalogue est disponible (calculer=True la lance), solidité, rente en cas de crise et projection prudente.
+        """
+        lignes = lignes_de_rente(portefeuille_utilisateur, WATCHLIST_DEFAUT, TAUX_USD_EUR,
+                                 [l["nom_act"] for l in lignes_triees if not l["est_especes"]])
+        contexte = {"lignes": lignes, "repartition": repartition_rente(lignes), "solidite": None}
+        if not acces_rente:
+            return contexte
+        try:
+            analyse = analyse_solidite_dividendes(sorted({sym for _, sym, _, _ in lignes if sym}), calculer=calculer)
+        except Exception:
+            analyse = None
+        if analyse:
+            def categorie(symbole):
+                return categorie_projection((analyse["demandes"].get(symbole) or (None, None))[1])
+
+            lignes_categories = [(nom, revenu, categorie(sym)) for nom, sym, _secteur, revenu in lignes]
+            rendement = rendement_median_solides(analyse["catalogue"].values())
+            contexte["solidite"] = bilan_rente(lignes_categories, rendement_achats=rendement,
+                                               apport_annuel=12.0 * BUDGET_MENSUEL, horizon=10)
+            contexte["rente_20_ans"] = projeter_rente([(r, c) for _, r, c in lignes_categories], 12.0 * BUDGET_MENSUEL,
+                                                      rendement, reinvestir=True, annees=20)[-1][1]
+            contexte["annee"] = analyse["annee"]
+        return contexte
+
+    def _eur(x):
+        return f"{x:,.0f}".replace(",", " ") + " €"
+
+    def _pc(x):
+        return f"{x * 100:.0f} %"
+
+    def bloc_rente_md(contexte):
+        """Solidité, diversification et projection prudente, en Markdown (moteur local)."""
+        if not acces_rente:
+            return ("#### 🛡️ Solidité, diversification et projection de votre rente\n"
+                    "- 🔒 Réservées aux offres **Premium (4,90 €/mois)** et **Pro (8,90 €/mois)** : part de votre rente issue "
+                    "de dividendes solides, lignes à surveiller, rente en cas de crise, répartition par secteur et par pays, "
+                    "et projection prudente à 10 et 20 ans.")
+        repartition, solidite = contexte["repartition"], contexte["solidite"]
+        morceaux = ["#### 🛡️ Solidité de votre rente (étude des dividendes de Boursy)"]
+        if solidite and solidite["rente"] > 0:
+            rente, parts = solidite["rente"], solidite["parts"]
+            morceaux.append(
+                f"- Sur **{_eur(rente)}** de dividendes attendus par an : **{_eur(parts['solide'])} solides "
+                f"({_pc(parts['solide'] / rente)})**, {_eur(parts['neutre'])} neutres ou non classés, "
+                f"**{_eur(parts['alerte'])} à surveiller ({_pc(parts['alerte'] / rente)})**."
+            )
+            if solidite["a_surveiller"]:
+                morceaux.append(
+                    f"- **À surveiller** (rendement élevé ou anormal) : {', '.join(solidite['a_surveiller'])}. Dans l'étude, "
+                    f"{_pc(TAUX_MESURES['rendement_eleve'][0])} des rendements les plus élevés ont baissé leur dividende dans les "
+                    f"3 années suivantes, contre {_pc(TAUX_MESURES['solide'][0])} des dividendes solides."
+                )
+            morceaux.append(
+                f"- **L'année d'une crise comme 2020** (pire année mesurée) : environ **{_eur(solidite['rente_crise'])}** au "
+                f"lieu de {_eur(rente)}. Les dividendes ne sont pas à l'abri des crises : en 2020, la moitié des actions du "
+                "catalogue ont baissé ou suspendu le leur."
+            )
+        elif solidite is None:
+            morceaux.append("- Solidité indisponible pour le moment (historiques Yahoo Finance) : réessayez dans quelques minutes.")
+        else:
+            morceaux.append("- Aucun dividende attendu sur vos lignes actuelles : la rente viendra de vos prochains achats.")
+
+        morceaux.append("\n#### 🧩 Diversification de votre rente")
+        if repartition["rente"] > 0:
+            principaux = ", ".join(f"{secteur} ({_pc(part)})" for secteur, _m, part in repartition["par_secteur"][:4])
+            morceaux.append(f"- **Par grand secteur** : {principaux}.")
+            for secteur, _m, part in repartition["secteurs_trop_lourds"]:
+                morceaux.append(f"- ⚠️ **{secteur}** : {_pc(part)} de votre rente, au-dessus du repère de "
+                                f"{_pc(SEUIL_SECTEUR)} par secteur.{phrase_crise(secteur)}")
+            if repartition["lignes_trop_lourdes"]:
+                morceaux.append(f"- ⚠️ **Lignes au-dessus de {_pc(SEUIL_LIGNE)} de la rente** : "
+                                + ", ".join(f"{nom} ({_pc(part)})" for nom, _m, part in repartition["lignes_trop_lourdes"]) + ".")
+            if not repartition["secteurs_trop_lourds"] and not repartition["lignes_trop_lourdes"]:
+                morceaux.append(f"- ✅ Aucun secteur au-dessus de {_pc(SEUIL_SECTEUR)} de la rente, aucune ligne au-dessus de "
+                                f"{_pc(SEUIL_LIGNE)}.")
+            if repartition["retenues"]:
+                morceaux.append(f"- **Retenues à la source étrangères** (non récupérables dans un PEA) : environ "
+                                f"{_eur(repartition['retenue_totale'])} par an ("
+                                + ", ".join(f"{r['nom']}, {r['pays']}" for r in repartition["retenues"]) + ").")
+            if repartition["hors_pea"]:
+                morceaux.append("- **Hors PEA** (siège hors Union européenne) : "
+                                + ", ".join(f"{nom} ({pays})" for nom, pays in repartition["hors_pea"]) + ".")
+        else:
+            morceaux.append("- Rien à répartir : aucun dividende attendu sur vos lignes.")
+
+        if solidite:
+            morceaux.append("\n#### 📈 Projection prudente (en euros d'aujourd'hui)")
+            morceaux.append(
+                f"- Avec votre achat mensuel de **{_eur(BUDGET_MENSUEL)}** et les dividendes réinvestis, placés en dividendes "
+                f"solides au rendement médian actuel de la liste ({solidite['rendement_achats'] * 100:.1f} %) : environ "
+                f"**{_eur(solidite['rente_prudente_horizon'])} par an dans 10 ans** et **{_eur(contexte['rente_20_ans'])} par an "
+                "dans 20 ans**, sans aucune croissance réelle des dividendes."
+            )
+            morceaux.append(
+                f"- Pourquoi prudente : les dividendes solides du catalogue ont progressé de "
+                f"{(EVOLUTION_REVENU['solide'][10][0] ** 0.1 - 1) * 100:.1f} % par an sur 10 ans, mais ce chiffre est gonflé "
+                "(catalogue d'entreprises qui existent encore, rattrapage d'après 2009). Ce sont vos apports réguliers qui font "
+                "l'essentiel de la rente future."
+            )
+        return "\n".join(morceaux)
+
+    def bloc_rente_prompt(contexte):
+        """Les mêmes informations, en texte brut, pour Gemini."""
+        if not acces_rente:
+            return "Solidité, diversification et projection de la rente : réservées aux offres Premium et Pro (ne pas les inventer)."
+        repartition, solidite = contexte["repartition"], contexte["solidite"]
+        lignes = [
+            "Répartition de la rente par grand secteur : "
+            + (", ".join(f"{s} {_pc(p)}" for s, _m, p in repartition["par_secteur"]) or "aucun dividende attendu"),
+            "Secteurs au-dessus du repère de 30 % de la rente : "
+            + (", ".join(f"{s} ({_pc(p)})" for s, _m, p in repartition["secteurs_trop_lourds"]) or "aucun"),
+            "Lignes au-dessus de 20 % de la rente : "
+            + (", ".join(f"{n} ({_pc(p)})" for n, _m, p in repartition["lignes_trop_lourdes"]) or "aucune"),
+            f"Retenues à la source étrangères non récupérables en PEA : environ {_eur(repartition['retenue_totale'])} par an ; "
+            "hors PEA : " + (", ".join(f"{n} ({p})" for n, p in repartition["hors_pea"]) or "aucune ligne"),
+        ]
+        if solidite:
+            parts = solidite["parts"]
+            lignes += [
+                f"Solidité de la rente : {_eur(parts['solide'])} solides, {_eur(parts['neutre'])} neutres ou non classés, "
+                f"{_eur(parts['alerte'])} à surveiller ; lignes à surveiller : {', '.join(solidite['a_surveiller']) or 'aucune'}",
+                f"Rente l'année d'une crise comme 2020 : environ {_eur(solidite['rente_crise'])} au lieu de {_eur(solidite['rente'])}",
+                f"Projection prudente (euros d'aujourd'hui, achat mensuel de {_eur(BUDGET_MENSUEL)}, dividendes réinvestis au "
+                f"rendement médian des solides de {solidite['rendement_achats'] * 100:.1f} %, sans croissance réelle) : "
+                f"{_eur(solidite['rente_prudente_horizon'])} par an dans 10 ans, {_eur(contexte['rente_20_ans'])} dans 20 ans",
+            ]
+        lignes.append(
+            "Résultats de l'étude des dividendes de Boursy, à respecter : les dividendes « solides » (5 ans sans baisse, plus "
+            "élevés qu'il y a 5 ans, rendement non extrême) ont baissé dans 22 % des cas en 3 ans, contre 43 % pour les autres ; "
+            "les 20 % de rendements les plus élevés ont baissé dans 58 % des cas ; le rendement total des solides n'est pas "
+            "meilleur de façon démontrée ; en 2020, la moitié des actions ont baissé ou suspendu leur dividende (100 % dans "
+            "l'automobile et l'aéronautique, 63 % dans la finance, 20 % dans la santé). Ne présente jamais un rendement élevé "
+            "comme une qualité en soi, ni la rente comme insensible aux crises."
+        )
+        return "\n".join("- " + l for l in lignes)
+
     def generer_audit_expert_hybride(question_utilisateur, code_audit=""):
         if question_utilisateur:
             for s_a, a_a in [
@@ -400,6 +554,7 @@ def afficher(
         plus_value_glob = valeur_totale_portefeuille - cout_total_achat
         pv_pct_glob = (plus_value_glob / cout_total_achat * 100) if cout_total_achat > 0 else 0.0
         rente_mens_nette = dividendes_nets_totaux_eur / 12.0
+        rente_ctx = contexte_rente(calculer=audit_sur_la_rente(question_utilisateur, code_audit))
 
         top_3_lignes = [
             f"**{l['nom_act']}** ({l['val_eur']:,.0f} €, soit {(l['val_eur']/valeur_totale_portefeuille*100 if valeur_totale_portefeuille>0 else 0):.1f}% du portefeuille, PV : `{l['pv_eur']:+,.0f} €`)"
@@ -442,6 +597,8 @@ def afficher(
 - **Exposition Devises :** **{exposition_eur:,.0f} € en zone Euro (PEA)** contre **{exposition_usd:,.0f} € en Dollars US (CTO)**.
 - **Efficience Fiscale des Dividendes :** Vos actions produisent **{dividendes_bruts_totaux_eur:,.2f} € brut/an**, soit **{dividendes_nets_totaux_eur:,.2f} € net/an ({rente_mens_nette:.2f} € net/mois)**.
 
+{bloc_rente_md(rente_ctx)}
+
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
         elif code_audit == "AUDIT_2":
@@ -477,7 +634,7 @@ def afficher(
 - **Impact Devises :** {'L’euro est au-dessus de 1,08 $ : les actifs cotés en dollars coûtent moins cher en euros qu’avec un euro plus faible.' if TAUX_USD_EUR >= 1.08 else 'Le dollar est fort face à l’euro : les actifs cotés en dollars coûtent plus cher en euros.'}
 
 #### 2. Complémentarité Rendement Européen (PEA) vs Croissance US (CTO)
-- **Poche Socle PEA (TotalEnergies, Air Liquide, AXA, Rubis, Vinci...) :** Idéale pour maximiser le **flux de dividendes immédiat (4 % à 8 %)** sans frottement fiscal lors du réinvestissement.
+- **Poche Socle PEA (valeurs européennes) :** Dividendes réinvestis **sans frottement fiscal** dans l'enveloppe, et sans retenue à la source pour les sociétés françaises. Privilégiez la solidité au rendement : dans l'étude des dividendes de Boursy, les 20 % de rendements les plus élevés ont baissé leur dividende dans **58 %** des cas en 3 ans, contre **22 %** pour les dividendes solides (volet « Solidité des dividendes » du Radar).
 - **Poche Accélérateur US (Microsoft, Apple, Realty Income, Coca-Cola...) :** Apporte une **croissance séculaire** et des versements trimestriels ou mensuels qui lissent votre calendrier de rente.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
@@ -488,24 +645,35 @@ def afficher(
 
 #### 1. Simulation de Krach Boursier (-20 % sur les marchés)
 - **Valorisation après choc de -20 % :** Votre portefeuille passerait temporairement de **{valeur_totale_portefeuille:,.0f} €** à **{choc_20:,.0f} €** (soit un repli latent de `-{valeur_totale_portefeuille * 0.20:,.0f} €`).
-- **Résilience de votre Rente Passive :** Même en cas de baisse de 20 % des cours boursiers, **votre rente de dividendes ({dividendes_bruts_totaux_eur:,.2f} €/an) dépend du nombre d'actions détenues** et non des fluctuations quotidiennes du marché !
+- **Votre rente de dividendes ({dividendes_bruts_totaux_eur:,.2f} €/an) n'est pas à l'abri :** dans l'étude des dividendes de Boursy, la moitié des actions du catalogue ont baissé ou suspendu leur dividende en 2020, et 41 % en 2009. Ce sont des secteurs entiers qui baissent ensemble : voir ci-dessous.
 
-#### 2. Diagnostic de Concentration Sectorielle
+#### 2. Diagnostic de Concentration
 - **Ligne numéro 1 :** **{nom_max_ligne}** représente **{poids_max_ligne:.1f}%** du portefeuille sur **{len(repartition_secteurs)} secteur(s)**.
+
+{bloc_rente_md(rente_ctx)}
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
         elif code_audit == "AUDIT_5":
             manque_100 = max(0.0, (100.0 * 12) - dividendes_nets_totaux_eur)
-            cap_requis_100 = manque_100 / 0.055
-            return f"""### 💵 Optimisation de la Rente & Accélération Boule de Neige
+            if rente_ctx["solidite"] and rente_ctx["solidite"]["rendement_achats"] > 0:
+                rendement_ref = rente_ctx["solidite"]["rendement_achats"]
+                libelle_rendement = "rendement médian actuel des dividendes solides du catalogue"
+            else:
+                rendement_ref = (dividendes_bruts_totaux_eur / valeur_totale_portefeuille) if valeur_totale_portefeuille > 0 and dividendes_bruts_totaux_eur > 0 else 0.035
+                libelle_rendement = "rendement actuel de votre portefeuille" if valeur_totale_portefeuille > 0 and dividendes_bruts_totaux_eur > 0 else "rendement prudent"
+            ratio_net = (dividendes_nets_totaux_eur / dividendes_bruts_totaux_eur) if dividendes_bruts_totaux_eur > 0 else 1.0
+            cap_requis_100 = manque_100 / (rendement_ref * ratio_net) if rendement_ref > 0 else 0.0
+            return f"""### 💵 Ma Rente : Solidité, Diversification & Projection Prudente
 
 #### 1. Trajectoire Actuelle de vos Revenus Passifs
 - **Rente Annuelle Actuelle :** **{dividendes_bruts_totaux_eur:,.2f} € brut / an** (**{dividendes_nets_totaux_eur:,.2f} € net / an**).
 - **Revenu Mensuel Lissé :** **{rente_mens_nette:,.2f} € net / mois** (couvrant déjà **{taux_couverture_dca:.1f}%** de votre effort d'épargne DCA annuel).
 
-#### 2. Feuille de Route vers le Palier des 100 € / mois (1 200 € / an)
-- **Écart restant à combler :** Il vous manque **{manque_100:,.2f} € de dividendes annuels** pour franchir le cap symbolique des **100 € / mois** (soit environ **{cap_requis_100:,.0f} €** à investir à 5,5 % de rendement).
+{bloc_rente_md(rente_ctx)}
+
+#### Feuille de Route vers le Palier des 100 € / mois (1 200 € / an)
+- **Écart restant à combler :** Il vous manque **{manque_100:,.2f} € de dividendes nets annuels** pour franchir le cap des **100 € / mois**, soit environ **{cap_requis_100:,.0f} €** à investir au {libelle_rendement} (**{rendement_ref * 100:.1f} %**). Viser plus haut en rendement raccourcirait le chemin sur le papier, mais les rendements les plus élevés sont aussi ceux qui baissent le plus souvent.
 
 *⚖️ Rappel : Analyse statistique et pédagogique générée par le moteur Boursy 2.0 (Non-CIF).*"""
 
@@ -618,6 +786,7 @@ def afficher(
             if hist_ventes_ia else "Aucune vente actée enregistrée pour le moment."
         )
 
+        rente_ctx = contexte_rente(calculer=audit_sur_la_rente(question_utilisateur, code_audit))
         prompt_complet = f"""Tu es Boursy Coach IA 2.0, un expert patrimonial et boursier de haut niveau spécialisé dans les stratégies PEA, CTO US et dividendes croissants en DCA.
 Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 - Météo des marchés : CAC 40 = {cac_str}, S&P 500 = {sp_str}, VIX = {vix_val:.1f} ({etat_vix})
@@ -632,6 +801,8 @@ Voici les données exactes en temps réel du portefeuille de l'utilisateur :
 {chr(10).join(resume_pf) if resume_pf else 'Portefeuille vide'}
 - Signaux techniques et fondamentaux du Radar Boursy aujourd'hui :
 {chr(10).join(resume_radar)}
+- Rente : solidité, diversification et projection (mêmes calculs que les onglets Radar et Calendrier de Boursy) :
+{bloc_rente_prompt(rente_ctx)}
 
 Mission demandée par l'utilisateur : {question_utilisateur}
 
@@ -692,11 +863,11 @@ Réponds en français avec une structure claire (titres, puces, chiffres précis
     if col_ia4.button("🛡️ 4. Stress-Test, Risques & Diversification", width="stretch"):
         titre_audit = "Stress-Test, Risques & Diversification"
         code_audit_choisi = "AUDIT_4"
-        prompt_choisi = "Analyse les risques de concentration de mon portefeuille (poids de mes plus grosses lignes et secteurs dominants), fais un stress-test en cas de baisse de marché de 20% et montre quels secteurs sont peu ou pas représentés."
-    if col_ia5.button("💵 5. Optimisation de la Rente & Boule de Neige", width="stretch"):
-        titre_audit = "Optimisation de la Rente & Calendrier"
+        prompt_choisi = "Analyse les risques de concentration de mon portefeuille et de ma rente (plus grosses lignes, secteurs dominants, pays), fais un stress-test en cas de baisse de marché de 20 % et d'une crise des dividendes comme 2020, en t'appuyant sur les baisses mesurées par secteur, et montre quels secteurs sont peu ou pas représentés."
+    if col_ia5.button("💵 5. Ma Rente : Solidité, Diversification & Projection", width="stretch"):
+        titre_audit = "Ma Rente : Solidité, Diversification & Projection"
         code_audit_choisi = "AUDIT_5"
-        prompt_choisi = "Analyse la régularité de mes dividendes sur les 12 mois de l'année, identifie les mois creux à renforcer et décris les leviers qui accéléreraient mon effet boule de neige vers 100 €/mois puis 500 €/mois de rente."
+        prompt_choisi = "Analyse la solidité de ma rente (part issue de dividendes solides, lignes à surveiller), sa diversification par secteur et par pays (retenues à la source en PEA), ce qu'une crise comme 2020 lui ferait, et sa projection prudente à 10 et 20 ans avec mon achat mensuel ; puis les leviers vers 100 €/mois puis 500 €/mois de rente, sans privilégier les rendements les plus élevés."
     if col_ia6.button("💰 6. Bilan de mes Plus/Moins-Values Actées (Pro)", width="stretch"):
         if not est_pro_max:
             st.warning("🔒 L'audit des Arbitrages & Plus-Values Actées est réservé à l'offre **Pro (8,90 €/mois)**.")

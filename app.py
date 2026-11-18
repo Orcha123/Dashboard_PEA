@@ -1794,6 +1794,7 @@ with onglet_ia:
         achats_dca=achats_dca,
         afficher_verrou_saas=afficher_verrou_saas,
         allocation_personnalisee=allocation_personnalisee,
+        analyse_solidite_dividendes=analyse_solidite_dividendes,
         budget_courant=budget_courant,
         cac_str=cac_str,
         candidats_tries=candidats_tries,

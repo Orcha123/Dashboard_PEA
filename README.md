@@ -179,6 +179,11 @@ mensuels (et, au choix, les dividendes réinvestis) placés en dividendes solide
 rente l'année d'une crise comme 2020 (pire année mesurée). La croissance passée du catalogue (+7,4 % par an pour les
 solides) n'est pas utilisée : elle est gonflée par le biais du survivant et le rattrapage d'après 2009.
 
+**Coach IA** (onglet 4) : l'audit « 💵 5. Ma rente » reprend la solidité, la diversification, la rente en cas de crise
+et la projection prudente (mêmes calculs que les onglets Radar et Calendrier), le stress-test (audit 4) utilise les
+baisses de dividendes mesurées par secteur en 2009 et 2020, et Gemini reçoit ces éléments avec les résultats de l'étude,
+pour ne jamais présenter un rendement élevé comme une qualité en soi.
+
 **Diversification de la rente** (onglet Calendrier, Premium et Pro) : répartition des dividendes attendus par grand
 secteur et par pays du siège de la société (`diversification_rente.py`), alertes au-delà de 30 % de la rente pour un
 secteur et de 20 % pour une ligne (repères usuels), avec ce que chaque secteur a vécu en 2009 et en 2020 dans l'étude
@@ -204,7 +209,7 @@ source étrangères non récupérables dans un PEA.
 | `onglets/portefeuille.py` | Onglet 2 : lignes, journal des achats, carnet de décisions, valorisation, trajectoire, performance vs ETF |
 | `onglets/super_pack.py` | Super-Pack Pro : sections ajoutées dans les onglets 1 à 3 (PEA/CTO, plafond PEA, rendement sur PRU, duel ETF, station 360°) |
 | `onglets/radar.py` | Onglet 1 : radar, achat du mois, centre d'alertes, résumé mensuel, bilan des signaux |
-| `onglets/coach_ia.py` | Onglet 4 : coach et audits IA (Gemini ou moteur local) |
+| `onglets/coach_ia.py` | Onglet 4 : coach et audits IA (Gemini ou moteur local), dont l'audit de la rente : solidité, diversification, projection prudente |
 | `onglets/calendrier.py` | Onglet 3 : objectif de rente, calendrier des dividendes, détachements, boule de neige |
 | `onglets/ventes.py` | Onglet 5 : arbitrages, ventes et plus-values actées (Pro) |
 | `donnees_marche.py` | Lecture de Yahoo Finance (cours, historiques, change, indices, dividendes, recherche), heures de marché, rendement annualisé (sans Streamlit) |
