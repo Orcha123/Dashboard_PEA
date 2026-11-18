@@ -146,6 +146,8 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `courriels.py` | Composition et envoi des e-mails (SMTP), partagé par l'application et les tâches du soir |
 | `habillage.css`, `habillage.py` | Feuille de style ; nombres au format français et affichage du HTML |
 | `pages_legales.py` | Avertissement AMF, CGV, rétractation, mentions légales (LCEN), confidentialité (RGPD) |
+| `onglets/radar.py` | Onglet 1 : radar, achat du mois, centre d'alertes, résumé mensuel, bilan des signaux |
+| `onglets/coach_ia.py` | Onglet 4 : coach et audits IA (Gemini ou moteur local) |
 | `onglets/calendrier.py` | Onglet 3 : objectif de rente, calendrier des dividendes, détachements, boule de neige |
 | `onglets/ventes.py` | Onglet 5 : arbitrages, ventes et plus-values actées (Pro) |
 | `donnees_marche.py` | Lecture de Yahoo Finance (cours, historiques, change, indices, dividendes, recherche), heures de marché, rendement annualisé (sans Streamlit) |
@@ -185,8 +187,8 @@ avec « Require status checks to pass » et la vérification `tests`.
 3. ✅ Données de marché (`donnees_marche.py`) : un seul lecteur Yahoo pour l'application et les tâches du soir.
 4. ✅ Habillage (`habillage.css`, `habillage.py`) et pages légales (`pages_legales.py`).
 5. Les onglets, un par un, dans `onglets/` : chaque onglet devient une fonction `afficher(...)` dont les paramètres
-   nommés sont la liste exacte de ses dépendances. ✅ Onglet 3 (calendrier) et onglet 5 (ventes) ; restent les
-   onglets 1 (radar), 4 (coach IA), 2 (portefeuille) et le Super-Pack Pro.
+   nommés sont la liste exacte de ses dépendances. ✅ Onglets 1 (radar), 3 (calendrier), 4 (coach IA) et 5 (ventes) ;
+   restent l'onglet 2 (portefeuille) et le Super-Pack Pro.
 
 ## Apparence
 

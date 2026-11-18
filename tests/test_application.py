@@ -203,3 +203,68 @@ def test_enregistrer_une_vente_avec_sa_raison(monkeypatch):
     assert application.session_state["historique_ventes"][0]["action"] == action
     decision = application.session_state["portefeuille"]["_carnet_decisions"][-1]
     assert (decision["type"], decision["action"], decision["raison"]) == ("vente", action, "Rééquilibrage")
+
+
+def test_bilan_des_signaux(monkeypatch):
+    """Onglet 1 : le bilan rejoue les signaux sur l'historique et affiche ses tableaux."""
+    application = lancer("pro", monkeypatch)
+    _bouton(application, "🔬 Calculer le bilan").click()
+    application.run()
+    verifier_sans_erreur(application)
+    contenu = textes(application)
+    assert "Toutes les observations" in contenu and "Comparaison des trois algorithmes" in contenu
+
+
+class _FauxSMTP:
+    envois = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def login(self, *args):
+        pass
+
+    def sendmail(self, expediteur, destinataire, corps):
+        _FauxSMTP.envois.append((destinataire, corps))
+
+
+def test_resume_mensuel_reglages_et_apercu(monkeypatch):
+    """Onglet 1 : activer le résumé mensuel, choisir son jour d'achat, recevoir un aperçu."""
+    import email
+    import email.header
+    import smtplib
+    _FauxSMTP.envois = []
+    monkeypatch.setattr(smtplib, "SMTP_SSL", _FauxSMTP)
+    monkeypatch.setenv("BOURSY_PROFIL_TEST", "pro")
+    application = AppTest.from_file(BANC, default_timeout=240)
+    application.secrets["SMTP_EMAIL"] = "envoi@exemple.test"
+    application.secrets["SMTP_PASSWORD"] = "secret"
+    application.run()
+    next(t for t in application.toggle if t.label.startswith("📅 Recevoir chaque mois")).set_value(True)
+    application.run()
+    application.number_input(key="num_jour_dca").set_value(20)
+    application.run()
+    _bouton(application, "👁️ M'envoyer un aperçu").click()
+    application.run()
+    verifier_sans_erreur(application)
+    portefeuille = application.session_state["portefeuille"]
+    assert portefeuille["_resume_mensuel"] is True and portefeuille["_jour_dca"] == 20
+    assert len(_FauxSMTP.envois) == 1
+    sujet = str(email.header.make_header(email.header.decode_header(email.message_from_string(_FauxSMTP.envois[0][1])["Subject"])))
+    assert sujet.startswith("[Aperçu]") and "20 " in sujet
+
+
+def test_coach_ia_achat_du_mois(monkeypatch):
+    """Onglet 4 : sans clé Gemini, le moteur local rédige l'audit « Achat DCA du Mois »."""
+    application = lancer("pro", monkeypatch)
+    _bouton(application, "🛒 2. Achat DCA du Mois").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert "Achat DCA du Mois" in application.session_state["reponse_ia_coach"]
+    assert application.session_state["quota_ia_utilise"] == 1
