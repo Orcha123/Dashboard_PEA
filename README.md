@@ -132,6 +132,20 @@ Pour un test sans retouche possible, la tâche planifiée enregistre aussi, une 
 algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux_mensuels`. À créer une fois dans
 *SQL Editor* avec `supabase/signaux_mensuels.sql`. Seule la clé `service_role` peut lire et écrire cette table.
 
+## Étude des grandes tendances (6 et 12 mois)
+
+Peut-on anticiper les grandes tendances à 6 mois, 1 an ou plus ? Une étude répond avec un protocole écrit et déposé
+avant tout calcul (`etudes/protocole_tendances.md`) : 5 signaux de sélection d'actions, la règle de tendance par
+action (moyenne 200 jours) et la règle des 10 mois sur 6 grands indices depuis 1985, avec une période de test (depuis
+2022) que la conception n'a jamais vue. Résultats complets, favorables ou non : `etudes/resultats_tendances.md`.
+
+En bref : aucun signal ne prévoit de façon démontrée les actions qui feront mieux ; les règles de tendance réduisent
+les grosses pertes lors des longs marchés baissiers, mais coûtent du rendement (environ 6 points par an pour la règle
+par action sur la période de test). Rien n'a donc été ajouté à l'application.
+
+Le calcul tourne sur GitHub (`.github/workflows/etude_tendances.yml`, sans secret) ou en local :
+`python -m etudes.lancer_etude_tendances`.
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -156,6 +170,7 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
+| `etudes/` | Étude des grandes tendances : protocole, calculs (`tendances.py`), lanceur sur données réelles, résultats |
 | `tests/` | Tests automatiques (voir ci-dessous) |
 
 ## Tests et vérification automatique
@@ -174,7 +189,7 @@ python -m pytest tests
   Il vérifie aussi qu'un compte ne peut pas être supprimé tant qu'un abonnement est actif, et l'envoi du rapport
   d'alertes par e-mail.
 - Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe, comptes,
-  e-mails, données de marché, habillage, pages légales).
+  e-mails, données de marché, habillage, pages légales, étude des tendances).
 
 À chaque pull request, GitHub lance ces vérifications (`.github/workflows/tests.yml`) et affiche un voyant vert ou
 rouge avant la fusion. Pour rendre ce voyant obligatoire : *Settings > Branches > Add branch ruleset* sur `main`,
