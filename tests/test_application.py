@@ -433,6 +433,12 @@ def test_coach_synthese_strategique_et_audit_0(monkeypatch, tmp_path):
         application.run()
         verifier_sans_erreur(application)
         assert "issus de dividendes solides" in _synthese_affichee(application)
+        reperes = next(str(m.value) for m in application.markdown if "DIVIDENDE SOLIDE AU MEILLEUR RENDEMENT" in str(m.value))
+        for repere in ("RENDEMENTS ÉLEVÉS À SURVEILLER", "SECTEUR ABSENT DE VOTRE RENTE", "ACHAT DU MOIS", "au 31/12/"):
+            assert repere in reperes, repere
+        assert any("Indicateurs techniques du radar (non prédictifs)" in e.label for e in application.expander)
+        affichage_coach = " ".join(str(m.value) for m in application.markdown)
+        assert "Simulation : 1 titre de plus" not in affichage_coach and "RENDEMENT LE PLUS ÉLEVÉ" not in affichage_coach
         assert "Votre rente : solidité, crise et projection" in _synthese_affichee(application)
         assert not any(b.label.startswith("🛡️ Ajouter la solidité") for b in application.button)  # bouton inutile désormais
         _bouton(application, "🧭 0. Synthèse").click()
@@ -463,6 +469,8 @@ def test_coach_synthese_offre_gratuite(monkeypatch):
     application = lancer("gratuit", monkeypatch)
     synthese = _synthese_affichee(application)
     assert "Plan d'action" in synthese and "Réservées aux offres Premium et Pro" in synthese
+    reperes = next(str(m.value) for m in application.markdown if "DIVIDENDE SOLIDE AU MEILLEUR RENDEMENT" in str(m.value))
+    assert "🔒 Offres Premium et Pro" in reperes
     assert not any(b.label.startswith("🛡️ Ajouter la solidité") for b in application.button)
 
 
