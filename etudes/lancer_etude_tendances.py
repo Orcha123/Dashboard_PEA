@@ -28,27 +28,80 @@ def historique_quotidien(symbole):
         return None
 
 
-def historique_mensuel(symbole):
-    """(fins de mois ISO, clôtures mensuelles) sur tout l'historique disponible, mois en cours exclu ; None si absent."""
-    mois_en_cours = date.today().strftime("%Y-%m")
-    for serveur in SERVEURS_YAHOO:
-        try:
-            resultat = lire_chart(serveur, symbole, "max", timeout=30, intervalle="1mo")
-        except Exception:
+DEBUT_HISTORIQUE = -2208994789  # 1er janvier 1900 en secondes Unix : tout l'historique disponible
+
+
+def clotures_par_mois(resultat, mois_en_cours):
+    """
+    {« AAAA-MM » : dernière clôture du mois} d'une réponse Yahoo (points mensuels ou quotidiens), mois en cours exclu.
+    Horodatages ramenés à l'heure de la place (+6 heures de marge : un point mensuel daté du 1er à minuit, heure
+    d'hiver ou d'été, reste dans son mois ; un point quotidien reste dans sa journée).
+    """
+    decalage = int((resultat.get("meta") or {}).get("gmtoffset") or 0) + 6 * 3600
+    clotures = ((resultat.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+    par_mois = {}
+    for horodatage, cloture in sorted(zip(resultat.get("timestamp") or [], clotures)):
+        if cloture is None or float(cloture) <= 0:
             continue
-        clotures = ((resultat.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
-        par_mois = {}
-        for horodatage, cloture in zip(resultat.get("timestamp") or [], clotures):
-            if cloture is None or float(cloture) <= 0:
+        mois = datetime.fromtimestamp(int(horodatage) + decalage, tz=timezone.utc).strftime("%Y-%m")
+        if mois < mois_en_cours:
+            par_mois[mois] = float(cloture)
+    return par_mois
+
+
+def _rang_mois(mois):
+    return int(mois[:4]) * 12 + int(mois[5:7])
+
+
+def mois_manquants(mois_tries):
+    """Nombre de mois absents entre le premier et le dernier mois de la liste."""
+    if not mois_tries:
+        return 0
+    return _rang_mois(mois_tries[-1]) - _rang_mois(mois_tries[0]) + 1 - len(mois_tries)
+
+
+def derniere_suite_complete(mois_tries):
+    """Les mois les plus récents qui se suivent sans aucun trou (tout si la série est complète)."""
+    debut = len(mois_tries) - 1
+    while debut > 0 and _rang_mois(mois_tries[debut]) - _rang_mois(mois_tries[debut - 1]) == 1:
+        debut -= 1
+    return mois_tries[debut:]
+
+
+def historique_mensuel(symbole):
+    """
+    (fins de mois ISO, clôtures mensuelles) sur tout l'historique disponible, mois en cours exclu ; None si absent.
+    Essaie les points mensuels, puis les points quotidiens ramenés à la dernière clôture de chaque mois. Les calculs
+    supposent des mois consécutifs : en cas de trou, seuls les mois qui suivent le dernier trou sont gardés.
+    """
+    mois_en_cours = date.today().strftime("%Y-%m")
+    periode = (DEBUT_HISTORIQUE, int(time.time()))
+    candidates = []
+    for intervalle in ("1mo", "1d"):
+        resultat = None
+        for serveur in SERVEURS_YAHOO:
+            try:
+                resultat = lire_chart(serveur, symbole, None, timeout=60, intervalle=intervalle, periode=periode)
+                break
+            except Exception:
                 continue
-            # horodatage du 1er du mois à minuit, heure de la place : +3 jours pour ne pas tomber sur le mois précédent en UTC
-            mois = datetime.fromtimestamp(int(horodatage) + 3 * 86400, tz=timezone.utc).strftime("%Y-%m")
-            if mois < mois_en_cours:
-                par_mois[mois] = float(cloture)
-        if len(par_mois) >= 36:
-            mois_tries = sorted(par_mois)
-            return [fin_du_mois(m) for m in mois_tries], [par_mois[m] for m in mois_tries]
-    return None
+        if resultat is None:
+            continue
+        par_mois = clotures_par_mois(resultat, mois_en_cours)
+        mois_tries = sorted(par_mois)
+        trous = mois_manquants(mois_tries)
+        print(f"{symbole} ({intervalle}) : {len(mois_tries)} mois"
+              + (f" de {mois_tries[0]} à {mois_tries[-1]}" if mois_tries else "") + f", {trous} mois manquants",
+              file=sys.stderr)
+        candidates.append((len(derniere_suite_complete(mois_tries)), derniere_suite_complete(mois_tries), par_mois))
+        if trous == 0 and len(mois_tries) >= 36:
+            break  # série mensuelle complète : inutile de lire les points quotidiens
+    if not candidates:
+        return None
+    _, suite, par_mois = max(candidates, key=lambda c: c[0])
+    if len(suite) < 36:
+        return None
+    return [fin_du_mois(m) for m in suite], [par_mois[m] for m in suite]
 
 
 def fin_du_mois(mois):
@@ -221,6 +274,10 @@ def main():
     l.append("")
     l.append("## C. Grandes tendances du marché (indices, investi si clôture mensuelle > moyenne 10 mois)")
     l.append("")
+    absents = [nom for symbole, nom in INDICES.items() if symbole not in resultats_c]
+    if absents:
+        l.append(f"Indices écartés faute d'une série mensuelle complète chez Yahoo : {', '.join(absents)}.")
+        l.append("")
     for symbole, res in resultats_c.items():
         l.append(f"### {res['nom']} (`{symbole}`, depuis {res['debut'][5:7]}/{res['debut'][:4]})")
         l.append("")

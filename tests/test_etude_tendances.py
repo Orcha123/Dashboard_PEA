@@ -207,6 +207,42 @@ def test_rapport_complet_sur_donnees_simulees(monkeypatch, tmp_path):
     assert "**A. Sélection** : aucun signal" in rapport
 
 
+def test_lecture_mensuelle_des_indices(monkeypatch):
+    from datetime import datetime, timezone
+
+    def reponse(jours, clotures, decalage=3600):
+        horodatages = [int(datetime(*j, tzinfo=timezone.utc).timestamp()) - decalage for j in jours]
+        return {"meta": {"gmtoffset": decalage}, "timestamp": horodatages, "indicators": {"quote": [{"close": clotures}]}}
+
+    # point mensuel daté du 1er à minuit heure de Paris (veille au soir en UTC) : rangé dans son mois
+    mensuel = reponse([(2024, 1, 1), (2024, 2, 1), (2024, 3, 1)], [10.0, 11.0, None])
+    assert L.clotures_par_mois(mensuel, "2024-12") == {"2024-01": 10.0, "2024-02": 11.0}
+    # points quotidiens : dernière clôture de chaque mois ; mois en cours exclu
+    quotidien = reponse([(2024, 1, 30), (2024, 1, 31), (2024, 2, 29), (2024, 3, 1)], [1.0, 2.0, 3.0, 4.0])
+    assert L.clotures_par_mois(quotidien, "2024-03") == {"2024-01": 2.0, "2024-02": 3.0}
+
+    assert L.mois_manquants(["2023-11", "2023-12", "2024-01"]) == 0
+    assert L.mois_manquants(["2023-10", "2024-01", "2024-04"]) == 4  # un point par trimestre
+    assert L.derniere_suite_complete(["2020-01", "2020-04", "2020-05", "2020-06"]) == ["2020-04", "2020-05", "2020-06"]
+    assert L.derniere_suite_complete([]) == []
+
+    # Yahoo renvoie un point par trimestre en mensuel : les points quotidiens prennent le relais
+    trimestriel = reponse([(2000 + i // 4, 3 * (i % 4) + 1, 1) for i in range(60)], [100.0 + i for i in range(60)])
+    jours = [(2000 + i // 12, i % 12 + 1, 15) for i in range(180)]
+    complet = reponse(jours, [50.0 + i for i in range(180)])
+    lus = []
+
+    def lire(serveur, symbole, plage, timeout=6, intervalle="1d", periode=None, **_):
+        lus.append(intervalle)
+        assert plage is None and periode[0] < 0  # tout l'historique, dates explicites
+        return trimestriel if intervalle == "1mo" else complet
+
+    monkeypatch.setattr(L, "lire_chart", lire)
+    dates, clotures = L.historique_mensuel("^TEST")
+    assert lus == ["1mo", "1d"]
+    assert len(dates) == 180 and dates[0] == "2000-01-31" and dates[-1] == "2014-12-31" and clotures[-1] == 229.0
+
+
 def test_mise_en_forme():
     assert L.fin_du_mois("2024-02") == "2024-02-29" and L.fin_du_mois("2023-12") == "2023-12-31"
     assert L.pct(0.1234) == "+12,3 %" and L.pct(0.5, 0, False) == "50 %" and L.pct(None) == "—"
