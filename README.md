@@ -146,6 +146,18 @@ par action sur la période de test). Rien n'a donc été ajouté à l'applicatio
 Le calcul tourne sur GitHub (`.github/workflows/etude_tendances.yml`, sans secret) ou en local :
 `python -m etudes.lancer_etude_tendances`.
 
+## Étude des dividendes (rente)
+
+Même méthode (protocole déposé avant tout calcul : `etudes/protocole_dividendes.md`), sur l'historique le plus long
+des dividendes du catalogue. Résultats complets : `etudes/resultats_dividendes.md`.
+
+En bref : les dividendes « solides » (versés sans baisse depuis 5 ans, plus élevés qu'il y a 5 ans, rendement hors
+des 20 % les plus élevés) ont connu deux fois moins de baisses dans les 3 années suivantes que les autres (22 % contre
+43 % sur la période de test, 2020 compris). À l'inverse, les 20 % de rendements les plus élevés ont baissé leur
+dividende dans 58 % des cas. Le rendement total, lui, n'est pas meilleur de façon démontrée.
+
+Calcul sur GitHub (`.github/workflows/etude_dividendes.yml`) ou en local : `python -m etudes.lancer_etude_dividendes`.
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -170,7 +182,7 @@ Le calcul tourne sur GitHub (`.github/workflows/etude_tendances.yml`, sans secre
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
-| `etudes/` | Étude des grandes tendances : protocole, calculs (`tendances.py`), lanceur sur données réelles, résultats |
+| `etudes/` | Études pré-enregistrées (grandes tendances, dividendes) : protocoles, calculs, lanceurs sur données réelles, résultats |
 | `tests/` | Tests automatiques (voir ci-dessous) |
 
 ## Tests et vérification automatique
@@ -189,7 +201,7 @@ python -m pytest tests
   Il vérifie aussi qu'un compte ne peut pas être supprimé tant qu'un abonnement est actif, et l'envoi du rapport
   d'alertes par e-mail.
 - Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe, comptes,
-  e-mails, données de marché, habillage, pages légales, étude des tendances).
+  e-mails, données de marché, habillage, pages légales, études des tendances et des dividendes).
 
 À chaque pull request, GitHub lance ces vérifications (`.github/workflows/tests.yml`) et affiche un voyant vert ou
 rouge avant la fusion. Pour rendre ce voyant obligatoire : *Settings > Branches > Add branch ruleset* sur `main`,
