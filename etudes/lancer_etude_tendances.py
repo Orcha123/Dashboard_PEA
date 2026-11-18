@@ -9,10 +9,10 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from catalogue_valeurs import ENRICHISSEMENT_CATALOGUE
-from donnees_marche import SERVEURS_YAHOO, historique_dix_ans, lire_chart
+from donnees_marche import SERVEURS_YAHOO, clotures_par_mois, historique_dix_ans, lire_chart
 from etudes import tendances as T
 
 INDICES = {"^GSPC": "S&P 500", "^FCHI": "CAC 40", "^GDAXI": "DAX", "^STOXX50E": "Euro Stoxx 50",
@@ -29,24 +29,6 @@ def historique_quotidien(symbole):
 
 
 DEBUT_HISTORIQUE = -2208994789  # 1er janvier 1900 en secondes Unix : tout l'historique disponible
-
-
-def clotures_par_mois(resultat, mois_en_cours):
-    """
-    {« AAAA-MM » : dernière clôture du mois} d'une réponse Yahoo (points mensuels ou quotidiens), mois en cours exclu.
-    Horodatages ramenés à l'heure de la place (+6 heures de marge : un point mensuel daté du 1er à minuit, heure
-    d'hiver ou d'été, reste dans son mois ; un point quotidien reste dans sa journée).
-    """
-    decalage = int((resultat.get("meta") or {}).get("gmtoffset") or 0) + 6 * 3600
-    clotures = ((resultat.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
-    par_mois = {}
-    for horodatage, cloture in sorted(zip(resultat.get("timestamp") or [], clotures)):
-        if cloture is None or float(cloture) <= 0:
-            continue
-        mois = datetime.fromtimestamp(int(horodatage) + decalage, tz=timezone.utc).strftime("%Y-%m")
-        if mois < mois_en_cours:
-            par_mois[mois] = float(cloture)
-    return par_mois
 
 
 def _rang_mois(mois):

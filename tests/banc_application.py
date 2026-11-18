@@ -10,6 +10,7 @@ d'environnement BOURSY_PROFIL_TEST :
 Avec BOURSY_STRIPE_TEST=pro (et le secret STRIPE_SECRET_KEY), un faux Stripe répond qu'un abonnement Pro est actif.
 Avec BOURSY_DIVIDENDES_10_ANS=1, les historiques sur 10 ans contiennent 10 ans de dividendes trimestriels.
 """
+import calendar
 import io
 import json
 import os
@@ -38,12 +39,12 @@ class _Reponse(io.BytesIO):
 
 
 def _serie(symbole, nombre):
-    """Cours simulés sur 10 ans (2 520 séances), toujours identiques pour un même symbole."""
+    """Cours simulés sur 10 ans (2 520 séances, ou plus si demandé), toujours identiques pour un même symbole."""
     hasard = random.Random(symbole)
     prix = hasard.uniform(15, 320)
     derive = hasard.uniform(-0.0002, 0.0007)
     clotures, hauts, bas = [], [], []
-    for _ in range(2520):
+    for _ in range(max(2520, nombre)):
         prix *= 1 + derive + hasard.gauss(0, 0.013)
         clotures.append(round(prix, 2))
         hauts.append(round(prix * (1 + abs(hasard.gauss(0, 0.006))), 2))
@@ -67,15 +68,26 @@ def _faux_urlopen(requete, timeout=None):
     if "/v1/finance/search" in adresse.path:
         return _Reponse(json.dumps({"quotes": [{"quoteType": "EQUITY", "symbol": "RACE.MI", "shortname": "Ferrari N.V.", "exchDisp": "Milan"}]}).encode())
     symbole = urllib.parse.unquote(adresse.path.rsplit("/", 1)[-1])
-    nombre = {"1d": 1, "5d": 5, "3mo": 64, "1y": 252, "2y": 504, "3y": 756, "10y": 2520}.get(parametres.get("range", ["1y"])[0], 252)
-    clotures, hauts, bas = _serie(symbole, nombre)
+    mensuel = parametres.get("interval", ["1d"])[0] == "1mo"
+    if mensuel:
+        # une clôture par mois sur 11 ans (points datés du 1er du mois), tirée de la même série quotidienne
+        clotures, hauts, bas = (serie[::-21][:132][::-1] for serie in _serie(symbole, 2520 + 21 * 12))
+        nombre = len(clotures)
+        annee_m, mois_m = time.gmtime().tm_year, time.gmtime().tm_mon
+        jours = []
+        for _ in range(nombre):
+            jours.append(int(calendar.timegm((annee_m, mois_m, 1, 0, 0, 0))))
+            annee_m, mois_m = (annee_m - 1, 12) if mois_m == 1 else (annee_m, mois_m - 1)
+    else:
+        nombre = {"1d": 1, "5d": 5, "3mo": 64, "1y": 252, "2y": 504, "3y": 756, "10y": 2520}.get(parametres.get("range", ["1y"])[0], 252)
+        clotures, hauts, bas = _serie(symbole, nombre)
+        jours, instant = [], time.time()
+        while len(jours) < nombre:
+            if time.gmtime(instant).tm_wday < 5:
+                jours.append(int(instant))
+            instant -= 86400
     if symbole == "EURUSD=X":
         clotures = [1.0862] * nombre
-    jours, instant = [], time.time()
-    while len(jours) < nombre:
-        if time.gmtime(instant).tm_wday < 5:
-            jours.append(int(instant))
-        instant -= 86400
     resultat = {
         "meta": {"regularMarketPrice": clotures[-1], "currency": "USD" if "." not in symbole and not symbole.startswith("^") else "EUR",
                  "chartPreviousClose": clotures[0]},
@@ -84,7 +96,7 @@ def _faux_urlopen(requete, timeout=None):
     }
     if "div" in parametres.get("events", [""])[0]:
         maintenant = time.time()
-        if nombre == 2520 and os.environ.get("BOURSY_DIVIDENDES_10_ANS"):
+        if (nombre == 2520 or mensuel) and os.environ.get("BOURSY_DIVIDENDES_10_ANS"):
             # 10 ans de dividendes trimestriels qui progressent de 5 % par an ; un tiers des valeurs l'a divisé par deux
             # il y a 2 ans environ (pour la solidité des dividendes)
             hasard_div = random.Random("dividendes " + symbole)

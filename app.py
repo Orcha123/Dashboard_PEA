@@ -63,6 +63,7 @@ from donnees_marche import (  # Yahoo Finance, heures de marché, calculs sur le
     creneau_cours,
     heure_paris,
     historique_dix_ans,
+    historique_mensuel_dividendes,
     inspecter_dividende,
     marches_ouverts,
     niveau_et_variation,
@@ -919,9 +920,22 @@ def historique_long(symbole):
         return None
 
 
-@st.cache_data(ttl=21600, max_entries=300)
+@st.cache_data(ttl=10800, max_entries=160)  # 10 ans de cours quotidiens : lourd, gardé 3 heures (catalogue + radar)
 def _historique_long_yahoo(symbole):
     return historique_dix_ans(symbole)
+
+
+def historique_dividendes(symbole):
+    """Clôtures mensuelles et dividendes sur 11 ans (léger) pour la solidité des dividendes ; None si indisponible."""
+    try:
+        return _historique_dividendes_yahoo(str(symbole).strip())
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=21600, max_entries=400)
+def _historique_dividendes_yahoo(symbole):
+    return historique_mensuel_dividendes(symbole)
 
 
 @st.cache_data(ttl=86400, max_entries=4)
@@ -930,7 +944,7 @@ def _solidite_catalogue(annee, jour):
     Étude des dividendes appliquée à tout le catalogue (hors ETF) au 31 décembre de l'année : valeurs de l'étude par
     symbole et seuils des 20 % les plus élevés. Erreur (non mise en cache) si moins de la moitié des historiques est lue.
     """
-    return solidite_dividendes.analyser_catalogue(historique_long, annee)
+    return solidite_dividendes.analyser_catalogue(historique_dividendes, annee)
 
 
 @st.cache_resource
@@ -963,7 +977,7 @@ def analyse_solidite_dividendes(symboles, calculer=False):
     demandes = {}
     for symbole in symboles:
         symbole = str(symbole).strip()
-        demandes[symbole] = catalogue.get(symbole) or avec_statut(solidite_dividendes.caracteristiques(historique_long(symbole), annee))
+        demandes[symbole] = catalogue.get(symbole) or avec_statut(solidite_dividendes.caracteristiques(historique_dividendes(symbole), annee))
     noms = {sym: (nom, secteur, devise) for nom, (sym, devise, secteur, *_reste) in ENRICHISSEMENT_CATALOGUE.items()}
     return {"annee": annee, "seuils": seuils_catalogue, "catalogue": catalogue, "demandes": demandes, "noms": noms}
 
