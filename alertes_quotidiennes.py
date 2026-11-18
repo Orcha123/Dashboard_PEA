@@ -18,7 +18,6 @@ Variables d'environnement (secrets GitHub du dépôt) :
 import html
 import json
 import os
-import smtplib
 import sys
 import urllib.error
 import urllib.parse
@@ -28,6 +27,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from catalogue_valeurs import symbole_a_jour  # symboles Yahoo changés (ex. FDJ.PA -> FDJU.PA)
+from courriels import envoyer_smtp
 
 DELAI_RELANCE_JOURS = 7
 CLES_TECHNIQUES = (
@@ -177,10 +177,8 @@ def composer_email(expediteur, destinataire, valeurs):
 
 
 def envoyer(message):
-    expediteur, mot_de_passe = _env("SMTP_EMAIL"), _env("SMTP_PASSWORD")
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as serveur:
-        serveur.login(expediteur, mot_de_passe)
-        serveur.sendmail(expediteur, message["To"], message.as_string())
+    """Envoi par le compte Gmail des secrets GitHub (même fonction que l'application : courriels.py)."""
+    envoyer_smtp(message, _env("SMTP_EMAIL"), _env("SMTP_PASSWORD"))
 
 
 def main():

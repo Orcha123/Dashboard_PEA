@@ -142,6 +142,8 @@ algorithmes sur tout le catalogue (`journal_signaux.py`), dans la table `signaux
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
 | `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |
 | `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |
+| `comptes.py` | Compte administrateur, table protégée `abonnements`, niveau retenu, suppression du compte (sans Streamlit) |
+| `courriels.py` | Composition et envoi des e-mails (SMTP), partagé par l'application et les tâches du soir |
 | `alertes_quotidiennes.py` | Tâche du soir : e-mails d'alerte |
 | `journal_signaux.py` | Tâche du soir : enregistrement mensuel des signaux |
 | `resume_mensuel.py` | Tâche du soir : résumé mensuel du DCA par e-mail (aussi utilisé pour l'aperçu dans l'application) |
@@ -160,7 +162,10 @@ python -m pytest tests
   profil (visiteur, gratuit, Pro), il vérifie que les 5 onglets et les principaux volets s'affichent sans erreur, puis
   rejoue les actions clés : noter une décision, enregistrer une allocation cible, enregistrer un achat, et ouvrir
   les fonctions Pro à un abonné vérifié sur Stripe.
-- Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe).
+  Il vérifie aussi qu'un compte ne peut pas être supprimé tant qu'un abonnement est actif, et l'envoi du rapport
+  d'alertes par e-mail.
+- Les autres fichiers testent les modules un par un (allocation, résumé mensuel, carnet, paiements Stripe, comptes,
+  e-mails).
 
 À chaque pull request, GitHub lance ces vérifications (`.github/workflows/tests.yml`) et affiche un voyant vert ou
 rouge avant la fusion. Pour rendre ce voyant obligatoire : *Settings > Branches > Add branch ruleset* sur `main`,
@@ -171,7 +176,7 @@ avec « Require status checks to pass » et la vérification `tests`.
 `app.py` est découpé étape par étape, chaque étape vérifiée par ces tests :
 
 1. ✅ Paiements Stripe (`paiements_stripe.py`), avec le filet de tests.
-2. Comptes et abonnement protégé (Supabase), e-mails.
+2. ✅ Comptes et abonnement protégé (`comptes.py`), e-mails (`courriels.py`).
 3. Données de marché (Yahoo Finance : cours, historiques, change).
 4. Habillage (styles) et pages légales.
 5. Les onglets, un par un.
