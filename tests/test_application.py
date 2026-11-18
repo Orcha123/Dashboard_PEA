@@ -241,6 +241,35 @@ def test_solidite_des_dividendes(monkeypatch):
         st.cache_resource.clear()
 
 
+def test_projection_prudente_de_la_rente(monkeypatch):
+    """Onglet 3 : la projection prudente classe les lignes du portefeuille et projette la rente sur 20 ans."""
+    import streamlit as st
+
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    monkeypatch.setenv("BOURSY_DIVIDENDES_10_ANS", "1")
+    try:
+        application = lancer("pro", monkeypatch)
+        _bouton(application, "🛡️ Calculer la projection prudente").click()
+        application.run()
+        verifier_sans_erreur(application)
+        contenu = textes(application)
+        assert "Point de départ" in contenu and "Pourquoi pas la croissance passée" in contenu
+        tableau = next(t.value for t in application.dataframe if "Rente prudente (euros d'aujourd'hui)" in t.value.columns)
+        assert len(tableau) == 6 and tableau["Horizon"].iloc[-1].startswith("Dans 20 ans")
+        # sans apport ni réinvestissement, la rente ne grossit pas
+        application.number_input(key="nb_apport_rente_prudente").set_value(0)
+        application.toggle(key="tg_reinvestir_rente_prudente").set_value(False)
+        application.run()
+        verifier_sans_erreur(application)
+        tableau = next(t.value for t in application.dataframe if "Rente prudente (euros d'aujourd'hui)" in t.value.columns)
+        montants = [int(v.split(" €")[0].replace(" ", "")) for v in tableau["Rente prudente (euros d'aujourd'hui)"]]
+        assert montants == sorted(montants, reverse=True)
+    finally:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+
+
 class _FauxSMTP:
     envois = []
 

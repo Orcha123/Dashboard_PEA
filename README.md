@@ -165,6 +165,13 @@ celles de l'étude (`solidite_dividendes.py` réutilise `etudes/dividendes.py`),
 comme dans l'étude. Le premier calcul du jour lit l'historique de tout le catalogue (une vingtaine de secondes, sur
 demande) ; il s'affiche ensuite d'emblée pour tous les utilisateurs.
 
+**Projection prudente de la rente** (onglet Calendrier, Premium et Pro) : ce que la rente du portefeuille pourrait
+devenir dans 1 à 20 ans, en euros d'aujourd'hui, avec des hypothèses prudentes tirées de l'étude : pas de croissance
+réelle du dividende pour les lignes solides et neutres, l'écart mesuré pour les lignes à surveiller, les apports
+mensuels (et, au choix, les dividendes réinvestis) placés en dividendes solides au rendement médian de la liste, et la
+rente l'année d'une crise comme 2020 (pire année mesurée). La croissance passée du catalogue (+7,4 % par an pour les
+solides) n'est pas utilisée : elle est gonflée par le biais du survivant et le rattrapage d'après 2009.
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -173,7 +180,7 @@ demande) ; il s'affiche ensuite d'emblée pour tous les utilisateurs.
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
-| `solidite_dividendes.py` | Solidité des dividendes et alertes de rendement, issues de l'étude des dividendes (sans Streamlit) |
+| `solidite_dividendes.py` | Solidité des dividendes, alertes de rendement et projection prudente de la rente, issues de l'étude des dividendes (sans Streamlit) |
 | `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |
 | `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |
 | `comptes.py` | Compte administrateur, table protégée `abonnements`, niveau retenu, suppression du compte (sans Streamlit) |
