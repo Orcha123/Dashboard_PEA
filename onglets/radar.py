@@ -1,6 +1,7 @@
 """
 Onglet 1 de Boursy : indicateurs du radar, achat du mois selon l'allocation cible, centre d'alertes et résumé
-mensuel, tableaux 1 à 4 du radar et bilan des signaux (rejeu historique et journal en direct).
+mensuel, tableaux 1 à 4 du radar, solidité des dividendes (étude pré-enregistrée) et bilan des signaux (rejeu
+historique et journal en direct).
 
 Toutes les informations venues du reste de l'application sont des paramètres nommés d'afficher() :
 leur liste est la liste exacte des dépendances de l'onglet (vérifiée par tests/test_application.py).
@@ -16,6 +17,7 @@ from allocation_dca import normaliser_poids, statut_achat
 from habillage import afficher_html, markdown_fr, nombres_fr
 from moteur_signaux import ALGORITHMES_SIGNAUX, ecart_vs_autres_actions_du_mois, performance_apres
 from resume_mensuel import JOURS_AVANT_ACHAT, construire_resume, date_en_toutes_lettres, fiches_valeurs, jour_dca_valide, prochaine_date_dca
+from solidite_dividendes import TAUX_MESURES, evolution_dividende
 
 
 def afficher(
@@ -30,6 +32,7 @@ def afficher(
     afficher_verrou_saas,
     alertes_detectees,
     allocation_personnalisee,
+    analyse_solidite_dividendes,
     bilan_signaux_symbole,
     budget_courant,
     candidats_tries,
@@ -801,6 +804,109 @@ def afficher(
             </div>
             """
             afficher_html(html_radar_pro)
+
+    # ==========================================================================
+    # SOLIDITÉ DES DIVIDENDES (ÉTUDE PRÉ-ENREGISTRÉE)
+    # ==========================================================================
+    with st.expander("🛡️ Solidité des dividendes : les rentes qui tiennent dans la durée", expanded=False):
+        if not est_premium_ou_pro:
+            afficher_verrou_saas(
+                "Solidité des dividendes et alertes de rendement",
+                "⚡ Offre Premium (4,90 €/mois) ou 👑 Pro (8,90 €/mois)",
+                "Repérez les dividendes les plus fiables pour une rente, et ceux dont le rendement élevé annonce souvent une baisse.",
+            )
+        else:
+            def part_sol(x):
+                return f"{x * 100:.0f} %"
+
+            solide_groupe, solide_autres = (part_sol(x) for x in TAUX_MESURES["solide"])
+            eleve_groupe, eleve_autres = (part_sol(x) for x in TAUX_MESURES["rendement_eleve"])
+            st.caption(
+                "Issu de l'étude de Boursy sur l'historique des dividendes du catalogue, avec un protocole écrit avant les "
+                f"calculs. Sur la période de test (2015-2022, 2020 compris), {solide_groupe} des dividendes « solides » ont "
+                f"baissé au moins une fois dans les 3 ans, contre {solide_autres} des autres ; parmi les 20 % de rendements "
+                f"les plus élevés, {eleve_groupe} ont baissé, contre {eleve_autres}. Le rendement total des actions "
+                "solides n'a pas été meilleur de façon démontrée : c'est la rente qui est plus sûre, pas la performance."
+            )
+            symboles_radar_sol = {
+                nom_s: info_s["symbole"].strip() for nom_s, info_s in st.session_state["watchlist"].items()
+                if nom_s in actions_autorisees and isinstance(info_s, dict) and info_s.get("symbole")
+                and "ETF" not in str(info_s.get("secteur", ""))
+            }
+            liste_symboles_sol = sorted(set(symboles_radar_sol.values()))
+            analyse_sol = analyse_solidite_dividendes(liste_symboles_sol)
+            if analyse_sol is None:
+                if st.button("🛡️ Analyser la solidité des dividendes", type="primary", key="btn_solidite_dividendes"):
+                    with st.spinner("📥 Lecture de l'historique des dividendes du catalogue..."):
+                        analyse_sol = analyse_solidite_dividendes(liste_symboles_sol, calculer=True)
+                    if analyse_sol is None:
+                        st.warning("Historiques indisponibles pour le moment (Yahoo Finance). Réessayez dans quelques minutes.")
+                else:
+                    st.caption("Le premier calcul du jour lit l'historique de tout le catalogue (une vingtaine de secondes) ; "
+                               "il s'affiche ensuite d'emblée, pour tous les utilisateurs, jusqu'au lendemain.")
+            if analyse_sol:
+                annee_sol, seuils_sol = analyse_sol["annee"], analyse_sol["seuils"]
+                non_classee = {"libelle": "— Non classée", "explication": "historique indisponible", "alertes": [], "solide": False}
+
+                def rendement_sol(valeurs_s):
+                    return f"{valeurs_s['H'] * 100:.1f} %".replace(".", ",") if valeurs_s and valeurs_s.get("retenue") else "—"
+
+                st.markdown(f"##### Votre radar : situation au 31/12/{annee_sol}")
+                lignes_sol = []
+                for nom_s, symbole_s in sorted(symboles_radar_sol.items()):
+                    valeurs_s, verdict_s = analyse_sol["demandes"].get(symbole_s) or (None, non_classee)
+                    lignes_sol.append({
+                        "Valeur": nom_s,
+                        "Verdict": verdict_s["libelle"],
+                        f"Dividende par action {annee_sol - 5} → {annee_sol}": evolution_dividende(valeurs_s, annee_sol),
+                        f"Rendement au 31/12/{annee_sol}": rendement_sol(valeurs_s),
+                        "Pourquoi": verdict_s["explication"],
+                    })
+                if lignes_sol:
+                    st.dataframe(pd.DataFrame(lignes_sol), width="stretch", hide_index=True)
+                else:
+                    st.info("Aucune action dans votre radar (les ETF ne sont pas classés).")
+                a_risque_sol = [l["Valeur"] for l in lignes_sol if "⚠️" in l["Verdict"]]
+                if a_risque_sol:
+                    st.warning(
+                        f"⚠️ **Dividendes à surveiller dans votre radar** : {', '.join(a_risque_sol)}. Dans l'étude, "
+                        f"{eleve_groupe} des rendements les plus élevés ont baissé leur dividende dans les 3 années "
+                        "suivantes : un rendement très élevé annonce souvent une baisse déjà attendue par le marché."
+                    )
+                if "H" in seuils_sol:
+                    seuil_sol = f"{seuils_sol['H'] * 100:.2f}".replace(".", ",")
+                    st.caption(
+                        f"Rendement élevé : {seuil_sol} % ou plus au 31/12/{annee_sol} (les 20 % les plus élevés du "
+                        "catalogue). Comme dans l'étude, le classement porte sur la dernière année complète ; il change chaque "
+                        "début d'année. Dividendes dans la devise de l'action."
+                    )
+
+                st.markdown("##### Les dividendes solides du catalogue")
+                solides_sol = []
+                for symbole_s, (valeurs_s, verdict_s) in analyse_sol["catalogue"].items():
+                    if not verdict_s["solide"]:
+                        continue
+                    nom_s, secteur_s, _devise_s = analyse_sol["noms"].get(symbole_s, (symbole_s, "", ""))
+                    croissance_s = valeurs_s.get("G")
+                    solides_sol.append({
+                        "Valeur": nom_s,
+                        "Secteur": secteur_s,
+                        f"Rendement au 31/12/{annee_sol}": rendement_sol(valeurs_s),
+                        "Croissance du dividende (5 ans)": (f"{croissance_s * 100:+.1f} % / an".replace(".", ",")
+                                                            if croissance_s is not None else "—"),
+                        "Verdict": verdict_s["libelle"],
+                        "_tri": valeurs_s["H"],
+                    })
+                classees_sol = sum(1 for valeurs_s, _ in analyse_sol["catalogue"].values() if valeurs_s and valeurs_s.get("retenue"))
+                if solides_sol:
+                    solides_sol.sort(key=lambda l: -l["_tri"])
+                    st.dataframe(pd.DataFrame(solides_sol).drop(columns="_tri"), width="stretch", hide_index=True)
+                st.caption(
+                    f"{len(solides_sol)} dividendes solides sur {classees_sol} actions du catalogue classées, du rendement le plus "
+                    "élevé au plus faible. Ce n'est pas une liste d'achat : même parmi les solides, environ une sur cinq a baissé "
+                    "son dividende dans les 3 ans pendant l'étude. Diversifiez (secteurs, pays) et, pour un PEA, vérifiez "
+                    "l'éligibilité de la valeur : les dividendes étrangers y subissent une retenue à la source non récupérable."
+                )
 
     # ==========================================================================
     # BILAN DES SIGNAUX : L'ALGORITHME REJOUÉ SUR LE PASSÉ

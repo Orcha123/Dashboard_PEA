@@ -158,6 +158,13 @@ dividende dans 58 % des cas. Le rendement total, lui, n'est pas meilleur de faç
 
 Calcul sur GitHub (`.github/workflows/etude_dividendes.yml`) ou en local : `python -m etudes.lancer_etude_dividendes`.
 
+**Dans Boursy** (onglet Radar, volet « Solidité des dividendes », offres Premium et Pro) : verdict pour chaque action
+du radar (🛡️ solide, ⚠️ risque de baisse du dividende, neutre), avec l'évolution du dividende sur 6 ans et le
+rendement au 31 décembre, puis la liste des dividendes solides de tout le catalogue. Les définitions sont exactement
+celles de l'étude (`solidite_dividendes.py` réutilise `etudes/dividendes.py`), appliquées à la dernière année complète
+comme dans l'étude. Le premier calcul du jour lit l'historique de tout le catalogue (une vingtaine de secondes, sur
+demande) ; il s'affiche ensuite d'emblée pour tous les utilisateurs.
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -166,6 +173,7 @@ Calcul sur GitHub (`.github/workflows/etude_dividendes.yml`) ou en local : `pyth
 | `moteur_signaux.py` | Indicateurs, score du radar et algorithmes du bilan (sans Streamlit) |
 | `catalogue_valeurs.py` | Catalogue des valeurs suivies, et symboles renommés (ex. FDJ.PA devenu FDJU.PA) |
 | `allocation_dca.py` | Achat du mois selon l'allocation cible (sans Streamlit) |
+| `solidite_dividendes.py` | Solidité des dividendes et alertes de rendement, issues de l'étude des dividendes (sans Streamlit) |
 | `carnet_decisions.py` | Carnet de décisions : enregistrement, résultats face à l'ETF Monde, relecture (sans Streamlit) |
 | `paiements_stripe.py` | Abonnements Stripe : qui a droit à Premium ou Pro (sans Streamlit, sans lecture de secret) |
 | `comptes.py` | Compte administrateur, table protégée `abonnements`, niveau retenu, suppression du compte (sans Streamlit) |

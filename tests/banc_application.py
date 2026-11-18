@@ -8,6 +8,7 @@ d'environnement BOURSY_PROFIL_TEST :
 - « gratuit » : compte connecté, sans abonnement ;
 - « pro » : compte connecté, abonnement Pro dans la table protégée.
 Avec BOURSY_STRIPE_TEST=pro (et le secret STRIPE_SECRET_KEY), un faux Stripe répond qu'un abonnement Pro est actif.
+Avec BOURSY_DIVIDENDES_10_ANS=1, les historiques sur 10 ans contiennent 10 ans de dividendes trimestriels.
 """
 import io
 import json
@@ -83,8 +84,20 @@ def _faux_urlopen(requete, timeout=None):
     }
     if "div" in parametres.get("events", [""])[0]:
         maintenant = time.time()
-        resultat["events"] = {"dividends": {str(int(maintenant - j * 86400)): {"date": int(maintenant - j * 86400), "amount": round(clotures[-1] * 0.012, 2)}
-                                            for j in (40, 130, 220, 310)}}
+        if nombre == 2520 and os.environ.get("BOURSY_DIVIDENDES_10_ANS"):
+            # 10 ans de dividendes trimestriels qui progressent de 5 % par an ; un tiers des valeurs l'a divisé par deux
+            # il y a 2 ans environ (pour la solidité des dividendes)
+            hasard_div = random.Random("dividendes " + symbole)
+            base, coupe = clotures[-1] * hasard_div.uniform(0.003, 0.02), hasard_div.random() < 1 / 3
+            versements = {}
+            for trimestre in range(1, 40):
+                instant_div = int(maintenant - trimestre * 91.25 * 86400)
+                montant_div = base * 1.05 ** (-trimestre / 4) * (0.5 if coupe and 6 <= trimestre <= 9 else 1.0)
+                versements[str(instant_div)] = {"date": instant_div, "amount": round(montant_div, 4)}
+            resultat["events"] = {"dividends": versements}
+        else:
+            resultat["events"] = {"dividends": {str(int(maintenant - j * 86400)): {"date": int(maintenant - j * 86400), "amount": round(clotures[-1] * 0.012, 2)}
+                                                for j in (40, 130, 220, 310)}}
     return _Reponse(json.dumps({"chart": {"result": [resultat]}}).encode())
 
 

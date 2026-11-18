@@ -175,7 +175,7 @@ def mesures_suivantes(serie, change, devise, annee):
 # ==============================================================================
 # OBSERVATIONS ET GROUPES
 # ==============================================================================
-def _plus_hauts(valeurs):
+def plus_hauts(valeurs):
     """Les 20 % de valeurs les plus élevées (égalités départagées par le nom, pour un résultat reproductible)."""
     ordre = sorted(valeurs, key=lambda nom: (valeurs[nom], nom))
     taille = max(1, int(round(len(ordre) * PART_GROUPE)))
@@ -203,7 +203,7 @@ def observations_dividendes(series, change, devises, annees):
         for candidat in ("G", "H", "Q"):
             valeurs = {o["action"]: o["valeurs"][candidat] for o in de_l_annee if candidat in o["valeurs"]}
             if len(valeurs) >= MINIMUM_ACTIONS:
-                hauts[candidat] = _plus_hauts(valeurs)
+                hauts[candidat] = plus_hauts(valeurs)
                 for o in de_l_annee:
                     if o["action"] in valeurs:
                         o[f"decision_{candidat}"] = "HAUT" if o["action"] in hauts[candidat] else "AUTRE"

@@ -215,6 +215,32 @@ def test_bilan_des_signaux(monkeypatch):
     assert "Toutes les observations" in contenu and "Comparaison des trois algorithmes" in contenu
 
 
+def test_solidite_des_dividendes(monkeypatch):
+    """Onglet 1 : l'analyse de la solidité des dividendes classe le radar et liste les dividendes solides du catalogue."""
+    import streamlit as st
+
+    # Les caches de Streamlit sont partagés entre les tests : ceux d'avant ont lu des historiques sans dividendes anciens
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    monkeypatch.setenv("BOURSY_DIVIDENDES_10_ANS", "1")
+    try:
+        application = lancer("pro", monkeypatch)
+        _bouton(application, "🛡️ Analyser la solidité").click()
+        application.run()
+        verifier_sans_erreur(application)
+        contenu = textes(application)
+        assert "Votre radar : situation au 31/12/" in contenu and "Les dividendes solides du catalogue" in contenu
+        verdicts = [v for tableau in application.dataframe for v in tableau.value.get("Verdict", [])]
+        assert any("Solide" in v for v in verdicts) and any("Neutre" in v for v in verdicts)
+        assert any("Risque de baisse" in v for v in verdicts)
+        # l'analyse du jour s'affiche ensuite d'emblée, sans nouveau calcul demandé
+        suivante = lancer("pro", monkeypatch)
+        assert "Les dividendes solides du catalogue" in textes(suivante)
+    finally:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+
+
 class _FauxSMTP:
     envois = []
 
