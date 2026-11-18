@@ -31,6 +31,9 @@ CANDIDATS_ALERTE = ("H", "Q")
 # mesure -> horizon en mois
 MESURES = {"baisse_3_ans": 36, "rendement_36_mois": 36, "perte_36_mois": 36}
 COMPLEMENTS = {"baisse_1_an": 12, "rendement_12_mois": 12, "croissance_dividende_3_ans": 36}
+# ajouté après le premier calcul, signalé comme exploratoire : baisse « durable », qui ne se contente pas d'effacer la
+# hausse de l'année précédente (dividende exceptionnel, versement décalé d'une année civile à l'autre)
+EXPLORATOIRES = {"baisse_durable_3_ans": 36}
 
 
 # ==============================================================================
@@ -48,6 +51,16 @@ def dividendes_par_annee(dividendes):
 def est_baisse(precedent, courant):
     """Baisse de plus de 10 % (suppression comprise) d'un dividende qui était versé."""
     return precedent > 0 and courant < SEUIL_BAISSE * precedent
+
+
+def est_baisse_durable(d, annee):
+    """
+    Baisse de plus de 10 % par rapport aux DEUX années précédentes (à la plus faible des deux, si les deux étaient
+    versées) : un dividende exceptionnel ou un versement décalé d'une année civile à l'autre n'en est pas une.
+    """
+    precedent, avant = d.get(annee - 1, 0.0), d.get(annee - 2, 0.0)
+    base = min(precedent, avant) if avant > 0 else precedent
+    return precedent > 0 and d.get(annee, 0.0) < SEUIL_BAISSE * base
 
 
 def preparer_serie(mois, clotures, dividendes):
@@ -142,12 +155,13 @@ def rendement_et_perte(rendements):
 def mesures_suivantes(serie, change, devise, annee):
     """Mesures des années qui suivent la décision (absentes si les données ne couvrent pas l'horizon)."""
     resultat = {}
-    d = {a: dividende(serie, a) for a in range(annee, annee + 4)}
+    d = {a: dividende(serie, a) for a in range(annee - 1, annee + 4)}
     if annee + 1 <= DERNIERE_ANNEE:
         resultat["baisse_1_an"] = 1.0 if est_baisse(d[annee], d[annee + 1]) else 0.0
     if annee + 3 <= DERNIERE_ANNEE:
         resultat["baisse_3_ans"] = 1.0 if any(est_baisse(d[a - 1], d[a]) for a in range(annee + 1, annee + 4)) else 0.0
         resultat["croissance_dividende_3_ans"] = d[annee + 3] / d[annee] - 1.0
+        resultat["baisse_durable_3_ans"] = 1.0 if any(est_baisse_durable(d, a) for a in range(annee + 1, annee + 4)) else 0.0
         rendements = rendements_mensuels(serie, change, devise, f"{annee + 1}-01", 36)
         if rendements is not None:
             resultat["rendement_36_mois"], resultat["perte_36_mois"] = rendement_et_perte(rendements)
@@ -220,7 +234,7 @@ def mesurer(observations):
         obs = periode(observations, nom_periode)
         for candidat in CANDIDATS:
             classees = [o for o in obs if f"decision_{candidat}" in o]
-            for cle, horizon in {**MESURES, **COMPLEMENTS}.items():
+            for cle, horizon in {**MESURES, **COMPLEMENTS, **EXPLORATOIRES}.items():
                 r = ecart_vs_autres_actions_du_mois(classees, "HAUT", cle, horizon, cle_decision=f"decision_{candidat}")
                 if r and r["bas"] is not None:
                     erreur_type = (r["haut"] - r["bas"]) / (2 * Z_95)
@@ -295,4 +309,13 @@ def taux_de_baisse_par_annee(series, premiere, derniere=DERNIERE_ANNEE):
             baisses += est_baisse(dividende(serie, annee - 1), dividende(serie, annee))
         if versantes >= MINIMUM_ACTIONS:
             resultat[annee] = (versantes, baisses)
+    return resultat
+
+
+def baisses_de_l_annee(series, annee):
+    """Journal de contrôle : [(action, D(a-1), D(a), D(a+1))] des baisses de l'année a (actions couvertes depuis a-1)."""
+    resultat = []
+    for nom, serie in sorted(series.items()):
+        if couverte_depuis(serie, f"{annee - 1}-01") and est_baisse(dividende(serie, annee - 1), dividende(serie, annee)):
+            resultat.append((nom, dividende(serie, annee - 1), dividende(serie, annee), dividende(serie, annee + 1)))
     return resultat

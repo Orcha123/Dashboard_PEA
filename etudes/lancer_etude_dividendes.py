@@ -116,6 +116,11 @@ def main():
     verdicts = D.verdicts(resultats)
     decisions = D.decisions_pour_boursy(verdicts)
     baisses_par_annee = D.taux_de_baisse_par_annee(series, premiere_annee - D.ANNEES_HISTORIQUE + 1)
+    for annee in sorted(baisses_par_annee):  # journal de contrôle : chaque baisse, D(a-1) -> D(a) -> D(a+1)
+        detail = D.baisses_de_l_annee(series, annee)
+        if detail:
+            print(f"Baisses {annee} : " + " ; ".join(f"{nom} {a:.3g}>{b:.3g}>{c:.3g}" for nom, a, b, c in detail),
+                  file=sys.stderr)
     annees = sorted({o["annee"] for o in observations})
     par_annee = {a: sum(1 for o in observations if o["annee"] == a) for a in annees}
     conception = [a for a in annees if a <= D.FIN_CONCEPTION]
@@ -195,6 +200,21 @@ def main():
         l.append(f"| {candidat} {libelle} | {taux(g1)} / {taux(a1)} | {cellule(resultats.get((candidat, 'baisse_1_an', 'test')))} | "
                  f"{cellule(resultats.get((candidat, 'rendement_12_mois', 'test')))} | {pct(gc)} / {pct(ac)} | "
                  f"{cellule(resultats.get((candidat, 'croissance_dividende_3_ans', 'test')))} |")
+    l.append("")
+
+    l.append("## Contrôle exploratoire (ajouté après le premier calcul) : baisses « durables »")
+    l.append("")
+    l.append("Même mesure principale, en ne comptant que les baisses par rapport aux deux années précédentes : un dividende "
+             "exceptionnel ou un versement décalé d'une année civile à l'autre ne compte plus comme une baisse. Ce contrôle "
+             "ne change pas le verdict ; il dit si le résultat tient sans ces cas.")
+    l.append("")
+    l.append("| Candidat | Groupe : baisse durable en 3 ans (test) | Autres (test) | Écart (test, corrigé) | Écart (conception) |")
+    l.append("| --- | --- | --- | --- | --- |")
+    for candidat, libelle in D.CANDIDATS.items():
+        groupe, autres, n_g, n_a = D.taux_par_groupe(observations, candidat, "baisse_durable_3_ans", "test")
+        l.append(f"| {candidat} {libelle} | {taux(groupe)} ({n_g} obs.) | {taux(autres)} ({n_a} obs.) | "
+                 f"{cellule(resultats.get((candidat, 'baisse_durable_3_ans', 'test')), corrigee=True)} | "
+                 f"{cellule(resultats.get((candidat, 'baisse_durable_3_ans', 'conception')))} |")
     l.append("")
 
     l.append("## Verdict selon les critères pré-enregistrés")

@@ -147,6 +147,17 @@ def test_regularite_detectee_quand_elle_persiste():
     assert D.decisions_pour_boursy(verdicts)["score"] == "S"
 
 
+def test_baisse_durable_et_journal():
+    exceptionnel = {2018: 1.0, 2019: 2.0, 2020: 1.0, 2021: 1.0}  # dividende exceptionnel en 2019
+    assert D.est_baisse(2.0, 1.0) and not D.est_baisse_durable(exceptionnel, 2020)
+    assert D.est_baisse_durable({2018: 1.0, 2019: 1.0, 2020: 0.5}, 2020)
+    assert D.est_baisse_durable({2019: 1.0, 2020: 0.5}, 2020)  # pas de dividende en 2018 : comparaison à 2019
+    serie = _serie({**{a: 1.0 for a in range(2010, 2026)}, 2019: 2.0})
+    m = D.mesures_suivantes(serie, None, "EUR", 2018)
+    assert m["baisse_3_ans"] == 1.0 and m["baisse_durable_3_ans"] == 0.0
+    assert D.baisses_de_l_annee({"A": serie}, 2020) == [("A", 2.0, 1.0, 1.0)]
+
+
 def test_taux_de_baisse_par_annee():
     series = {f"A{k}": _serie({a: (0.5 if (a == 2020 and k < 4) else 1.0) for a in range(1995, 2026)}) for k in range(10)}
     taux = D.taux_de_baisse_par_annee(series, 2000)
@@ -201,7 +212,7 @@ def test_rapport_complet_sur_donnees_simulees(monkeypatch, tmp_path):
                   "## Mesures complémentaires", "## Verdict selon les critères pré-enregistrés",
                   "**Ce que le protocole prévoit pour Boursy**"):
         assert titre in rapport, titre
-    assert "| 2020 |" in rapport and "| S Solide" in rapport
+    assert "| 2020 |" in rapport and "| S Solide" in rapport and "## Contrôle exploratoire" in rapport
 
 
 if __name__ == "__main__":
