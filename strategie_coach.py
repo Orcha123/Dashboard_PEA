@@ -352,6 +352,31 @@ def plan_action(constats, maximum=7):
 # ==============================================================================
 # RAPPORT (MOTEUR LOCAL) ET DOSSIER POUR GEMINI
 # ==============================================================================
+def section_rente(d):
+    """Votre rente : solidité, résistance à une crise et projection prudente (chiffres des onglets Radar et Calendrier)."""
+    lignes = ["#### 🛡️ Votre rente : solidité, crise et projection"]
+    if not d["acces_rente"]:
+        return lignes + ["- 🔒 Réservées aux offres Premium et Pro : part solide de la rente, lignes à surveiller, rente en cas de "
+                         "crise et projection prudente."]
+    solidite = (d["rente"] or {}).get("solidite")
+    if not solidite:
+        return lignes + ["- Pas encore calculée aujourd'hui : utilisez le bouton « 🛡️ Ajouter la solidité de ma rente » ci-dessous "
+                         "(ou lancez l'audit 🧭 0, qui la calcule)."]
+    rente, parts = solidite["rente"], solidite["parts"]
+    if rente <= 0:
+        return lignes + ["- Aucun dividende attendu sur vos lignes : la rente viendra de vos prochains achats."]
+    lignes.append(f"- **Solidité** : {_eur(parts['solide'])} solides ({_pc(parts['solide'] / rente)}), {_eur(parts['neutre'])} neutres "
+                  f"ou non classés ({_pc(parts['neutre'] / rente)}), {_eur(parts['alerte'])} à surveiller ({_pc(parts['alerte'] / rente)})"
+                  + (f" : {', '.join(solidite['a_surveiller'])}" if solidite["a_surveiller"] else "") + ".")
+    lignes.append(f"- **L'année d'une crise comme 2020** : environ {_eur(solidite['rente_crise'])} au lieu de {_eur(rente)} "
+                  f"(−{_pc(1 - solidite['rente_crise'] / rente)}).")
+    if d["budget"] > 0:
+        lignes.append(f"- **Projection prudente** (euros d'aujourd'hui, {_eur(d['budget'])} par mois et dividendes réinvestis, sans "
+                      f"croissance réelle) : environ {_eur(solidite['rente_prudente_horizon'])} par an dans 10 ans, "
+                      f"{_eur(d['rente']['rente_20_ans'])} dans 20 ans.")
+    return lignes
+
+
 def rapport_markdown(d, constats):
     """Synthèse stratégique, critiques et plan d'action, en Markdown."""
     solidite = (d["rente"] or {}).get("solidite")
@@ -373,6 +398,7 @@ def rapport_markdown(d, constats):
                     f"{_eur(solidite['rente_prudente_horizon'])} par an dans 10 ans.")
 
     lignes = ["### 🧭 Synthèse stratégique, critiques & plan d'action", "", f"**En bref.** {en_bref}", ""]
+    lignes += section_rente(d) + [""]
     lignes.append(f"#### 🟢 Ce qui va bien ({len(forces)})")
     lignes += [f"- **{c['titre']}** — {c['preuve']}" for c in forces] or ["- Rien de saillant pour l'instant."]
     lignes += ["", f"#### 🔴 Critiques et points de vigilance ({len(critiques)})"]
@@ -432,10 +458,16 @@ def dossier_texte(d, constats):
     a = d["achats_12_mois"]
     t.append(f"- Budget mensuel {_eur(d['budget'])} ; achats enregistrés sur 12 mois : {a['nombre']} achat(s), "
              f"{_eur(a['montant'])}, sur {a['mois']} mois" + (" (journal vide)" if a["journal_vide"] else ""))
-    t.append(f"- Allocation cible : {'définie (' + str(d['nb_cibles']) + ' lignes)' if d['allocation_personnalisee'] else 'non définie (parts égales)'}"
-             + (f" ; écart à la cible {d['plan']['ecart_avant']:.1f} % avant l'achat du mois, {d['plan']['ecart_apres']:.1f} % après"
-                if d["plan"].get("ecart_avant") is not None else "")
-             + " ; achat du mois : " + (", ".join(f"{l['qte']} {l['nom']}" for l in d["plan"].get("lignes", []) if l.get("qte")) or "aucun"))
+    achat_du_mois = ", ".join(f"{l['qte']} {l['nom']}" for l in d["plan"].get("lignes", []) if l.get("qte")) or "aucun"
+    if d["allocation_personnalisee"]:
+        t.append(f"- Allocation cible définie par l'utilisateur ({d['nb_cibles']} lignes)"
+                 + (f" ; écart à la cible {d['plan']['ecart_avant']:.1f} % avant l'achat du mois, {d['plan']['ecart_apres']:.1f} % après"
+                    if d["plan"].get("ecart_avant") is not None else "")
+                 + f" ; achat du mois (calcul arithmétique de SA propre allocation) : {achat_du_mois}")
+    else:
+        t.append("- Allocation cible NON définie : l'achat du mois est un calcul par défaut, à parts égales entre les valeurs du "
+                 "radar ; ce n'est pas un choix de l'utilisateur, ne le présente ni comme un plan d'achat ni comme un objectif, "
+                 "et l'écart à cette répartition par défaut n'a pas de sens")
     perf = d["performance_vs_etf"]
     t.append("PERFORMANCE RÉELLE")
     t.append(f"- {_pc1(perf['tri'])} par an contre {_pc1(perf['tri_etf'])} pour un ETF MSCI World aux mêmes dates (depuis le "
@@ -460,9 +492,10 @@ def dossier_texte(d, constats):
 
 CONSIGNES_SYNTHESE = """Rédige une synthèse stratégique franche et concrète, en français, avec exactement ces parties :
 ## 1. En bref (3 à 5 lignes : où en est l'utilisateur, son principal risque, son principal levier)
-## 2. Ce qui va bien
-## 3. Critiques (de la plus grave à la moins grave, chacune avec le chiffre du dossier qui la justifie)
-## 4. Stratégie (cohérence entre l'objectif de rente, les apports, la diversification et la fiscalité du PEA, en t'appuyant sur les principes issus des études)
-## 5. Plan d'action : « Ce mois-ci », « Ce trimestre », « Cette année », « En continu » ; pour chaque action : quoi faire, pourquoi (chiffre du dossier) et où dans Boursy
-## 6. À surveiller, et deux ou trois questions que l'utilisateur devrait se poser
-Règles : n'invente aucun chiffre ni aucune donnée ; si une information manque, dis-le. Pars du diagnostic de Boursy, que tu peux approfondir ou nuancer. Aucune recommandation d'achat ou de vente d'un titre précis, ni quantité ni prix : tu peux parler de secteurs, d'allocation, de méthode, de réserve, de diversification et de fiscalité. Ne présente jamais un signal du radar comme une prévision, ni un rendement élevé comme une qualité en soi. Termine par un rappel discret : synthèse pédagogique, Boursy n'est pas conseiller en investissements financiers."""
+## 2. Votre rente : solidité, crise et projection (reprends exactement les chiffres du dossier : part solide, neutre et à surveiller avec les lignes concernées, rente l'année d'une crise comme 2020, projection prudente à 10 et 20 ans ; si ces chiffres manquent ou sont réservés aux offres payantes, dis-le simplement)
+## 3. Ce qui va bien
+## 4. Critiques (de la plus grave à la moins grave, chacune avec le chiffre du dossier qui la justifie)
+## 5. Stratégie (cohérence entre l'objectif de rente, les apports, la diversification et la fiscalité du PEA, en t'appuyant sur les principes issus des études)
+## 6. Plan d'action : « Ce mois-ci », « Ce trimestre », « Cette année », « En continu » ; pour chaque action : quoi faire, pourquoi (chiffre du dossier) et où dans Boursy
+## 7. À surveiller, et deux ou trois questions que l'utilisateur devrait se poser
+Règles : n'invente aucun chiffre ni aucune donnée ; si une information manque, dis-le. Pars du diagnostic de Boursy, que tu peux approfondir ou nuancer. Aucune recommandation d'achat ou de vente d'un titre précis, ni quantité ni prix : tu peux parler de secteurs, d'allocation, de méthode, de réserve, de diversification et de fiscalité. L'achat du mois n'est jamais une recommandation : c'est un calcul arithmétique, qui ne reflète les choix de l'utilisateur que s'il a défini son allocation cible. Ne présente jamais un signal du radar comme une prévision, ni un rendement élevé comme une qualité en soi. Termine par un rappel discret : synthèse pédagogique, Boursy n'est pas conseiller en investissements financiers."""
