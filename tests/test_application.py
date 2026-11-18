@@ -174,3 +174,32 @@ def test_rapport_d_alertes_par_email(monkeypatch):
     verifier_sans_erreur(application)
     assert [d for d, _ in envois] == ["test@exemple.test"]
     assert any("envoyé avec succès" in s.value for s in application.success)
+
+
+def test_encaisser_un_dividende_dans_les_especes(monkeypatch):
+    """Onglet 3 : le guichet crédite le dividende dans la poche Espèces."""
+    application = lancer("pro", monkeypatch)
+    especes_avant = float((application.session_state["portefeuille"].get("Espèces") or {}).get("pru", 0.0))
+    application.number_input(key="input_mt_enc_div").set_value(12.5)
+    application.run()
+    _bouton(application, "💶 Créditer mes Espèces").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert abs(application.session_state["portefeuille"]["Espèces"]["pru"] - (especes_avant + 12.5)) < 1e-9
+    assert application.session_state["dividendes_encaisses_cumul"] == 12.5
+
+
+def test_enregistrer_une_vente_avec_sa_raison(monkeypatch):
+    """Onglet 5 : la vente réduit la ligne, entre dans l'historique et sa raison arrive dans le carnet."""
+    application = lancer("pro", monkeypatch)
+    action = application.selectbox(key="sel_action_vente").value
+    quantite_avant = int(application.session_state["portefeuille"][action]["qte"])
+    application.selectbox(key=f"input_raison_v_{action}").select("Rééquilibrage")
+    application.run()
+    _bouton(application, "🚀 Valider la vente").click()
+    application.run()
+    verifier_sans_erreur(application)
+    assert int(application.session_state["portefeuille"][action]["qte"]) == quantite_avant - 1
+    assert application.session_state["historique_ventes"][0]["action"] == action
+    decision = application.session_state["portefeuille"]["_carnet_decisions"][-1]
+    assert (decision["type"], decision["action"], decision["raison"]) == ("vente", action, "Rééquilibrage")
